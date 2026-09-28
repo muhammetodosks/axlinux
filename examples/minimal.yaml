@@ -1,0 +1,17 @@
+# Minimal Güvenlik Politikası
+
+version: 1
+mode: enforcing
+
+rules:
+  - name: "tarayıcılar ssh anahtarlarını okuyamaz"
+    subject: firefox
+    object: ~/.ssh
+    action: file.read
+    effect: deny
+
+  - name: "tarayıcılar /etc/shadow okuyamaz"
+    subject: firefox
+    object: /etc/shadow
+    action: file.read
+    effect: deny

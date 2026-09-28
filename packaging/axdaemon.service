@@ -1,0 +1,33 @@
+[Unit]
+Description=AXlinux MAC daemon (eBPF LSM enforcement)
+Documentation=file:///usr/share/doc/axlinux/docs/INSTALL.md
+After=sys-fs-bpf.mount network.target
+Requires=sys-fs-bpf.mount
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/axdaemon --socket /run/axlinux/axdaemon.sock
+Restart=on-failure
+RestartSec=3
+
+# BPF LSM'in aktif LSM zincirinde olmasi zorunludur. Eger zincirde
+# 'bpf' yoksa EACCES alirsiniz. docs/INSTALL.md bolum 1'e bakin.
+Environment=AXLINUX_BPF_OBJ=/usr/lib/axlinux/axbpf.o
+
+RuntimeDirectory=axlinux
+RuntimeDirectoryMode=0755
+
+# Gerekli yetkiler
+AmbientCapabilities=CAP_BPF CAP_SYS_ADMIN CAP_PERFMON
+CapabilityBoundingSet=CAP_BPF CAP_SYS_ADMIN CAP_PERFMON
+
+# Guvenlik sertlestirme
+NoNewPrivileges=yes
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/sys/fs/bpf/axlinux /var/log/axlinux /run/axlinux
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

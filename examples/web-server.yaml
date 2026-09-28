@@ -1,0 +1,40 @@
+# Web Sunucusu Politikası
+
+version: 1
+mode: enforcing
+
+labels:
+  web:
+    - nginx
+    - apache2
+
+rules:
+  - name: "web sunucuları web içeriğini okur"
+    subject: web
+    object: /var/www
+    action: file.read
+    effect: allow
+
+  - name: "web sunucuları /etc/shadow okuyamaz"
+    subject: web
+    object: /etc/shadow
+    action: file.read
+    effect: deny
+
+  - name: "web sunucuları bash çalıştıramaz"
+    subject: web
+    action: process.exec
+    object: /bin/bash
+    effect: deny
+
+  - name: "web sunucuları sadece 80 ve 443 dinler"
+    subject: web
+    action: net.bind
+    port: 80
+    effect: allow
+
+  - name: "web sunucuları sadece 80 ve 443 dinler"
+    subject: web
+    action: net.bind
+    port: 443
+    effect: allow

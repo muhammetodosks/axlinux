@@ -1,0 +1,30 @@
+# Derlenen ciktilar
+# NOT: desenler kok dizine gore yazilir. Duz "axdaemon" yazmak
+# src/go/axdaemon/ kaynak dizinini de dislamak demektir.
+*.o
+*.tmp
+*.a
+/bin/
+/src/go/axdaemon/axdaemon
+/src/go/axlog/axlog
+__pycache__/
+*.pyc
+*.pyo
+
+# uretilir: kernel BTF'den cikarilir, depoya girmez
+vmlinux.h
+*.bpf.o
+/var/log/axlinux/
+
+# python
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# editor / OS
+*.swp
+*~
+.idea/
+.vscode/
+.DS_Store

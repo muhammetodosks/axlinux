@@ -1,0 +1,97 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # --- Go ---
+  go:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - name: Derle
+        run: |
+          cd src/go/axdaemon && go build ./...
+          cd ../axlog   && go build ./...
+      - name: Vet
+        run: |
+          cd src/go/axdaemon && go vet ./...
+          cd ../axlog   && go vet ./...
+      - name: Test
+        run: cd src/go/axdaemon && go test ./...
+
+  # --- Python ---
+  python:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Bagimliliklar
+        run: pip install pyyaml click rich
+      - name: Sozdizimi
+        run: python3 -m compileall -q src/python/axctl
+      - name: Test
+        run: |
+          python3 tests/test_axctl.py
+          python3 tests/test_paths.py
+
+  # --- eBPF ---
+  bpf:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bagimliliklar
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libbpf-dev bpftool linux-tools-common
+
+      - name: vmlinux.h uret
+        run: |
+          # BTF mevcutsa dogrudan al; yoksa Ubuntu paketinden kopyala.
+          if sudo test -r /sys/kernel/btf/vmlinux; then
+            sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c \
+              | sudo tee src/bpf/vmlinux.h > /dev/null
+          else
+            sudo apt-get install -y linux-headers-$(uname -r) || true
+            VML=$(ls /usr/src/linux-headers-*/arch/x86/include/builtin/vmlinux.h 2>/dev/null | head -1)
+            if [ -n "$VML" ]; then sudo cp "$VML" src/bpf/vmlinux.h; fi
+          fi
+          test -s src/bpf/vmlinux.h || {
+            echo "::error::vmlinux.h uretilemedi"; exit 1; }
+
+      - name: Derle ve dogrula
+        working-directory: src/bpf
+        run: make verify
+
+      - name: Nesneyi yuklemeyi dene
+        run: |
+          # LSM bpf LSM'i bu runner'da aktif olmayabilir; bu bir
+          # smoke testidir, basarisizlik derlemeyi gecersiz kilmaz.
+          sudo mount -t bpf bpf /sys/fs/bpf 2>/dev/null || true
+          sudo bpftool prog load src/bpf/axbpf.o /sys/fs/bpf/ax_ci type lsm \
+            && echo "::notice::LSM yuklendi" \
+            || echo "::notice::LSM yuklenemedi (beklenen: bpf LSM kapali)"
+
+  # --- Butunluk ---
+  contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      # Go<->C sabit sozlesmesi sessiz hatayi onler
+      - name: Sabit sozlesmesi
+        run: cd src/go/axdaemon && go test ./internal/maps/ ./internal/lsm/ ./internal/audit/ -v

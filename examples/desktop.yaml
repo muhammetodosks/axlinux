@@ -1,0 +1,38 @@
+# Masaüstü Politikası
+
+version: 1
+mode: permissive
+
+labels:
+  browsers:
+    - firefox
+    - chromium
+    - google-chrome
+  dev:
+    - python
+    - node
+    - go
+
+rules:
+  - name: "tarayıcılar ssh anahtarlarını okuyamaz"
+    subject: browsers
+    object: ~/.ssh
+    action: file.read
+    effect: deny
+
+  - name: "tarayıcılar /etc/shadow okuyamaz"
+    subject: browsers
+    object: /etc/shadow
+    action: file.read
+    effect: deny
+
+  - name: "geliştiriciler dışarı çıkabilir"
+    subject: dev
+    action: net.connect
+    effect: allow
+
+  - name: "hiçkimse /etc/shadow okuyamaz"
+    subject: "*"
+    object: /etc/shadow
+    action: file.read
+    effect: deny
