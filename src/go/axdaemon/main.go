@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"context"
 	"flag"
 	"log/slog"
@@ -247,7 +248,24 @@ func pinMaps(m *maps.Manager, dir string, logger *slog.Logger) {
 			continue
 		}
 		path := dir + "/" + name
-		if err := mm.Pin(path); err != nil && !os.IsExist(err) {
+		err := mm.Pin(path)
+		switch {
+		case err == nil:
+			logger.Debug("map pinlendi", "map", name, "path", path)
+		case errors.Is(err, os.ErrExist):
+			// Beklenen durum, hata degil. Haritalar onceki
+			// calismadan pinli kalmistir ve LoadPinnedMap bunlari
+			// YENIDEN KULLANIR; boylece kurallar yeniden baslatmayi
+			// atlatir. Yeni koleksiyonun haritasi pinlenmez, ki
+			// eskisi ezilmesin.
+			//
+			// Onceki kosul os.IsExist(err) idi ve bu hatada false
+			// donuyordu; bu yuzden her yeniden baslatmada "map
+			// pinlenemedi" uyarisi cikiyordu, halbuki hicbir sey
+			// bozuk degildi.
+			logger.Debug("map zaten pinli, yeniden kullaniliyor",
+				"map", name, "path", path)
+		default:
 			logger.Warn("map pinlenemedi", "map", name, "error", err)
 		}
 	}

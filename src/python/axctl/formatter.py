@@ -92,6 +92,54 @@ def print_status(status: dict) -> None:
             f"{status.get('map_deny_entries', 0)} deny kayıt[/dim]"
         )
 
+    # En tehlikeli durum: enforcement mekanizmasi saglam, politika
+    # bos. Kancalar bagli, programlar yuklu, servis "calisiyor" -
+    # ama hicbir kural uygulanmiyor. Bu, daemon yeniden basladiginda
+    # ya da hic reload yapilmadiginda olur.
+    #
+    # Onceki surumde status "5/5 aktif" gosterip gecardi; operator
+    # MAC'in calistigini sanarken sistem tamamen acikta kalmisti.
+    # Guvenlik aracinda "bos ama saglam gorunen" durum, "bozuk"
+    # durumdan daha kotudur: bozuk olsa fark edersiniz.
+    rules = status.get("rules_loaded", 0)
+    mode = status.get("mode", "")
+    n_allow = status.get("map_allow_entries", 0) or 0
+    n_deny = status.get("map_deny_entries", 0) or 0
+
+    if rules == 0 and n_allow == 0 and n_deny == 0:
+        # Mod burada onemsiz: kural yoksa ne enforcing ne permissive
+        # hicbir sey uygulamaz. Onceki surumde kosul "mode == enforcing"
+        # idi ve daemon yeniden basladiginda mod permissive oldugu
+        # icin uyari hic gorunmedi - yani sessiz bosluk tam da
+        # yakalanmasi gereken durumda birakildi.
+        console.print()
+        console.print(Panel(
+            "[bold red]POLITIKA YOK: HICBIR KURAL UYGULANMIYOR[/bold red]\n\n"
+            "Daemon calisiyor ve kancalar bagli, ama hicbir kural "
+            "yuklenmemis. Bu, yeniden baslatma sonrasi veya reload "
+            "yapilmadiginda olur.\n\n"
+            "  Politika yuklemek icin:\n"
+            "    sudo axctl init\n"
+            "    sudo axctl policy edit\n"
+            "    sudo axctl reload --mode enforcing",
+            title="Dikkat",
+            border_style="red",
+        ))
+    elif mode == "permissive" and (rules > 0 or n_allow + n_deny > 0):
+        # Kurallar var ama uygulanmiyor. Operator politikanin
+        # yuklendigini gormekle gercekten engellendigini sanabilir.
+        console.print()
+        console.print(Panel(
+            "[bold yellow]PERMISSIVE: kurallar kaydediliyor ama "
+            "UYGULANMIYOR[/bold yellow]\n\n"
+            f"{rules} kural map'e yazildi ve audit edilecek, ancak "
+            "hicbir erisim ENGELLENMEYECEK.\n\n"
+            "  Uygulamak icin:\n"
+            "    sudo axctl reload --mode enforcing",
+            title="Dikkat",
+            border_style="yellow",
+        ))
+
     if status.get("audit_log_count") is not None:
         console.print(
             f"[dim]Audit log: {status['audit_log_count']} kayıt "

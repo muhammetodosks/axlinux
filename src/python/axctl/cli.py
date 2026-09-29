@@ -169,25 +169,28 @@ def _policy_simulate(output_format: str):
 @click.option("--mode", type=click.Choice(["enforcing", "permissive", "disabled"]), help="Mod")
 @click.option("--force-empty", is_flag=True, help="Boş politika yükle (acil durum)")
 def reload(mode, force_empty):
-    """Politikanı derler ve uygular."""
+    """Politikayi derler ve uygular."""
     try:
         if force_empty:
-            empty_policy = {"version": 1, "mode": mode or "enforcing", "rules": []}
+            empty_policy = {
+                "version": 1, "mode": mode or "enforcing", "rules": [],
+            }
             compiled = compile_policy(empty_policy)
-            print_warning("Acil durum: Boş politika yükleniyor")
+            print_warning("Acil durum: Bos politika yukleniyor")
         else:
             policy_path = get_policy_path()
             if not policy_path.exists():
-                print_error("Politika dosyası yok. Önce 'axctl init' çalıştırın.")
+                print_error("Politika dosyasi yok. Once 'axctl init' "
+                            "calistirin.")
                 sys.exit(1)
 
             backup_policy(policy_path)
             policy = load_policy(policy_path)
 
             # compile_policy, sessiz basarisizligi onleyen
-            # denetimleri de icerir. Yakalayip gosteriyoruz:
-            # derleyici uyarisi, kuralin UYGULANMAYACAGI
-            # anlamina gelir ve kullaniciya soylemeliyiz.
+            # denetimleri de icerir. Yakalayip gosteriyoruz: derleyici
+            # uyarisi, kuralin UYGULANMAYACAGI anlamina gelir ve
+            # kullaniciya soylemelidir.
             import warnings as _warnings
 
             with _warnings.catch_warnings(record=True) as caught:
@@ -198,12 +201,32 @@ def reload(mode, force_empty):
                 print_warning(str(w.message))
 
         print_info("Politika derleniyor...")
-        print_success(f"{len(compiled['rules'])} kural, {len(compiled['labels'])} etiket")
+        print_success(f"{len(compiled['rules'])} kural, "
+                      f"{len(compiled['labels'])} etiket")
 
-        result = reload_policy(compiled)
-        print_success("eBPF map'lerine yazıldı")
-        print_success("LSM kancaları güncellendi")
-        print_success(f"Yükleme tamam. Mod: {compiled['mode']}")
+        reload_policy(compiled)
+        print_success("eBPF map'lerine yazildi")
+        print_success("LSM kancalari guncellendi")
+
+        # --mode DOGRULANMASI ZORUNLU.
+        #
+        # Onceki surumde mode parametresi YALNIZCA --force-empty
+        # dalinda kullaniliyordu; normal yolda hic kullanilmazdi.
+        # Sonuc: "axctl reload --mode permissive" komutu "Yukleme
+        # tamam" yaziyor, policy dosyasindaki "mode: enforcing"
+        # gecerli kaliyor ve sistem ENGELLEMEYE DEVAM ediyordu.
+        #
+        # Bu bir konfor hatasi degil: acil durumda enforcement'i
+        # durdurmanin yolu budur. Komut calistigini sanan operator,
+        # sistemde engellenmeye devam eder.
+        if mode:
+            set_mode(mode)
+            effective = mode
+            print_success(f"Mod ayarlandi: {mode}")
+        else:
+            effective = compiled["mode"]
+
+        print_success(f"Yukleme tamam. Mod: {effective}")
 
     except PolicyError as e:
         print_error(str(e))

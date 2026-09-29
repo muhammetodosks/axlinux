@@ -95,3 +95,25 @@ derlenmemisti.
   MAC bir yorumlayiciyi hedeflediginde kullanici oturumunu
   kilitleyebilir. Denetim birimi yorumlayicinin calistirdigi
   programdir.
+
+### Dogrulama sirasinda bulunan ek hatalar
+
+- **`axctl reload --mode` hicbir sey yapmiyordu.** `mode` parametresi
+  yalnizca `--force-empty` dalinda kullaniliyordu; normal yolda policy
+  dosyasindaki "mode: enforcing" gecerli kaliyordu. Komut "Yukleme
+  tamam" yaziyor ve sistem engellemeye devam ediyordu. Bu konfor
+  hatasi degil: acil durumda enforcement'i durdurmanin yolu bu
+  komut. Artik `--mode` uygulaniyor ve dogrulanip bildiriliyor
+  (VM'de enforcing/permissive/disabled ucu de test edildi).
+- **Restart sonrasi politika yuklenmiyor**, ama `axctl status`
+  "5/5 kanca aktif" gosteriyordu. Artik kural yokken ve map'ler
+  bosken durum "POLITIKA YOK: HICBIR KURAL UYGULANMIYOR" uyarisi
+  verir; kurallar yuklu ama mod permissive ise ayrica uyari cikar.
+- **Harita pinleme uyarisi** her yeniden baslatmada cikiyordu.
+  `os.IsExist` bu hatada `false` donuyordu; beklenen durum
+  `errors.Is(err, os.ErrExist)` ile ayrilir. Pin'lenmis haritalar
+  yeniden kullanildigi icin bu bir hata degil.
+- **`cli.py` girintisi bozuktu** (dekorator ile `def` ayni
+  satirda, blok girintileri tutarsiz). Dosya hic derlenmiyordu;
+  `make install` hatayi `>/dev/null 2>&1` ile gizledigi ici
+  fark edilmemisti. `reload` fonksiyonu yeniden yazildi.
