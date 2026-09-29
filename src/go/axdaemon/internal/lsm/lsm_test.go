@@ -1,7 +1,9 @@
 package lsm
 
 import (
+	"axlinux/axdaemon/internal/lsmenv"
 	"bufio"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -129,6 +131,146 @@ func TestHookNamesUnique(t *testing.T) {
 		if h.GoName == "" || h.Sec == "" {
 			t.Errorf("eksik kanca tanimi: %+v", h)
 		}
+	}
+}
+
+// TestPartialAttachIsNotEnforcement is the test for the most
+// dangerous gap in this package.
+//
+// Attach() intentionally continues past individual failures so a
+// partially-supported kernel still gets the hooks it can take. But
+// if 2 of 5 hooks attach, "enforcement_active: true" is a lie: a
+// file.read policy would be reported as active while only
+// socket_connect enforces anything. The user is unprotected on the
+// missing hooks and nothing tells them.
+//
+// These tests drive the state directly rather than attempting a real
+// attach, which would need a kernel with bpf LSM enabled.
+func TestPartialAttachIsNotEnforcement(t *testing.T) {
+	m := NewManager("/nonexistent")
+
+	if got := m.HookCount(); got != len(HookTable) {
+		t.Fatalf("HookCount = %d, %d bekleniyor", got, len(HookTable))
+	}
+
+	// Nothing attached: not enforcement, and the notice must name
+	// every hook so the operator knows the scale of the problem.
+	if m.AllHooksAttached() {
+		t.Error("hicbir kanca baglanmamken AllHooksAttached true olmamali")
+	}
+	if missing := m.MissingHooks(); len(missing) != len(HookTable) {
+		t.Errorf("MissingHooks %d donuyor, %d bekleniyor: %v",
+			len(missing), len(HookTable), missing)
+	}
+
+	// 4 of 5 attached: still not enforcement. One missing hook is
+	// enough to leave a whole action class unprotected.
+	h := m.hooks[HookTable[0].Hook]
+	h.Attached = true
+	if m.AllHooksAttached() {
+		t.Error("1/5 bagliyken AllHooksAttached true olmamali")
+	}
+	if got := m.AttachedCount(); got != 1 {
+		t.Errorf("AttachedCount = %d, 1 bekleniyor", got)
+	}
+	missing := m.MissingHooks()
+	if len(missing) != len(HookTable)-1 {
+		t.Errorf("MissingHooks %d donuyor, %d bekleniyor",
+			len(missing), len(HookTable)-1)
+	}
+	// The attached hook must NOT appear in the missing list.
+	for _, name := range missing {
+		if name == HookTable[0].Hook {
+			t.Errorf("%s bagli ama MissingHooks'te listelenmis",
+				HookTable[0].Hook)
+		}
+	}
+}
+
+// TestAllAttachedIsEnforcement is the other direction: when every
+// hook is attached, the checks must not manufacture a false alarm.
+func TestAllAttachedIsEnforcement(t *testing.T) {
+	m := NewManager("/nonexistent")
+	for _, def := range HookTable {
+		m.hooks[def.Hook].Attached = true
+	}
+	if !m.AllHooksAttached() {
+		t.Error("hepsi bagliyken AllHooksAttached false olmamali")
+	}
+	if missing := m.MissingHooks(); len(missing) != 0 {
+		t.Errorf("hepsi bagliyken MissingHooks bos olmali, got: %v", missing)
+	}
+}
+
+// TestEnforcementNoticeNamesMissingHooks verifies the operator gets
+// an actionable message. A bare "false" tells them enforcement is off
+// but not which hook failed or what it means.
+func TestEnforcementNoticeNamesMissingHooks(t *testing.T) {
+	m := NewManager("/nonexistent")
+	// Attach all but the last hook.
+	for _, def := range HookTable[:len(HookTable)-1] {
+		m.hooks[def.Hook].Attached = true
+	}
+
+	notice := m.EnforcementNotice()
+	if notice == "" {
+		t.Fatal("kismi baglanmada EnforcementNotice bos olmamali")
+	}
+	last := HookTable[len(HookTable)-1].Hook
+	if !strings.Contains(notice, last) {
+		t.Errorf("uyari baglanmayan kancayi belirtmeli, %q yok:\n%s",
+			last, notice)
+	}
+	if !strings.Contains(notice, fmt.Sprintf("%d/%d",
+		m.AttachedCount(), m.HookCount())) {
+		t.Errorf("uyari sayilari icermeli:\n%s", notice)
+	}
+}
+
+// TestNoEnforceIsNotReportedAsAFault is the point of SetNoEnforce.
+//
+// With --no-enforce the operator asked for zero hooks, so reporting
+// "0/5 kanca BAGLANMADI ... build veya kernel uyumlulugu sorunudur"
+// is a false alarm that hides the real, benign reason. The notice
+// must name the flag instead.
+//
+// The test only runs its assertions when bpf LSM is actually
+// available, because EnforcementNotice short-circuits on the LSM
+// chain first and would report the chain problem instead.
+func TestNoEnforceIsNotReportedAsAFault(t *testing.T) {
+	// Zincir denetimi yapay olarak "bpf var" yapilir. Boylece test,
+	// gercek cekirdekte bpf olsa da olmasa da calisir. Daha once
+	// bpf'siz her makinede skip ediliyordu, yani --no-enforce
+	// mantigi hicbir yerde olculmuyordu.
+	yes := true
+	lsmenv.SetOverrideForTest(&yes)
+	defer lsmenv.SetOverrideForTest(nil)
+
+	m := NewManager("/nonexistent")
+
+	// Without the flag, zero attached hooks reads as a problem.
+	if m.EnforcementNotice() == "" {
+		t.Fatal("varsayilan durumda eksik kanca bildirilmeli")
+	}
+
+	m.SetNoEnforce()
+	notice := m.EnforcementNotice()
+	if notice == "" {
+		t.Fatal("--no-enforce verilmisken de aciklama olmali")
+	}
+	if !strings.Contains(notice, "--no-enforce") {
+		t.Errorf("bildirim --no-enforce'i belirtmeli:\n%s", notice)
+	}
+	// It must not accuse the build or the kernel.
+	for _, wrong := range []string{"kernel uyumlulugu", "build"} {
+		if strings.Contains(notice, wrong) {
+			t.Errorf("bildirim %q demez; sorun degil, karar var:\n%s",
+				wrong, notice)
+		}
+	}
+	// Zero hooks is still not enforcement.
+	if m.AllHooksAttached() {
+		t.Error("--no-enforce olsa da AllHooksAttached true olmamali")
 	}
 }
 

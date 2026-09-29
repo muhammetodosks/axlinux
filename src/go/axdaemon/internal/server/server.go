@@ -6,10 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
+	"time"
 
 	"axlinux/axdaemon/pkg/protocol"
 )
@@ -40,8 +43,21 @@ func NewServer(socketPath string, handler Handler, logger *slog.Logger) *Server 
 
 // Start begins listening and accepting connections.
 func (s *Server) Start() error {
-	if err := os.MkdirAll("/run/axlinux", 0755); err != nil {
-		return fmt.Errorf("run dizini olusturulamadi: %w", err)
+	// Dizin socket yolundan turer, SABIT "/run/axlinux" degil.
+	//
+	// Sabit yol iki ayri sekilde yanlisiydi. Birincisi: socket
+	// yolu yapilandirilabilir olmasina ragmen dizin onaylamak
+	// imkansizdi; baska bir yola dinlenen her server, izin
+	// vermedigi icin start olmadan hata veriyordu (testlerin
+	// tamami bu yuzden kirmiziydi). Ikincisi: normal kullanici
+	// /run'a yazamadigi icin Start() sessizce basarisiz oluyor,
+	// hatayi gormeyen cagiran taraf "sunucu ayakta" saniyordu.
+	//
+	// Dizin, socket'un bulunmasi gereken yeri belirler; yani
+	// socket yolunun dizini dogru ve tek dogruluk kaynagidir.
+	dir := filepath.Dir(s.socketPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("socket dizini olusturulamadi (%s): %w", dir, err)
 	}
 
 	if _, err := os.Stat(s.socketPath); err == nil {
@@ -53,8 +69,16 @@ func (s *Server) Start() error {
 		return fmt.Errorf("socket dinleme hatasi: %w", err)
 	}
 
-	if err := os.Chmod(s.socketPath, 0666); err != nil {
-		s.logger.Warn("socket izinleri ayarlanamadi", "error", err)
+	// Socket izni 0666 idi: herhangi bir yerel kullanici
+	// reload_policy gonderip sistem genelinde politika
+	// degistirebiliyordu. Bu bir yetki yukseltme yuzeyi;
+	// MAC sistemini yonetecek olan root olmali.
+	//
+	// 0600 root'a kisitlar. sudo kullanan normal kullanicilar
+	// socket'e erisemez; bu bilincli bir tradeoff: guvenlik
+	// araci, kullaniciya degil yoneticeye ait olur.
+	if err := os.Chmod(s.socketPath, 0600); err != nil {
+		return fmt.Errorf("socket izinleri ayarlanamadi: %w", err)
 	}
 
 	s.mu.Lock()
@@ -99,8 +123,15 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 	for {
+	// Istemci normal sekilde kapattiginda ReadBytes io.EOF doner.
+	// Bu bir hata degil; ayirt edilmezse her komut sonrasi
+	// "baglanti koptu" uyarisi logu kirletir ve gercek hatalari
+	// gormeyi zorlastirir.
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
+			if err != io.EOF {
+				s.logger.Warn("okuma hatasi", "error", err)
+			}
 			return
 		}
 
@@ -115,7 +146,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 			continue
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 30_000_000_000)
+		// 30 saniyelik islem siniri. Sabit sayi yerine
+		// time.Duration yazilmasi, birim karistirilmasini
+		// (30 saniye mi 30 nanosaniye mi) imkansiz kilar.
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		resp := s.handler.Dispatch(ctx, req)
 		cancel()
 

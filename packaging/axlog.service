@@ -1,0 +1,46 @@
+[Unit]
+Description=AXlinux audit log service (JSONL persistence)
+Documentation=file:///usr/share/doc/axlinux/docs/INSTALL.md
+# axdaemon bu servise audit kaydi yazar. Iki yonlu bagimilik kurmak
+# gerekmez: axlog coktugunde axdaemon calismaya devam eder ve
+# sendFailed sayaci artar (get_status bunu bildirir). Tersi de
+# gecerli: axlog, axdaemon gelene kadar bos dinler.
+#
+# Sira /run/axlinux icin onemli: axdaemon.service RuntimeDirectory
+# ile bu dizini sahiplenir ve systemd baslangicta temizler. Iki
+# servis de ayni dizini sahiplenirse biri digerini silebilir. Bu
+# yuzden axlog Once axdaemon'dan gelir ve dizini KENDISI
+# yonetmez.
+After=network.target axdaemon.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/axlog --socket /run/axlinux/axlog.sock --log-dir /var/log/axlinux
+Restart=on-failure
+RestartSec=3
+
+# /run/axlinux dizinini axdaemon.service yonetir (RuntimeDirectory).
+# Iki servis ayni dizini sahiplenirse biri digerini silebilir:
+# systemd baslarken RuntimeDirectory'yi temizler. Bu yuzden burada
+# RuntimeDirectory TANIMLANMAZ; axdaemon yonetir ve axlog
+# After=axdaemon.service ile ondan sonra gelir.
+
+# Log dizini systemd tarafindan yonetilir: LogsDirectory ile
+# /var/log/axlinux 0750 izinde acilir ve eklenip silinmez. Elle
+# silinen bir log dizini servisi calismaz hale getirirdi.
+LogsDirectory=axlinux
+LogsDirectoryMode=0750
+
+# Guvenlik sertlestirme
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/log/axlinux /run/axlinux
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+# axlog yalnizca dinler ve yazar; ag erisimi gereksiz.
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

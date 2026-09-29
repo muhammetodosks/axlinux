@@ -3,11 +3,13 @@
 package learning
 
 import (
-	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
+
+	"axlinux/axdaemon/internal/audit"
 )
 
 // Observation records a single subject-object-action triple.
@@ -42,7 +44,6 @@ type Manager struct {
 	active      bool
 	startedAt   time.Time
 	observations map[string]*Observation
-	cancel      context.CancelFunc
 }
 
 // NewManager creates a learning manager.
@@ -73,6 +74,9 @@ func (m *Manager) Stop() {
 	defer m.mu.Unlock()
 
 	m.active = false
+	// startedAt sifirlanmazsa yeniden baslatildiginda Elapsed eski
+	// oturumun basindan hesaplanir ve sure yanlis bildirilir.
+	m.startedAt = time.Time{}
 }
 
 // Record adds an observation to the aggregate.
@@ -101,6 +105,17 @@ func (m *Manager) Record(subject, object, action string) {
 		}
 	}
 }
+
+// Observe implements audit.Observer. It is called once per audit event
+// at the moment the event is produced, so the aggregate reflects real
+// enforcement activity instead of whatever the operator happened to
+// read. A compile-time assertion keeps the two packages in sync: if
+// the observer interface changes, this stops building.
+func (m *Manager) Observe(subject, object, action string) {
+	m.Record(subject, object, action)
+}
+
+var _ audit.Observer = (*Manager)(nil)
 
 // IsActive reports whether learning is running.
 func (m *Manager) IsActive() bool {
@@ -139,15 +154,19 @@ func (m *Manager) GenerateReport() Report {
 		return patterns[i].Count > patterns[j].Count
 	})
 
-	duration := time.Since(m.startedAt).Round(time.Second)
-
-	yaml := generateYAML(patterns)
+	// Start() hic cagrilmadiysa startedAt sifir zaman degeridir
+	// ve time.Since sifirdan hesaplanir: rapor "17565 gun" gibi
+	// anlamsiz bir sure bildirirdi. Bu durumda sure bildirilmez.
+	duration := ""
+	if m.active && !m.startedAt.IsZero() {
+		duration = time.Since(m.startedAt).Round(time.Second).String()
+	}
 
 	return Report{
 		GeneratedAt: time.Now().UTC(),
-		Duration:    duration.String(),
+		Duration:    duration,
 		Patterns:    patterns,
-		YAML:        yaml,
+		YAML:        generateYAML(patterns),
 	}
 }
 
@@ -158,28 +177,69 @@ func (m *Manager) ObservationCount() int {
 	return len(m.observations)
 }
 
+// yamlQuote renders a value as a double-quoted YAML scalar.
+//
+// Gozlenen degerler kernelden gelir: yol adlari, surec adlari.
+// Bunlar tirnak, backslash, iki nokta veya yeni satir icerebilir
+// ("/tmp/a: b", "weird\"name"). Kacis uygulanmadan string
+// birleştirilirse uretilen YAML AYRIŞMAZ ve axctl policy'yi
+// yukleyemez; kullanici ogrenme raporunu calistirip hata alir ve
+// nedenini anlamaz.
+//
+// YAML double-quoted scalar'da gereken kacisler:
+//   \  "  ve satir sonu. Kontrol karakterleri de \xNN ile.
+func yamlQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			// Diger kontrol karakterleri dogrudan yazilamaz.
+			if r < 0x20 || r == 0x7f {
+				fmt.Fprintf(&b, `\x%02x`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
 func generateYAML(patterns []Pattern) string {
 	if len(patterns) == 0 {
 		return "# Gozlemlenecek aktivite yok\n"
 	}
 
-	var b string
-	b += "# AXlinux ogrenme modu onerileri\n"
-	b += "# Bu kurallari axc ile derleyip axctl ile yukleyebilirsiniz\n\n"
-	b += "version: 1\n"
-b += "mode: permissive\n"
-b += "labels: {}\n"
-b += "rules:\n"
+	var b strings.Builder
+	b.WriteString("# AXlinux ogrenme modu onerileri\n")
+	b.WriteString("# Bu kurallari axc ile derleyip axctl ile yukleyebilirsiniz\n\n")
+	b.WriteString("version: 1\n")
+	b.WriteString("mode: permissive\n")
+	b.WriteString("labels: {}\n")
+	b.WriteString("rules:\n")
 
 	for i, p := range patterns {
-		b += fmt.Sprintf("  - id: \"rule_%03d\"\n", i+1)
-		b += fmt.Sprintf("    name: \"ogrenme: %s %s %s\"\n", p.Subject, p.Action, p.Object)
-		b += fmt.Sprintf("    subject: [\"%s\"]\n", p.Subject)
-		b += fmt.Sprintf("    object: \"%s\"\n", p.Object)
-		b += fmt.Sprintf("    action: \"%s\"\n", p.Action)
-		b += "    effect: allow\n"
-		b += fmt.Sprintf("    priority: %d\n", 100-i)
+		fmt.Fprintf(&b, "  - id: \"rule_%03d\"\n", i+1)
+		fmt.Fprintf(&b, "    name: %s\n",
+			yamlQuote(fmt.Sprintf("ogrenme: %s %s %s",
+				p.Subject, p.Action, p.Object)))
+		fmt.Fprintf(&b, "    subject: [%s]\n", yamlQuote(p.Subject))
+		fmt.Fprintf(&b, "    object: %s\n", yamlQuote(p.Object))
+		fmt.Fprintf(&b, "    action: %s\n", yamlQuote(p.Action))
+		b.WriteString("    effect: allow\n")
+		fmt.Fprintf(&b, "    priority: %d\n", 100-i)
 	}
 
-	return b
+	return b.String()
 }

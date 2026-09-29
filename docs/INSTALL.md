@@ -102,6 +102,57 @@ Beklenen: `eBPF Programları  5/5 yüklü` ve `LSM Kancaları  5/5 aktif`.
 Bunlar `0/5` ise LSM baglanmamistir: `cat /sys/kernel/security/lsm`
 ciktisinda `bpf` olmalidir.
 
+### Tam dogrulama (onerilen)
+
+Yukaridaki kontroller LSM zincirinin dogru oldugunu gosterir ama
+**engellemenin gercekten calistigini kanitlamaz**. "5/5 kanca bagli"
+olmasi, kurallarin uygulandigi anlamina gelmez.
+
+```bash
+sudo bash tests/verify_all.sh
+```
+
+Bu betik sunlari yapar ve **sistemi kilitlemez**:
+
+1. LSM zincirini dogrular
+2. Daemon'u baslatir
+3. Her kanca icin gercek engelleme dener (`file_open`,
+   `inode_permission`, `socket_bind`, `socket_connect`, `bprm`)
+4. Audit kaydinin dogru geldigini dogrular
+5. Mod gecislerini (enforcing/permissive/disabled) dogrular
+6. Kilitlenme korumasini kanitlar
+
+Her adimdan sonra mod `disabled`'a cekilir, boylece bir adim takilsa
+bile sonraki calistirmalarda oturum kilitlenmez.
+
+### Dogrulama sirasinda takilirsaniz
+
+`tests/verify_all.sh` veya `axctl set-mode disabled` **calismiyorsa**
+sistem kilitlenmis olabilir. Bu durumda:
+
+```bash
+# GRUB'dan bpf'yi kaldirip yeniden baslat (acil cikis)
+sudo sed -i 's/,bpf"$/"/' /etc/default/grub
+sudo update-grub && sudo reboot
+```
+
+Yedek: `/etc/default/grub.axlinux-backup`
+
+Nadiren olur: koruma (`ax_protected`) normalde `bash`, `sudo`,
+`systemd`, `sshd` gibi sureclere kural uygulanmasini engeller. Bir
+kuralin yanlislikla bir arac zinciri surecini hedefledigi durumlarda
+bu onlem devreye girer. `tests/test_protection.py` listesin
+dogru kaldigini dogrular.
+
+Reboot sonrasi calistirilacak tek komut:
+
+```bash
+sudo bash scripts/recover-and-verify.sh
+```
+
+Derler, test eder, gercek enforcement'i dogrular ve gecerse git
+commit yapar.
+
 ## 5. Ilk politika
 
 ```bash
@@ -117,6 +168,21 @@ rules:
     object: /etc/shadow
     action: file.read
     effect: deny
+```
+
+### subject icin ne secmeliyim
+
+`subject` alanina **hedef uygulamayi** yazin. Sistem sureclerini
+(`bash`, `sudo`, `systemd`, `sshd`) yazmayin: AXlinux bunlara
+guvenlik geregi hicbir kural uygulamaz ve kural sessizce
+etkisiz kalir.
+
+```yaml
+# Dogru: hedef uygulama
+subject: firefox
+
+# Etkisiz: korumali surec (uyari verilir)
+subject: bash
 ```
 
 ```bash
@@ -143,12 +209,36 @@ cd src/bpf && rm -f vmlinux.h && make
 `/run/axlinux` yok. `sudo mkdir -p /run/axlinux` ya da servisi root ile
 baslatin.
 
+Socket izni `0600`'dir: yalnizca root baglanabilir. Bu bilincli bir
+karardir — socket uzerinden `reload_policy` gonderilebildigi icin
+herkese acik olsaydi (`0666`) herhangi bir yerel kullanici sistem
+genelinde politika degistirebilirdi.
+
+Bu yuzden `axctl` komutlarini `sudo` ile calistirin:
+
+```bash
+sudo axctl status
+sudo axctl mode enforcing
+```
+
+Dogrudan socket'e baglanmak da ayni sekilde `sudo` gerektirir.
+
 **Politika yuklendi ama bir sey engellenmiyor**
 Sirasiyla kontrol edin:
 
-1. `axctl status` -> `lsm_hooks_active` 5 mi?
-2. Mod `enforcing` mi? (`axctl mode enforcing`)
-3. Log'da kural isabet ediyor mu? (`axctl logs --filter effect=deny`)
+1. `sudo axctl status` -> `lsm_hooks_active` 5 mi?
+   5 degilse `hooks_missing` hangi kancayi gosterir; enforcement
+   KISMIDIR ve eksik kancalara yazilan kurallar etkisiz kalir.
+2. Mod `enforcing` mi? (`sudo axctl mode enforcing`)
+3. `audit_healthy` `true` mu? `false` ise kararlar kaydedilmiyor
+   demektir; enforcement calisiyor olabilir ama kanit toplanmiyor.
+4. Log'da kural isabet ediyor mu? (`sudo axctl logs --filter effect=deny`)
 
 Yanlis `effect` degerleri sessizce hicbir seyi engellemez; bu yuzden
 `go test ./internal/maps/` sozlesme testi calistirilir.
+
+**Desteklenmeyen eylem reddediliyor**
+`file.delete`, `file.create` ve `net.accept` icin LSM kancasi yok.
+Bunlarla yazilan kurallar yukleme aninda hata verir; bu bir eksiklik
+degil, sessiz basarisizligi onleme kararidir. Silme kontrolu icin
+dosya sistemi izinlerini (`chmod`, ACL) kullanin.

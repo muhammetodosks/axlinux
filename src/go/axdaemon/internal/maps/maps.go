@@ -27,11 +27,21 @@ const (
 	AuditMapName = "audit_buffer"
 )
 
+// Yol alani sabit bloklara bolunur. Boylece eBPF tarafinda her
+// bilesen kendi bloguna yazilir ve blok ofseti derleme zamaninda
+// sabittir; calisma aninda hesaplanan hedef+boyut ikilisi
+// kalmaz. Birlestirme burada, Go tarafinda yapilir.
+// Toplam boyut degismez: 16 + 8*32 + 4 = 276.
+const (
+	PathDepth = 8
+	PathSlot  = 32
+)
+
 // MapKey is the lookup key used in both allow and deny maps.
 // Must match struct policy_key in axbpf.h.
 type MapKey struct {
 	Comm   [16]byte
-	Path   [256]byte
+	Path   [PathDepth][PathSlot]byte
 	Action uint32
 }
 
@@ -280,17 +290,130 @@ func (m *Manager) Close() error {
 	return nil
 }
 
+// ProtectedProcesses are the processes AXlinux never applies a rule to.
+//
+// The kernel enforces this in ax_protected (src/bpf/axbpf.h), but the
+// check is duplicated here on purpose. If the eBPF object fails to
+// build or an older axbpf.o is installed, the kernel side is absent
+// and a rule like "bash cannot exec" would lock the user out of the
+// machine with no way back short of a reboot. Rejecting the rule in
+// the daemon costs nothing and makes the lockout impossible even
+// then.
+//
+// The list is the RECOVERY PATH, and nothing else:
+//
+//   - init/session chain (systemd, dbus, polkit, NetworkManager): the
+//     machine must stay up and the session must stay functional.
+//   - login chain (sshd, login, getty, sudo, su, doas): these are how
+//     a user gets a shell in the first place.
+//   - shells (bash, sh, dash, zsh, fish): a blocked shell ends the
+//     session and removes every in-session way to undo the policy.
+//
+// Runtimes and development tools are deliberately NOT here. Almost
+// every real application runs under an interpreter, so protecting
+// python3/node/perl/ruby would make the most common MAC rules
+// ("this app must not read /etc/shadow", "this app must not reach
+// the network") impossible to write, and the product useless. It
+// would also buy nothing: denying python3 does not strand the user,
+// because a protected shell is still available to change the mode.
+//
+// Keep this list in sync with ax_protected; tests/test_protection.py
+// checks both sides agree.
+var ProtectedProcesses = map[string]bool{
+	// calisma ortami
+	"systemd": true, "systemd-logind": true, "systemd-userdbd": true,
+	"systemd-udevd": true, "systemd-journald": true, "systemd-oomd": true,
+	"init": true, "kthreadd": true,
+	// oturum acma / yetki
+	"sshd": true, "sshd-session": true, "login": true, "agetty": true,
+	"getty": true, "sudo": true, "su": true, "doas": true,
+	"dbus-daemon": true, "dbus-broker": true, "polkitd": true,
+	"rtkit-daemon": true, "NetworkManager": true, "wpa_supplicant": true,
+	"gdm3": true, "gdm-session-worke": true,
+	// kabuklar
+	"bash": true, "sh": true, "dash": true, "zsh": true, "fish": true,
+}
+
+// IsProtected reports whether a process name is on the protection list.
+func IsProtected(comm string) bool { return ProtectedProcesses[comm] }
+
+// UnimplementedActions are actions no AXlinux hook can produce.
+//
+// Every action here is listed in actionToUint, so a rule using one
+// builds a perfectly valid key and is written to the map. The problem
+// is on the kernel side: no attached hook ever generates this action
+// value, so the entry can never match anything. The daemon reports
+// "1 kural yuklendi" and the file is still deleted.
+//
+// This is the worst class of silent failure, because the user is
+// actively relying on a rule they were told was in force. Rejecting
+// it at load time costs the user one edit; accepting it costs them a
+// false sense of protection. The Python compiler rejects these too;
+// this list is the second line of defence for policies sent straight
+// over RPC.
+var UnimplementedActions = map[string]string{
+	"file.delete": "AXlinux'ta silme kanacasi yok " +
+		"(lsm/inode_unlink_at bagli degil)",
+	"file.create": "AXlinux'ta dosya olusturma kanacasi yok",
+	"net.accept":  "AXlinux'ta kabul edilen baglanti kanacasi yok " +
+		"(lsm/socket_accept bagli degil)",
+}
+
+// ValidateRule checks whether a rule can actually be enforced, without
+// touching the maps. It returns the same errors WriteRule would, so
+// callers can reject a whole policy before clearing the old one: a
+// partial load would otherwise leave the system with no rules at all
+// while the caller believes the previous policy is still active.
+func ValidateRule(comm, path, action string, port int) error {
+	if IsProtected(comm) {
+		return fmt.Errorf(
+			"%q korumali bir sistem sureci; AXlinux bu sureclere "+
+				"guvenlik geregi kural uygulamaz "+
+				"(engellenirse sistem kilitlenir). Kurali hedef "+
+				"uygulamaya yazin", comm)
+	}
+
+	// Onceki bir kanca bu aksiyonu uretmiyor. Yazilirsa kural
+	// map'e girer, hicbir sey eslesmez ve kullanici yanlis
+	// guvenlik varsayimiyla yasar.
+	if why, bad := UnimplementedActions[action]; bad {
+		return fmt.Errorf(
+			"aksiyon %q AXlinux tarafindan uygulanmiyor: %s. "+
+				"Kural yazilsaydi hicbir ise yaramazdi, bu "+
+				"yuzden yuklenmedi", action, why)
+	}
+
+	key := buildKeyPort(comm, path, action, port)
+	if key.Action == 0 {
+		return fmt.Errorf("bilinmeyen aksiyon: %s", action)
+	}
+	// Anahtar bos olmamali. Buradaki istisna: yalnizca surec
+	// (port'suz, yolsuz) kurallar yolu gerektirmez; onlar zaten
+	// bilincli olarak bos yolla yazilir.
+	if port == 0 && path == "" {
+		return nil
+	}
+	if keyIsEmpty(&key) {
+		return fmt.Errorf(
+			"yol anahtari uretilemedi (%s %s port=%d): yolun bir "+
+				"bileseni %d karakteri asiyor veya bilesen sayisi "+
+				"%d'den fazla",
+			action, path, port, PathSlot-1, PathDepth)
+	}
+	return nil
+}
+
 // WriteRule inserts a single rule into the map matching its effect.
 // effect must be EffectAllow or EffectDeny as defined above.
-func (m *Manager) WriteRule(comm, path, action string, ruleID uint32, effect uint32) error {
+func (m *Manager) WriteRule(comm, path, action string, port int, ruleID uint32, effect uint32) error {
+	if err := ValidateRule(comm, path, action, port); err != nil {
+		return err
+	}
 	if effect != EffectAllow && effect != EffectDeny {
 		return fmt.Errorf("gecersiz effect: %d", effect)
 	}
 
-	key := buildKey(comm, path, action)
-	if key.Action == 0 {
-		return fmt.Errorf("bilinmeyen aksiyon: %s", action)
-	}
+	key := buildKeyPort(comm, path, action, port)
 	val := MapValue{RuleID: ruleID, Effect: effect}
 
 	target := m.allowMap
@@ -302,9 +425,21 @@ func (m *Manager) WriteRule(comm, path, action string, ruleID uint32, effect uin
 	}
 
 	if err := target.Put(key, val); err != nil {
-		return fmt.Errorf("kural yazilamadi (%s %s %s): %w", comm, action, path, err)
+		return fmt.Errorf("kural yazilamadi (%s %s %s port=%d): %w", comm, action, path, port, err)
 	}
 	return nil
+}
+
+// keyIsEmpty, yol alani tamamen bos olan bir anahtari bildirir.
+func keyIsEmpty(k *MapKey) bool {
+	for i := range k.Path {
+		for _, b := range k.Path[i] {
+			if b != 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // Clear removes all entries from both rule maps.
@@ -348,18 +483,121 @@ func countEntries(m *ebpf.Map) int {
 }
 
 func buildKey(comm, path, action string) MapKey {
+	return buildKeyPort(comm, path, action, 0)
+}
+
+// buildKeyPort, portu olan kurallar icin anahtari uretir. eBPF
+// tarafi ag kurallarini "p:PORT" biciminde yazar (bkz.
+// hooks_socket_connect.inc / hooks_socket_bind.inc), bu yuzden
+// Go tarafi da AYNI bicimi uretmek zorundadir; aksi halde
+// net.bind / net.connect kurallari hicbir zaman tutmaz.
+func buildKeyPort(comm, path, action string, port int) MapKey {
 	var k MapKey
 	copy(k.Comm[:], comm)
-	copy(k.Path[:], path)
 	k.Action = actionToUint(action)
+	if port > 0 {
+		setKeyPath(&k, fmt.Sprintf("p:%d", port))
+		return k
+	}
+	setKeyPath(&k, canonicalPath(path))
 	return k
 }
 
-// KeyToString renders a MapKey for display.
+// canonicalPath resolves a policy path to the form the kernel reports.
+//
+// Modern Debian/Ubuntu use "merged /usr": /bin, /sbin, /lib and
+// /lib64 are symlinks into /usr. The kernel always reports the
+// RESOLVED path, so a policy written as /bin/ls produces the key
+// ["/bin","/ls"] while the kernel looks up ["/usr/bin","/ls"].
+//
+// The rule then loads, the daemon reports "1 kural yuklendi", and it
+// can never match. This is the exact silent failure this project
+// exists to prevent: the operator reads the policy as active while
+// the process is unrestricted.
+//
+// Resolution happens on the daemon's own filesystem, which is the same
+// machine the kernel reports paths from, so the two agree.
+//
+// A path that does not exist is left untouched: the file may be
+// created later, and refusing the rule would be worse than a rule
+// that simply does not match yet.
+func canonicalPath(p string) string {
+	if p == "" || strings.HasPrefix(p, "p:") {
+		return p
+	}
+	resolved, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return p
+	}
+	// EvalSymlinks on a directory prefix is handled by the OS; the
+	// only thing that matters here is that the result is the same
+	// string the kernel will build from the dentry chain.
+	return resolved
+}
+
+// setKeyPath doldurur. "/" iceren yollar bilesenlere bolunur ve
+// en sondan basa dogru bloklara yazilir; boylece eBPF tarafi
+// d = 0 (dosya adi) ile en yuksek bloga yazdiginda sira tutar.
+func setKeyPath(k *MapKey, path string) {
+	// ag adresi gibi "/" icermeyen degerler 0. bloga duz yazilir
+	if !strings.Contains(path, "/") {
+		// Sigmiyorsa kirpma: sessiz kirpma kuralin yanlis
+		// anahtara yazilmasi demektir.
+		if len(path) > PathSlot-1 {
+			k.Path = [PathDepth][PathSlot]byte{}
+			return
+		}
+		copy(k.Path[0][:], path)
+		return
+	}
+
+	parts := strings.Split(path, "/")
+	idx := PathDepth - 1
+	// representable=false ise yol bloga sigmiyordur. Kuralin
+	// YANLIS bir yola uygulanmasina yol acmamak icin anahtar
+	// tamamen bosaltilir; ValidateRule bunu acik hata olarak
+	// bildirir. Kismi doldurulmus bir anahtar kullanilirsa
+	// kural hicbir seyi engellemezken kullanici "yuklendi" sanir.
+	representable := true
+	for i := len(parts) - 1; i >= 1; i-- {
+		if parts[i] == "" {
+			continue
+		}
+		// Bloklar tükendiyse ya da bilesen bloga sigmiyorsa
+		// yol temsil edilemez.
+		if idx < 0 || len(parts[i]) > PathSlot-1 {
+			representable = false
+			break
+		}
+		k.Path[idx][0] = '/'
+		copy(k.Path[idx][1:], parts[i])
+		idx--
+	}
+	if !representable {
+		k.Path = [PathDepth][PathSlot]byte{}
+		return
+	}
+	if path == "/" {
+		k.Path[0][0] = '/'
+	}
+}
+
+// KeyToString renders a MapKey for display. Bloklar birlestirilir.
 func KeyToString(k MapKey) string {
 	comm := strings.TrimRight(string(k.Comm[:]), "\x00")
-	path := strings.TrimRight(string(k.Path[:]), "\x00")
-	return fmt.Sprintf("comm=%s path=%s action=%s", comm, path, actionToString(k.Action))
+	var sb strings.Builder
+	for _, blk := range k.Path {
+		s := strings.TrimRight(string(blk[:]), "\x00")
+		if s == "" {
+			continue
+		}
+		sb.WriteString(s)
+	}
+	p := sb.String()
+	if p == "" {
+		p = "/"
+	}
+	return fmt.Sprintf("comm=%s path=%s action=%s", comm, p, actionToString(k.Action))
 }
 
 // SizeOfMapKey returns the compiled size of MapKey.
@@ -384,7 +622,9 @@ func UintToRuleID(n uint32) string { return fmt.Sprintf("rule_%03d", n) }
 func EncodeKey(k MapKey) []byte {
 	buf := make([]byte, SizeOfMapKey())
 	copy(buf[0:16], k.Comm[:])
-	copy(buf[16:272], k.Path[:])
+	for i, blk := range k.Path {
+		copy(buf[16+i*PathSlot:16+(i+1)*PathSlot], blk[:])
+	}
 	binary.LittleEndian.PutUint32(buf[272:276], k.Action)
 	return buf
 }

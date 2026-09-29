@@ -6,8 +6,15 @@
  * LoadCollectionObject cagrisiyla hem programlari hem map'leri alir.
  *
  * Kancalar kendi dosyalarinda .inc olarak tutulur ve buraya include
- * edilir. Yeni kanca eklemek icin: hooks_<isim>.inc yaz, sonra buraya
- * include ekle ve PROGS listesine ismi ekle.
+ * edilir. Yeni kanca eklemek icin SIRAYLA:
+ *   1) hooks_<isim>.inc yaz (BPF_PROG ile)
+ *   2) buraya #include ekle
+ *   3) src/bpf/Makefile icindeki HOOKS listesine ekle
+ *      (aksi halde make, .inc degistiginde yeniden derlemez)
+ *   4) Go tarafindaki internal/lsm/lsm.go HookTable'a ekle
+ *      (aksi halde program yuklenir ama baglanmaz)
+ * Bu dort adim atlindiginda ya program derlenmez ya da baglanmaz;
+ * her iki durumda da enforcement sessizce eksik kalir.
  */
 #include "axbpf.h"
 

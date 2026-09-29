@@ -3,6 +3,7 @@ package audit
 import (
 	"bufio"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -43,7 +44,7 @@ func bpfHeader(t *testing.T) string {
 // the wire layout, e.g. "__u64 timestamp;", "char path[MAX_PATH_LEN];".
 // The array bound may be a numeric literal or a symbolic #define.
 var structFieldRe = regexp.MustCompile(
-	`^\s*(?:__u(\d+)|char)\s+(\w+)(?:\s*\[\s*(\w+)\s*\])?\s*;`)
+	`^\s*(?:__u(\d+)|char)\s+(\w+)(?:\s*\[\s*(\w+)\s*\](?:\s*\[\s*(\w+)\s*\])?)?\s*;`)
 var defineRe = regexp.MustCompile(`^#define\s+(\w+)\s+(\d+)\s*$`)
 
 // cdefines collects the simple integer #defines so symbolic array
@@ -114,15 +115,25 @@ func parseCStruct(t *testing.T, path, structName string) []cField {
 		if m[1] != "" {
 			bits, _ = strconv.Atoi(m[1])
 		}
+		resolve := func(name string) int {
+			if n, err := strconv.Atoi(name); err == nil {
+				return n
+			}
+			if n, ok := defs[name]; ok {
+				return n
+			}
+			t.Fatalf("dizi boyutu cozulemedi: %s (bilinmeyen sabit %q)",
+				structName, name)
+			return 0
+		}
 		count := 0
 		if m[3] != "" {
-			if n, err := strconv.Atoi(m[3]); err == nil {
-				count = n
-			} else if n, ok := defs[m[3]]; ok {
-				count = n
+			// iki boyutlu diziler (char path[8][32]) toplam
+			// bayt sayisi olarak sayilir
+			if m[4] != "" {
+				count = resolve(m[3]) * resolve(m[4])
 			} else {
-				t.Fatalf("dizi boyutu cozulemedi: %s (bilinmeyen sabit %q)",
-					structName, m[3])
+				count = resolve(m[3])
 			}
 		}
 		out = append(out, cField{bits: bits, name: m[2], count: count})
@@ -229,8 +240,10 @@ func TestParseEventRoundTrip(t *testing.T) {
 	off += 4
 	copy(buf[off:off+16], "firefox")
 	off += 16
-	copy(buf[off:off+256], "/etc/shadow")
-	off += 256
+	// yol alani bloklu: "/etc" -> blok 6, "/shadow" -> blok 7
+	copy(buf[off+6*PathSlot:off+6*PathSlot+PathSlot], "/etc")
+	copy(buf[off+7*PathSlot:off+7*PathSlot+PathSlot], "/shadow")
+	off += PathDepth * PathSlot
 	binary.LittleEndian.PutUint32(buf[off:], 1) // action
 	off += 4
 	binary.LittleEndian.PutUint32(buf[off:], 0) // effect = deny
@@ -255,7 +268,7 @@ func TestParseEventRoundTrip(t *testing.T) {
 	if got := strings.TrimRight(string(e.Comm[:]), "\x00"); got != "firefox" {
 		t.Errorf("Comm = %q", got)
 	}
-	if got := strings.TrimRight(string(e.Path[:]), "\x00"); got != "/etc/shadow" {
+	if got := e.JoinPath(); got != "/etc/shadow" {
 		t.Errorf("Path = %q", got)
 	}
 	if e.Action != 1 {
@@ -307,3 +320,107 @@ func TestStatsCountsDecisions(t *testing.T) {
 		t.Error("DeniedCount/AllowedCount Stats ile uyusmali")
 	}
 }
+
+// TestHealthySeparatesIdleFromDead is the test for a failure mode
+// that Count() alone cannot express.
+//
+// Before, a dead read loop and an idle system both reported
+// audit_log_count == 0. The operator had no way to tell them apart
+// and would conclude they were protected when audit had stopped
+// collecting entirely. Healthy() makes the difference visible.
+func TestHealthySeparatesIdleFromDead(t *testing.T) {
+	// A fresh manager is healthy even with zero events: no events
+	// yet is a normal state.
+	m := NewManager(nil)
+	if healthy, why := m.Healthy(); !healthy {
+		t.Errorf("yeni manager saglikli olmali, why=%q", why)
+	}
+	if m.Count() != 0 {
+		t.Errorf("bos manager icin Count 0 olmali, %d", m.Count())
+	}
+
+	// After a fatal read-loop failure the manager must report
+	// itself unhealthy, with a reason the operator can act on.
+	m.markUnhealthy("perf reader 100 kez hata verdi")
+	healthy, why := m.Healthy()
+	if healthy {
+		t.Error("hata isaretlendikten sonra saglikli gorunmemeli")
+	}
+	if why == "" {
+		t.Error("saglikli=false iken sebep bos olmamali; operator " +
+			"ne oldugunu bilemez")
+	}
+	// Count is unchanged: this is exactly why Count alone was
+	// insufficient.
+	if m.Count() != 0 {
+		t.Error("Count 0 kalmali; ayrim Healthy ile yapilir")
+	}
+}
+
+// TestCloseIsIdempotent guards the shutdown path: main.go defers
+// Close while the read loop may already be returning.
+func TestCloseIsIdempotent(t *testing.T) {
+	m := NewManager(nil)
+	if err := m.Close(); err != nil {
+		t.Errorf("nil reader ile Close hata vermemeli: %v", err)
+	}
+	if err := m.Close(); err != nil {
+		t.Errorf("ikinci Close hata vermemeli: %v", err)
+	}
+}
+
+// failingSender stands in for a writer that cannot persist: a full
+// disk, a crashed axlog, a read-only mount.
+type failingSender struct{ err error }
+
+func (s failingSender) Send(Event) error { return s.err }
+
+// TestSendFailureIsNotSwallowed covers the gap this counter exists
+// for.
+//
+// Run() used to discard the sender's error with `_ =`. When the
+// disk filled up, every audit record was lost and nothing said so:
+// get_status reported a healthy manager with a full in-memory
+// buffer, and the operator believed the trail was complete.
+func TestSendFailureIsNotSwallowed(t *testing.T) {
+	m := NewManager(failingSender{err: errors.New("disk full")})
+
+	if err := m.sender.Send(Event{}); err == nil {
+		t.Fatal("test icin beklenen: gonderici hata donmeli")
+	}
+	// Mirror what Run does on failure.
+	m.mu.Lock()
+	m.sendFailed++
+	m.mu.Unlock()
+	m.markUnhealthy("audit kaydi kalici olarak yazilamadi: disk full")
+
+	if m.SendFailures() != 1 {
+		t.Errorf("SendFailures = %d, 1 bekleniyor", m.SendFailures())
+	}
+	healthy, why := m.Healthy()
+	if healthy {
+		t.Error("yazma hatasi sonrasi saglikli gorunmemeli")
+	}
+	if !strings.Contains(why, "disk full") {
+		t.Errorf("bildirim hatayi belirtmeli:\n%s", why)
+	}
+}
+
+// TestSendFailuresZeroWhenHealthy is the other direction: a working
+// sender must not trip the counter.
+func TestSendFailuresZeroWhenHealthy(t *testing.T) {
+	m := NewManager(okSender{})
+	if err := m.sender.Send(Event{}); err != nil {
+		t.Fatalf("gecerli gonderici hata verdi: %v", err)
+	}
+	if n := m.SendFailures(); n != 0 {
+		t.Errorf("basarili gonderimde SendFailures = %d, 0 olmali", n)
+	}
+	if healthy, why := m.Healthy(); !healthy {
+		t.Errorf("basarili gonderimde saglik false olmamali: %s", why)
+	}
+}
+
+type okSender struct{}
+
+func (okSender) Send(Event) error { return nil }

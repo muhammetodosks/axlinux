@@ -1,11 +1,26 @@
 [Unit]
 Description=AXlinux MAC daemon (eBPF LSM enforcement)
 Documentation=file:///usr/share/doc/axlinux/docs/INSTALL.md
-After=sys-fs-bpf.mount network.target
-Requires=sys-fs-bpf.mount
+After=network.target
+# sys-fs-bpf.mount BIR "Requires" OLARAK BURAYA YAZILAMAZ.
+#
+# Bu birim systemd'de tanimli bir mount birimi degil; onu bekleyen
+# bir servis systemd tarafindan "Unit sys-fs-bpf.mount not found"
+# hatasiyle baslatilamaz. Gozlemci bu hatayi gorup "servis
+# baslamiyor" saniyordu, oysa sorun LSM degil, birim bagimliligiydi.
+#
+# /sys/fs/bpf'nin baglanmasi zaten kernel tarafindan garanti
+# edilir; ayrica gerekiyorsa systemd-fsck@.service ve
+# systemd-modules-load tarafindan yonetilir. Burada yalnizca
+# dizinin var olmasini isteyelim.
+ConditionPathIsMountPoint=/sys/fs/bpf
 
 [Service]
 Type=simple
+# ExecStartPre [Service] bolumunde olmak ZORUNDA. [Unit] altinda
+# yazilirsa systemd "Unknown key name 'ExecStartPre'" diye sessizce
+# YOK SAYAR; kontrol hicbir zaman calismaz.
+ExecStartPre=/bin/sh -c 'test -d /sys/fs/bpf || { echo "HATA: /sys/fs/bpf bagli degil; BPF LSM calismaz." >&2; exit 1; }'
 ExecStart=/usr/local/bin/axdaemon --socket /run/axlinux/axdaemon.sock
 Restart=on-failure
 RestartSec=3
@@ -16,6 +31,15 @@ Environment=AXLINUX_BPF_OBJ=/usr/lib/axlinux/axbpf.o
 
 RuntimeDirectory=axlinux
 RuntimeDirectoryMode=0755
+# ReadWritePaths'ta listelenen dizinler ONCEDEN VAR OLMALI; systemd
+# olmayan bir yolu "Failed to set up mount namespacing" ile 226/
+# NAMESPACE hatasina dusurur ve servis hic acilmaz. onceki surumde
+# bu dizin hicbir yerde olusturulmadigi icin servis dongusel olarak
+# cokup duruyordu.
+StateDirectory=axlinux
+StateDirectoryMode=0755
+LogsDirectory=axlinux
+LogsDirectoryMode=0755
 
 # Gerekli yetkiler
 AmbientCapabilities=CAP_BPF CAP_SYS_ADMIN CAP_PERFMON
@@ -25,7 +49,9 @@ CapabilityBoundingSet=CAP_BPF CAP_SYS_ADMIN CAP_PERFMON
 NoNewPrivileges=yes
 ProtectHome=read-only
 ProtectSystem=strict
-ReadWritePaths=/sys/fs/bpf/axlinux /var/log/axlinux /run/axlinux
+# /var/lib/axlinux ve /var/log/axlinux StateDirectory/LogsDirectory
+# ile systemd tarafindan olusturulur.
+ReadWritePaths=/sys/fs/bpf /var/lib/axlinux /var/log/axlinux /run/axlinux
 PrivateTmp=yes
 RestrictSUIDSGID=yes
 

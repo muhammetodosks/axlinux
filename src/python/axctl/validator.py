@@ -4,9 +4,20 @@ from axctl.exceptions import PolicyError
 
 
 VALID_MODES = {"enforcing", "permissive", "disabled"}
+
+# SÖZLESME: bu liste, LSM kancalarinin gercekten UYGULADIGI
+# aksiyonlardir. Buradaki her deger icin AXlinux'ta en az bir kanca
+# vardir ve o kanca anahtari uretir.
+#
+# Once file.delete, file.create ve net.accept de bu listedeydi.
+# Hicbir kanca bu aksiyonlari uretmez (bkz. compiler.
+# UNIMPLEMENTED_ACTIONS), yani kurallar sessizce islevsizdi.
+# Simdilik listeden cikarildilar; uygulama eklendiginde geri
+# alinabilir. Tek dogruluk kaynagi bu dosya olmali, derleyici
+# UNIMPLEMENTED_ACTIONS ile ayni seyi soylememeli.
 VALID_ACTIONS = {
-    "file.read", "file.write", "file.execute", "file.delete", "file.create",
-    "net.connect", "net.bind", "net.accept", "process.exec",
+    "file.read", "file.write", "file.execute",
+    "net.connect", "net.bind", "process.exec",
 }
 VALID_EFFECTS = {"allow", "deny"}
 
@@ -70,13 +81,34 @@ def _validate_rule(rule: dict, index: int, labels: dict) -> list:
     subject = rule.get("subject")
     if not subject:
         errors.append(f"{prefix}: 'subject' gerekli")
-    elif subject != "*":
-        if subject in labels:
-            pass
-        elif isinstance(subject, str) and subject:
-            pass
-        else:
-            errors.append(f"{prefix}: '{subject}' tanımlı bir etiket değil")
+    elif subject == "*":
+        pass
+    elif isinstance(subject, str):
+        # Tek etiket adi ya da tek surec adi. Ikisi de gecerli.
+        pass
+    elif isinstance(subject, (list, tuple)):
+        # En yaygin bicim: surec listesi. Go tarafi Subject'i
+        # []string olarak bekliyor, yani liste yasal ve asil yoldur.
+        #
+        # Onceki kod bu bicimi hiç ele almıyordu ve dogrudan
+        # "subject in labels" diyordu. labels bir sozluk oldugu icin
+        # liste aranamaz ve Python "unhashable type: 'list'" ile
+        # cokuyordu: en sik kullanilan kural bicimi dogrulamayi
+        # tamamen cokturuyordu. (Diger kontroller de hic calismiyordu;
+        # bir TypeError butun dogrulamayi oldurur.)
+        if not subject:
+            errors.append(f"{prefix}: 'subject' bos liste olamaz")
+        for s in subject:
+            if not isinstance(s, str) or not s.strip():
+                errors.append(
+                    f"{prefix}: 'subject' ogeleri bos olamayan string "
+                    f"olmali, {s!r} gecersiz"
+                )
+    else:
+        errors.append(
+            f"{prefix}: 'subject' '*', bir etiket adi veya surec "
+            f"listesi olmali, {type(subject).__name__} gecersiz"
+        )
 
     action = rule.get("action")
     if not action:
@@ -90,8 +122,42 @@ def _validate_rule(rule: dict, index: int, labels: dict) -> list:
     elif effect not in VALID_EFFECTS:
         errors.append(f"{prefix}: geçersiz etki '{effect}'. Geçerli: {sorted(VALID_EFFECTS)}")
 
-    if action and action.startswith("file.") and not rule.get("object"):
-        errors.append(f"{prefix}: file.* aksiyonları için 'object' gerekli")
+    # YOL GEREKSINIMI
+    #
+    # Once her file.* aksiyonu icin object zorunluydu. Bu hem
+    # yanlisti: file.read yolsuz (surec bazli) bir kural gecerlidir
+    # ve Go tarafi kabul eder, hem de Go ile celisiyordu.
+    #
+    # Iki ayri kural turu var:
+    #   - yol bazli:   subject + object + action  -> /etc/shadow
+    #   - surec bazli: subject + action           -> "nginx hicbir
+    #     sey calistiramaz", yol bilinerek bos birakilir
+    # Ikincisi Go'da ValidateRule tarafindan kabul edilir; burada
+    # da kabul edilmeli, yoksa Python derleyici gecerli bir
+    # politikayi reddeder. Bu yuzden object artık zorunlu DEGIL.
+    #
+    # file.execute de iki bicimde yazilabilir: "bu yolu calistirma"
+    # (object verilir) ve "hicbir sey calistirma" (object bos).
+    # Ikincisi de gecerlidir.
+
+    # AG KURALLARI
+    #
+    # net.bind / net.connect portla calisir. Port yoksa anahtar
+    # "p:0" olarak uretilir ve HICBIR baglantiyi tutmaz; kural
+    # yuklendigi halde etkisiz kalir. Bu, sessiz basarisizligin
+    # en yaygin bicimidir: kullanici "nginx aga cikamasin" yazip
+    # gonderiyor, kurallar yukleniyor, nginx cikiyor.
+    if action in ("net.bind", "net.connect", "net.accept"):
+        port = rule.get("port")
+        if port in (None, "", 0):
+            errors.append(
+                f"{prefix}: '{action}' aksiyonu 'port' gerektirir. "
+                f"Port vermeden yazılan kural HİÇBİR bağlantıyı "
+                f"etkilemez (sessizce işlevsiz kalır).")
+        elif not isinstance(port, int) or not (0 < port < 65536):
+            errors.append(
+                f"{prefix}: 'port' 1-65535 aralığında tam sayı olmalı, "
+                f"'{port}' verildi")
 
     return errors
 
@@ -102,12 +168,26 @@ def _rule_key(rule: dict) -> tuple:
     ``port`` da anahtara dahil edilir: ayni islem icin
     ``net.bind port: 80`` ve ``net.bind port: 443`` iki ayri
     kuraldir, aksi halde ikincisi yinelenen sayilir.
+
+    Her bilesen HASHABLE olmak zorunda, cunku anahtar bir ``set``
+    icinde tutuluyor. ``subject`` dogrudan yazilinca liste oldugu
+    icin ("firefox", "nginx") Python "unhashable type: 'list'" ile
+    cokuyordu; en sik kullanilan kural bicimi oldugu icin bu,
+    pratikte her politikanin dogrulanmasini olduruyordu.
+
+    Subject bu yuzden sirali bir tuple'a duzgunlestirilir: boylece
+    ``["a", "b"]`` ile ``["b", "a"]`` de ayni kural sayilir.
     """
+    subject = rule.get("subject", "")
+    if isinstance(subject, (list, tuple)):
+        subject = tuple(sorted(str(s) for s in subject))
+    else:
+        subject = str(subject)
     return (
-        rule.get("subject", ""),
-        rule.get("object", ""),
-        rule.get("action", ""),
-        rule.get("port", ""),
+        subject,
+        str(rule.get("object", "")),
+        str(rule.get("action", "")),
+        str(rule.get("port", "")),
     )
 
 
@@ -144,10 +224,39 @@ def _detect_conflicts(rules: list, labels: dict) -> list:
     return conflicts
 
 
-def _expand_subject(subject: str, labels: dict) -> list:
-    """Etiketleri gerçek işlem adlarına çevirir."""
+def _expand_subject(subject, labels: dict) -> list:
+    """Etiketleri gerçek işlem adlarına çevirir.
+
+    ``subject`` üç biçimde gelir ve ÜÇÜ de yasaldır:
+
+    * ``"*"``            - joker
+    * ``"web"``          - ``labels`` sözlüğündeki bir etiket
+    * ``["a", "b"]``     - doğrudan süreç listesi (Go tarafı
+      ``Subject []string`` bekler, yani en yaygın biçim)
+
+    Etiket listeleri de özyinelemeli olarak çözülür, aksi halde
+    ``web: [browser, "www"]`` gibi bir etiket ikinci adımda
+    süreç adı sanılır ve kural hiçbir şeyle eşleşmez.
+
+    Daha önce liste biçimi hiç ele alınmıyordu: sözlükte arama
+    yapıldığı için Python "unhashable type: 'list'" ile çöküyordu
+    ve çakışma denetimi, en sık kullanılan kural biçiminde hiç
+    çalışmıyordu.
+    """
     if subject == "*":
         return ["*"]
-    if subject in labels:
-        return labels[subject]
-    return [subject]
+    if isinstance(subject, (list, tuple)):
+        out = []
+        for s in subject:
+            # Her ogge kendi etiketi olabilir; duz surec adlari da
+            # ayni yoldan gecer ve etiket bulunamazsa kendisi kalir.
+            for expanded in _expand_subject(s, labels):
+                if expanded not in out:
+                    out.append(expanded)
+        return out
+    if isinstance(subject, str) and subject in labels:
+        value = labels[subject]
+        if isinstance(value, (list, tuple)):
+            return [str(v) for v in value]
+        return [str(value)]
+    return [subject] if not isinstance(subject, str) else [subject]

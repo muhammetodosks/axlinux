@@ -51,8 +51,25 @@ func Active() []string {
 	return chain
 }
 
+// override, when non-nil, replaces the real kernel probe.
+//
+// It exists because Available() is consulted by reporting logic
+// (EnforcementNotice, get_status) that must be testable. Without a
+// seam, every such test skips on any machine whose LSM chain lacks
+// 'bpf' - which is every ordinary development machine. The result was
+// that the --no-enforce "this is intentional, not a fault" rule and
+// the partial-attach warning were never exercised at all.
+var override *bool
+
+// SetOverrideForTest forces Available to report v; nil restores the
+// real kernel probe. Not safe for concurrent use. Tests only.
+func SetOverrideForTest(v *bool) { override = v }
+
 // Available reports whether BPF LSM is in the active chain.
 func Available() bool {
+	if override != nil {
+		return *override
+	}
 	Active()
 	return available
 }

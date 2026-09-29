@@ -1,5 +1,52 @@
 # AXlinux Zorluklar ve Riskler
 
+## Kritik Risk: Sistem Kilitlenmesi (Lockout)
+
+**Bu, AXlinux'in en tehlikeli hata modudur ve tasarım gereği mühürlenmiştir.**
+
+Bir kural `bash`, `sudo`, `sshd` veya `systemd` gibi kritik bir sürece
+uygulanırsa sistem kendini kilitler: o sürecin tüm çocuk süreçleri
+engellenir, oturum kapanır ve kullanıcı sisteme erişemez. Bu shell'den
+kurtarma mümkün değildir; yalnızca fiziksel reboot gerekir.
+
+**Önlem** (`ax_protected`, `src/bpf/axbpf.h`):
+
+Aşağıdaki süreçler **hiçbir kurala tabi değildir**; programlar onlar için
+doğrudan `0` döner. Policy "bash /bin/echo çalıştıramaz" dese bile:
+
+- `bash`, `sh`, `dash`, `zsh`, `fish` — kullanıcı oturumu açık kalır
+- `sudo`, `su`, `doas` — mod değiştirilebilir, müdahale edilebilir
+- `sshd`, `login`, `agetty` — uzaktan/yerel bağlantı mümkün kalır
+- `systemd`, `dbus-daemon`, `polkitd`, `NetworkManager` — oturum ve
+  ağ çalışmaya devam eder
+
+Liste **bilinçli olarak kısadır**: yalnızca **kurtarma yolunu**
+kapsar. Her aday şu sorudan geçer:
+
+> "Engellersem sisteme tekrar erişebilir miyim?" → hayır ise korunur.
+
+Bu soru neden tek başına yeterli: **dil çalıştırıcıları korunmaz.**
+`python3`, `node`, `perl`, `ruby`, `npm` listede değildir.
+
+Çünkü çoğu gerçek uygulama bir yorumlayıcıdan çalışır. Onları
+korumak "python3 /etc/shadow okuyamaz", "node ağa çıkamaz" gibi MAC'in
+en sık kullanılan kurallarını yazılamaz hâle getirirdi — ürün
+kullanılamaz olurdu. Ve kazanılan tek şey sıfırdı: bir yorumlayıcıyı
+engellemek kilitlenme **yaratmaz**, çünkü kullanıcı zaten korumalı bir
+kabuğa sahiptir.
+
+Buna karşılık `firefox`, `nginx`, `curl` gibi uygulamalar da listede
+değil — onlar zaten hedef.
+
+**Doğrulama**: `tests/test_protection.py` korunan ve korunmaması
+gereken süreçleri statik olarak denetler (her iki yönde);
+`tests/verify_all.sh` adım 8'de canlı olarak kanıtlar.
+
+**Politika yazarken**: `subject` alanına `bash`, `sudo`, `systemd`
+gibi bir süreç adı yazmak **yükleme anında hata verir**; kural hiç
+yazılmaz. `python3` gibi bir yorumlayıcı yazmak ise normaldir ve
+kurallar uygulanır.
+
 ## Teknik Zorluklar
 
 ### 1. eBPF LSM Koşulları
@@ -45,6 +92,57 @@
 - `realpath()` syscall hook (gelecek)
 
 **Risk**: Sembolik link'ler ve `..` path'leri atlanabilir.
+
+### 4.1. `bpf_d_path` Kullanılamaz (kritik)
+
+**Belirti**: Derleme ve yükleme başarılı, 5/5 kanca bağlı, daemon
+`enforcement_active: true` ve "1 kural yüklendi" diyor — ama **hiçbir
+yol kuralı tutmuyor**, audit boş.
+
+**Kök neden**: `bpf_d_path` bu projede kullanılamaz. libbpf 1.3.0 onu
+global bir fonksiyon işaretçisi olarak tanımlar; BPF'ye çağrı olarak
+derlendiğinde hedef tampona yazım **iki konuma birden** düşer:
+
+- doğru offset (yol alanı)
+- **242 byte kaymış** ikinci bir konum
+
+Sonuç: `comm` ve `action` doğru, `path` alanı çöplü → hash hiç eşleşmez.
+Kural "yüklendi" görünür ama hiçbir şey engellenmez. Bu, MAC'te en
+kötü hata biçimidir: **sessiz başarısızlık**.
+
+Kanıt, çekirdeğin ürettiği 276 baytın Go'nun yazdığı 276 baytla
+bayt bayt karşılaştırılmasıyla elde edildi; iki metin aynı görünüyordu
+(`comm=cat`, `path=/etc/hostname`) ama ham baytlar offset 242'den
+itibaren ayrışıyordu.
+
+**Çözüm** (`ax_fill_path`, `src/bpf/axbpf.h`): yol alanı 8 sabit bloğa
+bölünür (`char path[8][32]`), her bileşen kendi bloğuna yazılır.
+Bölme ve birleştirme Go tarafında yapılır. Toplam anahtar boyutu
+değişmez: 16 + 8×32 + 4 = **276 byte**.
+
+**Tasarım kuralları** (bu çözümü bozmadan önce bilin):
+
+1. **Hedef ve boyut sabit olmalı.** `bpf_probe_read_kernel(dst, len, src)`
+   için `dst` ve `len` derleme zamanında sabitse verifier sınırı görür.
+   Çalışma anında hesaplanan `dst[pos]` reddedilir.
+2. **Her iki geçiş de unroll'lenmeli.** Runtime döngüde verifier döngü
+   gövdesini her yineleme için yeniden doğrular; 63 × program boyutu
+   1M instruction sınırını aşar. İç içe unroll ise 512 byte stack
+   sınırını aşar.
+3. **`bpf_probe_read_kernel_str` kullanmayın.** İçinde 256 adımlık gizli
+   bir unroll vardır; slot başına çağrıldığında programı 40 kat şişirir.
+   Sabit boyutlu `bpf_probe_read_kernel` + elle NUL aynı işi yapar.
+4. **Kök bileşen yazılmaz.** Go tarafı kök içeriği üretmez; eBPF tarafı
+   de yazmaz, aksi halde blok 0'da `"//"` oluşur ve anahtarlar eşleşmez.
+5. **`bpf_map_lookup_elem` sonrası harici pointer yazma yapılmaz.**
+   Verifier pointer'ı "unbounded" işaretler. Bu yüzden audit alanları
+   map aramasından **önce** doldurulur.
+
+**Sözleşme kilidi**: `struct policy_key` ve `struct audit_event`
+boyutları C tarafından bağımsız hesaplanıp Go struct ile
+karşılaştırılır (`internal/maps/contract_test.go`,
+`internal/audit/audit_test.go`). Bu testler düz (256 byte) ve bloklu
+(8×32) dizi düzenlerini ikisini de tanır.
 
 ### 5. Performans
 

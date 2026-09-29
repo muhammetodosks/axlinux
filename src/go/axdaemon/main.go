@@ -37,6 +37,8 @@ func main() {
 			"Map pin dizini (bos: pinleme)")
 		noEnforce = flag.Bool("no-enforce", false,
 			"LSM kancalarini baglama, yalnizca RPC calistir")
+		axlogSocket = flag.String("axlog-socket", "/run/axlinux/axlog.sock",
+			"axlog Unix socket yolu (audit kayitlari buraya yazilir)")
 	)
 	flag.Parse()
 
@@ -91,44 +93,113 @@ func main() {
 				logger.Warn("mod yazilamadi", "error", err)
 			}
 
-			if *noEnforce {
-				logger.Warn("--no-enforce verildi, LSM kancalari baglanmiyor")
+			enforceRequested := !*noEnforce
+			if !enforceRequested {
+				// Manager'a da bildir: aksi halde get_status
+				// 0/5 kanca bildirip bunu bir build/kernel
+				// hatas gibi gosterirdi.
+				lsmMgr.SetNoEnforce()
+				logger.Warn("--no-enforce verildi, LSM kancalari " +
+					"BILINCLI OLARAK baglanmadi; politika " +
+					"UYGULANMIYOR (RPC ve dogrulama calisir)")
 			} else if err := lsmMgr.Attach(); err != nil {
 				logger.Warn("bazi LSM kancalari baglanamadi",
 					"error", err)
 			}
 
-			// Baglanti basarili olsa bile bpf LSM zincirde yoksa
-			// enforcement gerceklesmez. Sayilari oldugundan gibi
-			// gostermek yaniltici olur.
-			if lsmMgr.EnforcementPossible() {
+			// EnforcementPossible iki kosulu da ister: bpf LSM
+			// zincirde OLMALI ve TUM kancalar baglanmis OLMALI.
+			// Ikinci kosul atlanirsa mesaj yaniltici olur: 3/5 kanca
+			// bagliyken "bpf LSM zincirde yok" demek, sorunun
+			// yerine gondermez. Kismi baglanmanin ayri bir tanisi
+			// vardir.
+			//
+			// --no-enforce BILINCLI bir durumdur: hicbir kanca
+			// baglanmamasi beklenir, sorun degil. Bu yuzden o
+			// durumda "KISMI" tanisi yaniltici olurdu.
+			switch {
+			case !enforceRequested:
+				// yukarida zaten uyarildi
+
+			case lsmMgr.AllHooksAttached():
 				logger.Info("LSM kancalari baglandi",
 					"aktif", lsmMgr.AttachedCount(),
 					"toplam", lsmMgr.HookCount())
-			} else {
-				logger.Warn("LSM kancalari yuklendi ama CALISMIYOR " +
-					"(bpf LSM zincirde yok) - politika uygulanmiyor",
-					"aktif", lsmMgr.AttachedCount(),
+
+			case lsmMgr.AttachedCount() == 0:
+				// Hicbiri baglanmadi: buyuk ihtimalle zincir
+				// sorunu ya da kernel destegi yok.
+				logger.Warn("LSM kancalari baglanmadi - " +
+					"bpf LSM zincirde olmali - politika UYGULANMIYOR",
 					"toplam", lsmMgr.HookCount(),
 					"detay", lsmenv.Summary())
+
+			default:
+				// Kismi: hangi kancalar eksik, operator ne
+				// test etmeli bilmeli.
+				logger.Warn("LSM KISMI BAGLANDI - enforcement TAM DEGIL",
+					"aktif", lsmMgr.AttachedCount(),
+					"toplam", lsmMgr.HookCount(),
+					"eksik", strings.Join(lsmMgr.MissingHooks(), ","),
+					"not", "eksik kancalara yazilan kurallar ETKISIZ kalir",
+					"detay", lsmMgr.EnforcementNotice())
 			}
 
 			// Audit perf buffer'i da collection'dan al.
-			a := audit.NewManager(nil)
-			if am := mapsMgr.Map(maps.AuditMapName); am != nil {
+			//
+			// --no-enforce durumunda hicbir kanca bagli
+			// degildir; perf buffer acilsa bile uretilen olay
+			// olmaz. Manager'i yine de baglamazsak
+			// get_status "audit_healthy=false" der ve
+			// operator bunun --no-enforce'dan kaynaklandigini
+			// anlamaz. Bu yuzden acikca isaretlenir.
+			//
+			// Sender: once burada nil veriliyordu, yani HICBIR
+			// audit kaydi kalici olarak yazilmazdi. get_status dolu
+			// bir tampon ve "saglikli" gosteriyordu ama
+			// /var/log/axlinux bos kaliyordu. Denetim izinin
+			// surec olusturunce degil, diskte kaldiginda
+			// anlami vardir.
+			if !enforceRequested {
+				logger.Info("--no-enforce: audit akisi " +
+					"baslatilmiyor (kanca yok, kayit gelmez)")
+			} else if am := mapsMgr.Map(maps.AuditMapName); am != nil {
+				sender := audit.NewUnixSender(*axlogSocket)
+				a := audit.NewManager(sender)
 				if err := a.OpenPerfBuffer(am); err != nil {
 					logger.Warn("perf buffer acilamadi, audit log kapali",
 						"error", err)
 				} else {
 					auditMgr = a
+					// Ogrenme gozlemleri olay akisindan
+					// beslenir. Onceki tasarimda kayitlar
+					// "axctl logs" sorgusundan aliniyordu;
+					// boylece hicbir sey gozlenmiyor ya da
+					// her sorguda ayni kayitlar tekrar
+					// sayiliyordu.
+					a.SetObserver(learningMgr)
 					logger.Info("audit perf buffer acildi")
 					go func() {
 						if err := a.Run(ctx); err != nil &&
 							err != context.Canceled {
-							logger.Error("audit dongusu hatasi", "error", err)
+							// Yalnizca loglamak yetmez: daemon
+							// calismaya devam eder ve operator
+							// enforcement aktif sanarken audit
+							// toplamiyor olabilir. Manager'a
+							// isaretlendi; get_status
+							// audit_healthy=false doner ve
+							// axctl bunu gosterir.
+							logger.Error("audit dongusu DURDU - "+
+								"kayitlar toplanmiyor, enforcement "+
+								"calisiyor ama audit KAPALI",
+								"error", err)
 						}
 					}()
 					defer a.Close()
+					// Sender'in socket baglantisi da kapatilmali;
+					// manager Close yalnizca perf reader'i
+					// serbest birakir.
+					defer sender.Close()
 				}
 			} else {
 				logger.Warn("audit_buffer map'i collection'da yok")

@@ -28,8 +28,14 @@ axctl policy edit           # YAML politikanı yaz
 axctl policy check          # doğrula
 axctl policy simulate       # neyi etkileyeceğini gör
 sudo axctl reload           # uygula
-axctl status                # gerçek durumu kontrol et
+sudo axctl status           # gerçek durumu kontrol et
 ```
+
+> **Neden `sudo`?** Daemon socket'i `0600` iznine sahip. Üzerinden
+> `reload_policy` gönderilebildiği için herkese açık olsaydı
+> (`0666`) herhangi bir yerel kullanıcı sistem genelinde politika
+> değiştirebilirdi. Politika *yazma* komutları kullanıcı dizininde
+> çalışır, daemon'a konuşan komutlar `sudo` ister.
 
 Örnek politika:
 
@@ -63,6 +69,44 @@ rules:
     action: net.connect
     effect: deny
 ```
+
+## Doğrulama
+
+`5/5 kanca bağlı` **engellemenin çalıştığı anlamına gelmez.** Gerçek
+test:
+
+```bash
+sudo bash tests/verify_all.sh
+```
+
+Bu betik her kancayı gerçek bir engelleme ile dener, audit kaydını
+kontrol eder, mod geçişlerini doğrular ve **sistemi kilitlemez**
+(kritik süreçlere kural uygulanmaz, her adımdan sonra mod kapatılır).
+
+## Güvenlik notu: sistem kilitlenmesi
+
+Bir kural `bash`, `sudo`, `systemd` veya `sshd` gibi **kurtarma
+yolundaki** bir sürece uygulanırsa sistem kendini kilitler — oturum
+kapanır ve kullanıcı sisteme erişemez. AXlinux bunu tasarım gereği
+engeller:
+
+> `bash`, `sh`, `dash`, `zsh`, `fish`, `sudo`, `su`, `doas`, `systemd`,
+> `sshd`, `login`, `agetty`, `dbus-daemon`, `polkitd`,
+> `NetworkManager` gibi **kurtarma yolu** süreçlerine hiçbir kural
+> uygulanmaz.
+
+Politikada bu süreçlerden birini hedeflerseniz derleme hata verir
+(goşte seçilen kural hiç yazılmaz).
+
+**Yorumlayıcılar korunmaz.** `python3`, `node`, `perl`, `ruby` gibi
+süreçler listede *değildir* — çoğu gerçek uygulama bir yorumlayıcıdan
+çalışır ve "python3 /etc/shadow okuyamaz" MAC'in en sık kullanılan
+kuralıdır. Bunları korumak ürünü kullanılamaz hâle getirirdi ve
+kilitlenmeyi önlemezdi: kullanıcı zaten korumalı bir kabuğa sahiptir.
+
+Kuralları hedef uygulamaya uygulayın (`firefox`, `nginx`, `python3`,
+`node`).
+Ayrıntı: [docs/challenges-risks.md](docs/challenges-risks.md)
 
 ## Mimarî
 
@@ -154,7 +198,9 @@ sisteminizden kapatabilir. Sırayla ilerleyin:
 axctl policy check → simulate → mode permissive → mode enforcing
 ```
 
-Acil çıkış her zaman çalışır: `axctl mode disabled`.
+Acil çıkış her zaman çalışır: `sudo axctl mode disabled`.
+Bu komut modu `mode_map`'e yazar; yalnızca Go belleğini güncelleyen
+sürümlerde acil çıkış sessizce hiçbir şey yapmıyordu.
 
 `root` AXlinux'u baypas eder; bu kabul edilmiş bir sınırdır.
 

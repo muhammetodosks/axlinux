@@ -3,7 +3,6 @@ package mode
 
 import (
 	"fmt"
-	"sync"
 	"sync/atomic"
 )
 
@@ -17,9 +16,19 @@ const (
 )
 
 // Manager holds the current enforcement mode with atomic access.
+//
+// Once both an atomic.Value and a sync.RWMutex, which suggests two
+// synchronisation schemes where one is enough. The mutex was never
+// locked anywhere, so every reader either raced or, more likely,
+// relied on the atomic load being sufficient. It is correct without
+// the mutex: Mode is written and read as a whole value, never
+// mutated in place.
+//
+// The kernel is the other source of truth. This Manager is the Go
+// side record; handlers always write mode_map first and only then
+// update this, so a failure cannot leave the two disagreeing.
 type Manager struct {
 	current atomic.Value // stores Mode
-	mu      sync.RWMutex
 }
 
 // NewManager creates a Manager defaulting to permissive.

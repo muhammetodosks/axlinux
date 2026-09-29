@@ -26,9 +26,22 @@ rules:
     action: file.read
     effect: deny
 
-  - name: "geliştiriciler dışarı çıkabilir"
+  # NOT: net.* kurallari PORT ile calisir. Port verilmeden yazilan
+  # bir ag kurali HICBIR baglantiyi etkilemez; AXlinux derleme
+  # aninda hata verir. "Her yere cikabilir" anlami gelen bir
+  # kural yazilacaksa o, desteklenen bir port degil - kurallar
+  # port bazlidir. Istediginiz surec icin izin vermek yerine
+  # gercekten kullanilan portlari listeleyin.
+  - name: "geliştiriciler 443'e çıkabilir (https)"
     subject: dev
     action: net.connect
+    port: 443
+    effect: allow
+
+  - name: "geliştiriciler paket sunucusuna (80) çıkabilir"
+    subject: dev
+    action: net.connect
+    port: 80
     effect: allow
 
   - name: "hiçkimse /etc/shadow okuyamaz"

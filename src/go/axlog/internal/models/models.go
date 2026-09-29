@@ -34,27 +34,60 @@ type Object struct {
 
 // Filter holds query parameters for filtering events.
 type Filter struct {
-	Action  string
-	Effect  string
-	Subject string
-	Since   time.Time
-	Limit   int
-	Tail    bool
+	Action   string
+	Effect   string
+	Decision string
+	Subject  string
+	Since    time.Time
+	Limit    int
+	Tail     bool
 }
 
 // Match reports whether an event satisfies the filter.
+//
+// Comparisons are case-insensitive. A user typing "DENY" against a
+// stored "deny" would otherwise get zero rows and conclude there
+// was no activity, which for an audit query is the worst possible
+// outcome: a false all-clear.
+//
+// Every set field constrains (AND). A field left empty does not
+// restrict, so the zero Filter matches everything.
 func (f Filter) Match(e AuditEvent) bool {
-	if f.Action != "" && e.Action != f.Action {
+	if f.Action != "" && !eqFold(f.Action, e.Action) {
 		return false
 	}
-	if f.Effect != "" && e.Effect != f.Effect {
+	if f.Effect != "" && !eqFold(f.Effect, e.Effect) {
 		return false
 	}
-	if f.Subject != "" && e.Subject.Comm != f.Subject {
+	if f.Decision != "" && !eqFold(f.Decision, e.Decision) {
+		return false
+	}
+	if f.Subject != "" && !eqFold(f.Subject, e.Subject.Comm) {
 		return false
 	}
 	if !f.Since.IsZero() && e.Timestamp.Before(f.Since) {
 		return false
+	}
+	return true
+}
+
+// eqFold compares two short strings without regard to case, avoiding
+// a strings.ToLower allocation per comparison on a hot path.
+func eqFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		ca, cb := a[i], b[i]
+		if 'A' <= ca && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if 'A' <= cb && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
 	}
 	return true
 }

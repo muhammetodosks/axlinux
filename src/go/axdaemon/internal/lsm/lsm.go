@@ -5,6 +5,7 @@ package lsm
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/cilium/ebpf"
@@ -80,6 +81,9 @@ type Manager struct {
 	hooks      map[string]*Hook
 	loaded     bool
 	objPath    string
+	// noEnforce records that the operator passed --no-enforce, so
+	// zero attached hooks is a decision rather than a fault.
+	noEnforce bool
 }
 
 // NewManager creates a manager for the given axbpf object path.
@@ -179,19 +183,93 @@ func (m *Manager) Attach() error {
 // EnforcementPossible reports whether this kernel can actually run the
 // hooks.
 //
-// AttachLSM returns success even when 'bpf' is missing from the active
-// LSM chain, so AttachedCount() is meaningless on its own. Callers must
-// consult this before telling a user their policy is in force.
+// Two conditions must BOTH hold, and checking only the first is the
+// most dangerous gap this code has:
+//
+//  1. 'bpf' is in the active LSM chain. AttachLSM returns success even
+//     when it is missing: the bpf_link is created and nothing runs.
+//  2. Every hook in HookTable is attached. Attach() deliberately
+//     continues past individual failures so a partially-supported
+//     kernel still gets the hooks it can take. But 2-of-5 attached
+//     is not "enforcement on": a policy denying file reads would be
+//     reported as active while only, say, socket_connect enforces.
+//
+// Reporting true for a partial attach is exactly the silent failure
+// this project exists to prevent: the user reads "enforcement
+// active", writes a policy, and is unprotected on the missing hooks
+// with no indication anything is wrong.
 func (m *Manager) EnforcementPossible() bool {
-	return lsmenv.Available()
+	return lsmenv.Available() && m.AllHooksAttached()
+}
+
+// AllHooksAttached reports whether every tracked hook is attached.
+func (m *Manager) AllHooksAttached() bool {
+	return m.AttachedCount() == m.HookCount() && m.HookCount() > 0
+}
+
+// MissingHooks returns the hooks that are not attached, for the
+// operator to act on. Empty when all are attached.
+func (m *Manager) MissingHooks() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var missing []string
+	for _, h := range HookTable {
+		hook := m.hooks[h.Hook]
+		if hook == nil || !hook.Attached {
+			missing = append(missing, h.Hook)
+		}
+	}
+	return missing
+}
+
+// SetNoEnforce marks that hooks were deliberately not attached because
+// the operator passed --no-enforce. Without this the status output
+// reports zero attached hooks as a build or kernel compatibility
+// problem, which is a false alarm: nothing is wrong, enforcement was
+// asked for and refused.
+func (m *Manager) SetNoEnforce() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.noEnforce = true
+}
+
+// IsNoEnforce reports whether hooks were deliberately not attached.
+func (m *Manager) IsNoEnforce() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.noEnforce
 }
 
 // EnforcementNotice explains the enforcement state, or "" if healthy.
 func (m *Manager) EnforcementNotice() string {
-	if lsmenv.Available() {
-		return ""
+	if !lsmenv.Available() {
+		return lsmenv.Summary()
 	}
-	return lsmenv.Summary()
+	// --no-enforce: bilincli bir durum, sorun degil. Kullaniciya
+	// "build veya kernel uyumlulugu sorunu" demek yanlislik olur
+	// ve dogru taniyi gizler.
+	//
+	// IsNoEnforce kilit alir; dogrudan m.noEnforce okumak yari
+	// yarilmis bir erisim olurdu (SetNoEnforce yaziyor).
+	if m.IsNoEnforce() {
+		return "--no-enforce verildi; LSM kancalari BILINCCI OLARAK " +
+			"baglanmadi. Politika UYGULANMIYOR. enforcement icin " +
+			"servisi --no-enforce vermeden yeniden baslatin."
+	}
+	// Zincirde bpf var ama kancalarin bir kismi baglanmamis:
+	// enforcement KISMIDIR, kullaniciya acikca soylemeliyiz.
+	if missing := m.MissingHooks(); len(missing) > 0 {
+		return fmt.Sprintf(
+			"bpf LSM aktif ama %d/%d kanca BAGLANMADI (%s). "+
+				"Politika yalnizca bagli kancalarda uygulanir; "+
+				"eksik kancalar icin yazilan kurallar ETKISIZ kalir. "+
+				"Bu bir build veya kernel uyumlulugu sorunudur; "+
+				"axdaemon loglarina bakin.",
+			m.AttachedCount(), m.HookCount(),
+			strings.Join(missing, ", "))
+	}
+	return ""
 }
 
 // Detach releases all hook links.

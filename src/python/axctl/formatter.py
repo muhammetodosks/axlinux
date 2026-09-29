@@ -46,7 +46,7 @@ def print_status(status: dict) -> None:
     rules = status.get("rules_loaded", 0)
     labels = status.get("labels_loaded", 0)
 
-    table.add_row("Mod", f"[bold {color}]{mode}[/{color}]")
+    table.add_row("Mod", f"[bold {color}]{mode}[/bold {color}]")
     table.add_row("Çalışma Süresi", status.get("uptime", "unknown"))
     table.add_row("Aktif Politika", f"{rules} kural, {labels} etiket")
 
@@ -57,6 +57,16 @@ def print_status(status: dict) -> None:
     active = status.get("lsm_hooks_active", 0)
     htotal = status.get("lsm_hooks_total", 0)
     table.add_row("LSM Kancaları", f"{active}/{htotal} aktif")
+
+    # Hangi kanca baglanmadi? "3/5 aktif" yazisi tek basina
+    # yeterli degil; operator hangi kancayi test edecegini
+    # bilmezse sorunu bulamaz.
+    missing = status.get("hooks_missing") or []
+    if missing:
+        table.add_row(
+            "Bağlanmayan Kancalar",
+            "[bold yellow]" + ", ".join(missing) + "[/bold yellow]",
+        )
 
     last = status.get("last_reload", "")
     table.add_row("Son Yükleme", last if last else "henüz yok")
@@ -89,6 +99,31 @@ def print_status(status: dict) -> None:
             f"allow: {status.get('audit_allowed_count', 0)})[/dim]"
         )
 
+    # Audit sagligi ayri bir panel olarak gosterilir. Sayi sifir
+    # oldugunda "hicbir olay olmadi" ile "dongu oldu" ayirt
+    # edilemez; enforcement calisiyor olsa bile audit olmus
+    # durumda operator korundugunu sanar.
+    if status.get("audit_healthy") is False:
+        notice = status.get("audit_notice", "")
+        # Kalici olarak yazilamayan kayitlar varsa onlari ayrica
+        # belirt: enforcement karar verdi ama kanit KAYDEDILMEDI.
+        lost = status.get("audit_send_failures", 0)
+        lost_line = (
+            f"\n\n[bold red]{lost} kayıt kalıcı olarak yazılamadı.[/bold red] "
+            "Denetim izinde boşluk var; bu kararlar kanıtlanamaz."
+            if lost else ""
+        )
+        console.print()
+        console.print(Panel(
+            "[bold yellow]AUDIT AKIŞI DURDU[/bold yellow]\n\n"
+            "Politika uygulanmaya devam ediyor ama kararlar "
+            "[bold]kaydedilmiyor[/bold].\nGeçmiş deneme ve ihlal "
+            "kanıtı tutulamaz." + lost_line + "\n\n"
+            + (notice or "perf okuma döngüsü sonlandı."),
+            title="Dikkat",
+            border_style="yellow",
+        ))
+
     if status.get("learning_active"):
         console.print(
             f"[dim]Öğrenme modu: AKTİF "
@@ -120,10 +155,33 @@ def print_simulation(simulation: dict) -> None:
         console.print(f"    object: {rule['object']}")
         console.print(f"    action: {rule['action']}")
         console.print(f"    effect: [{effect_color}]{rule['effect']}[/{effect_color}]")
+        # Korumali surece yazilan kurallar etkisizdir. Bunu
+        # belirtmezsek kullanici politikasi yukler, daemon
+        # reddeder ve neden calismadigini anlamaz.
+        if rule.get("effective") is False:
+            console.print("    [yellow]ETKİSİZ: hedef süreçler korumalı[/yellow]")
         console.print()
 
     if simulation.get("affected_processes"):
         console.print(f"[dim]Etkilenen işlemler: {', '.join(simulation['affected_processes'])}[/dim]")
+
+    # Etkisiz kurallar ozetlenir: kullanici simulasyonu okuyup
+    # "her sey yolunda" sanmasin.
+    ineffective = simulation.get("ineffective_rules") or []
+    if ineffective:
+        console.print()
+        console.print(Panel(
+            "\n".join(
+                f"• {r['name']} → {', '.join(r['blocked_subjects'])}"
+                for r in ineffective
+            ),
+            title="Etkisiz kurallar (korumalı süreç)",
+            border_style="yellow",
+        ))
+        console.print(
+            "[dim]Bu kurallar yazılıdır ama uygulanmaz: hedef süreçler "
+            "kurtarma yoludur ve korumalıdır.[/dim]"
+        )
 
     if simulation.get("conflicts"):
         console.print()
@@ -145,18 +203,90 @@ def print_logs(logs: list) -> None:
     table.add_column("Karar")
 
     for log in logs:
-        decision = log.get("decision", "unknown")
+        # get_logs RPC'si DUZ SATIR dondurur; ic ice axlog semasi
+        # DEGIL. Onceki kod burada log["subject"]["comm"] ve
+        # log["timestamp"][:19] bekliyordu, ikisi de yanlis:
+        #   - subject/objekt anahtarlari sunucuda hic yok -> sessiz
+        #     bos hucre
+        #   - timestamp bir uint64 (ktime), string degil -> Python
+        #     "'int' object is not subscriptable" ile audit
+        #     GORUNTULEME tamamen cokuyordu.
+        #
+        # Yani enforcement calisiyor olsa bile operator kayitlari
+        # hicbir zaman goremiyordu. Guvenlik aracinda kanit
+        # gorunmezse kanit yoktur.
+        decision = _log_decision_name(log)
         decision_color = "red" if decision == "denied" else "green"
+        comm = log.get("comm", "") or log.get("subject", "")
+        path = log.get("path", "") or log.get("object", "")
+        if isinstance(path, dict):
+            path = path.get("path", "")
+        if isinstance(comm, dict):
+            comm = comm.get("comm", "")
 
         table.add_row(
-            log.get("timestamp", "")[:19],
-            log.get("subject", {}).get("comm", ""),
-            log.get("object", {}).get("path", "")[:40],
-            log.get("action", ""),
+            _format_log_time(log.get("timestamp", 0)),
+            str(comm),
+            str(path)[:40],
+            _format_log_action(log.get("action", 0)),
             f"[{decision_color}]{decision.upper()}[/{decision_color}]",
         )
 
     console.print(table)
+
+
+def _log_decision_name(log: dict) -> str:
+    """Karar degerini isme cevirir.
+
+    Sunucu karari NUMERIC dondurur (DECISION_ALLOWED=0,
+    DECISION_DENIED=1). Metin olarak geliyorsa oldugu gibi
+    kullanilir; boylece iki yol da calisir.
+    """
+    d = log.get("decision", "")
+    if isinstance(d, str):
+        return d or "unknown"
+    try:
+        return "denied" if int(d) == 1 else "allowed"
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+def _format_log_action(action) -> str:
+    """Aksiyonu isme cevirir (sayisal gelirse)."""
+    if isinstance(action, str):
+        return action
+    names = {
+        1: "file.read", 2: "file.write", 3: "file.execute",
+        4: "file.delete", 5: "file.create",
+        6: "net.connect", 7: "net.bind", 8: "net.accept",
+        9: "process.exec",
+    }
+    return names.get(int(action), f"action({action})")
+
+
+def _format_log_time(ts) -> str:
+    """ktime damgasini okunur hale getirir.
+
+    timestamp musteriye gonderilirken SISTEMDEN ALINAN bir
+    Unix zamani degil, bpf_ktime_get_ns degeridir (boot'tan
+    itibaren monotonik nanosaniye). Bu tam olarak JSONL tarafinda
+    alinan zaman DEGILDIR; orada axlog kaydin ALDIGI zaman
+    yazilir. Burada ayni islem yapilamaz - elimizde boot ani
+    yoktur - ama operatora "boot'tan bu kadar sure" demek,
+    saat:dakika gostermekten hem daha dogru hem daha faydalidir.
+    """
+    try:
+        ns = int(ts)
+    except (TypeError, ValueError):
+        return str(ts)
+    if ns <= 0:
+        return "-"
+    sec = ns // 1_000_000_000
+    if sec < 60:
+        return f"boot+{sec}s"
+    if sec < 3600:
+        return f"boot+{sec // 60}m{sec % 60}s"
+    return f"boot+{sec // 3600}h{(sec % 3600) // 60}m"
 
 
 def print_validation_result(errors: list) -> None:

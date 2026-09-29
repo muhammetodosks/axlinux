@@ -131,11 +131,25 @@ func (w *Writer) rotateIfNeeded() error {
 	return w.openCurrent()
 }
 
+// compressFile gzips the given day's log and removes the original.
+//
+// SIRALAMA ONEMLI. Once gzipwriter, SONRA dosya taniticisi, EN
+// SONDA kaynak silinmesi gerekir. Burada daha once defer
+// kullaniliyordu ve bu sirayi bozuyordu: os.Remove(src) defer'lar
+// calismadan ONCE execute ediliyordu, yani sikistirilmis dosya
+// HENUZ TAMAMLANMAMISTI kaynak siliniyordu. Bir disk dolulugu ya da
+// SIGKILL ile gzip yarim kalsaydi ve o gunun audit kaydi tamamen
+// kaybolurdu.
+//
+// Audit logu kanit niteligindedir; yarim kalmis bir arsiv, hic
+// kayit olmamasindan kotudur.
 func (w *Writer) compressFile(date string) {
 	src := filepath.Join(w.dir, "audit-"+date+".jsonl")
 	dst := src + ".gz"
 
 	if _, err := os.Stat(dst); err == nil {
+		// Zaten sikistirilmis; kaynak varsa yarim kalmis olabilir.
+		_ = os.Remove(src)
 		return
 	}
 
@@ -145,16 +159,37 @@ func (w *Writer) compressFile(date string) {
 	}
 	defer f.Close()
 
-	out, err := os.Create(dst)
+	// Once gecici ad: yarim kalan sikistirma .gz gorunmez.
+	tmp := dst + ".tmp"
+	out, err := os.Create(tmp)
 	if err != nil {
+		f.Close()
 		return
 	}
-	defer out.Close()
 
 	gz := gzip.NewWriter(out)
-	defer gz.Close()
+	_, copyErr := io.Copy(gz, f)
 
-	_, _ = io.Copy(gz, f)
+	// Kapatma sirasi onemli: once gzipwriter (veriyi diske yazar),
+	// sonra dosya taniticisi.
+	gzCloseErr := gz.Close()
+	outCloseErr := out.Close()
+	f.Close()
+
+	if copyErr != nil || gzCloseErr != nil || outCloseErr != nil {
+		// Sikistirma basarisiz: gecici dosyayi birak ve KAYNAGI
+		// SILME. Yarim gz yerine bozuk gz olmamasi tercih
+		// edilir.
+		_ = os.Remove(tmp)
+		return
+	}
+
+	// Atomik: gecici adi nihai adiye tasir.
+	if err := os.Rename(tmp, dst); err != nil {
+		_ = os.Remove(tmp)
+		return
+	}
+	// Yalnizca gecici basariyla yerine oturduysa kaynak silinir.
 	_ = os.Remove(src)
 }
 

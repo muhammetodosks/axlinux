@@ -113,12 +113,26 @@ ok "axctl, axdaemon, axlog, axbpf.o kuruldu"
 
 # --- 5. Servis ---
 if [[ -d /lib/systemd/system ]]; then
-    say "systemd servisi kaydediliyor"
-    sed "s#/usr/local/bin#${PREFIX}/bin#g; s#/usr/lib/axlinux#/usr/lib/axlinux#g" \
-        packaging/axdaemon.service > /lib/systemd/system/axdaemon.service
+    say "systemd servisleri kaydediliyor"
+    for svc in axdaemon axlog; do
+        if [[ -f "packaging/$svc.service" ]]; then
+            sed "s#/usr/local/bin#${PREFIX}/bin#g; s#/usr/lib/axlinux#/usr/lib/axlinux#g" \
+                "packaging/$svc.service" > "/lib/systemd/system/$svc.service"
+            ok "$svc.service kuruldu"
+        else
+            warn "packaging/$svc.service bulunamadi, atlandi"
+        fi
+    done
     systemctl daemon-reload
-    systemctl enable axdaemon >/dev/null 2>&1 || true
-    ok "axdaemon servisi etkin"
+    # AXLOG AYNI ZAMANDA ETKINLESTIRILIR. axdaemon audit kayitlarini
+    # axlog'a yazar; axlog etkin degilse kayitlar bellekte kalir ve
+    # /var/log/axlinux bos olur. Denetim izi kalici olmalidir.
+    systemctl enable axlog >/dev/null 2>&1 \
+        && ok "axlog servisi etkin (kalici audit kaydi)" \
+        || warn "axlog etkinlestirilemedi; kayitlar yazilmayacak"
+    systemctl enable axdaemon >/dev/null 2>&1 \
+        && ok "axdaemon servisi etkin" \
+        || warn "axdaemon etkinlestirilemedi"
 fi
 
 # --- 6. LSM kontrolu ---

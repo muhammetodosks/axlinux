@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -37,10 +38,18 @@ func NewServer(socketPath string, w *writer.Writer, logger *slog.Logger) *Server
 
 // Start begins listening and accepting connections.
 func (s *Server) Start() error {
-	if err := os.MkdirAll("/run/axlinux", 0755); err != nil {
-		return fmt.Errorf("run dizini olusturulamadi: %w", err)
+	// Dizin socket yolundan turer, SABIT "/run/axlinux" degil.
+	// axdaemon tarafinda ayni hata vardi: baska bir yola dinlenen
+	// her sunucu, izin vermedigi icin start olmadan hata veriyordu
+	// ve normal kullanicida sessizce hic baslamiyordu.
+	dir := filepath.Dir(s.socketPath)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("socket dizini olusturulamadi (%s): %w", dir, err)
 	}
 
+	// Bayat soket dosyasi: bir Unix domain dinleyicisi kapandiginda
+	// dosya SİLİNMEZ. Temizlenmezse yeniden baslatma EADDRINUSE ile
+	// basarisiz olur ve servis yeniden calisamaz.
 	if _, err := os.Stat(s.socketPath); err == nil {
 		_ = os.Remove(s.socketPath)
 	}
@@ -50,8 +59,18 @@ func (s *Server) Start() error {
 		return fmt.Errorf("socket dinleme hatasi: %w", err)
 	}
 
-	if err := os.Chmod(s.socketPath, 0666); err != nil {
-		s.logger.Warn("socket izinleri ayarlanamadi", "error", err)
+	// Socket izni 0666 idi. Iki ayri sorun:
+	//
+	//   1) Herkes bağlanip SAHTE audit kaydi yazabiliyordu. Kanit
+	//      zincirinde uretilmemis bir kayit, toplanan kayitlarin
+	//      tamaminin degerini dusurur: "kimse erismedi" diyen bir
+	//      sistemde uydurma bir kayit arayan kimse koyabilirdi.
+	//   2) Yazma tarafi 0600 idi ama okuma tarafi degil; yalnizca
+	//      root'un baglanmasi yeterlidir.
+	//
+	// 0600: yalnizca root (yani axdaemon) baglanabilir.
+	if err := os.Chmod(s.socketPath, 0600); err != nil {
+		return fmt.Errorf("socket izinleri ayarlanamadi: %w", err)
 	}
 
 	s.mu.Lock()

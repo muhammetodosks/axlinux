@@ -101,18 +101,38 @@ rules:
 
 ## Eylemler
 
-| Eylem | Açıklama | LSM Kancası |
-|-------|----------|-------------|
-| `file.read` | Dosya okuma | `inode_permission` |
-| `file.write` | Dosya yazma | `inode_permission` |
-| `file.execute` | Dosya çalıştırma | `bprm_check_security` |
-| `file.delete` | Dosya silme | `inode_permission` |
-| `net.connect` | Dışa bağlanma | `socket_connect` |
-| `net.bind` | Port dinleme | `socket_bind` |
-| `net.accept` | Bağlantı kabul | `socket_connect` |
-| `process.exec` | Process çalıştırma | `bprm_check_security` |
-| `process.signal` | Sinyal gönderme | `task_kill` (gelecek) |
-| `file.create` | Dosya oluşturma | `inode_permission` |
+Aşağıdaki tablo **gerçekte uygulanan** eylemleri listeler. Her
+birinin arkasında en az bir LSM kancası vardır; o kanca anahtarı
+üretir ve kararı verir.
+
+| Eylem | Açıklama | LSM Kancası | Yol bazlı? |
+|-------|----------|-------------|-------------|
+| `file.read` | Dosya okuma | `file_open` | Evet |
+| `file.write` | Dosya yazma | `file_open` | Evet |
+| `file.execute` | Dosya çalıştırma | `bprm_check_security` | Evet |
+| `net.connect` | Dışa bağlanma | `socket_connect` | Hayır (port) |
+| `net.bind` | Port dinleme | `socket_bind` | Hayır (port) |
+| `process.exec` | Process çalıştırma | `bprm_check_security` | Hayır (süreç) |
+
+`inode_permission` kancası ayrıca **süreç bazlı** `file.read` /
+`file.write` / `file.execute` kurallarını (yol boş) uygular.
+
+### Henüz desteklenmeyen eylemler
+
+Bu eylemler politikada yazılırsa `axctl` **açık hata** verir.
+Kabul edilip sessizce etkisiz kalmaları, MAC'te en tehlikeli
+durumdur: kural "yüklendi" der ama hiçbir şey olmaz.
+
+| Eylem | Durum | Yerine ne kullanılmalı |
+|-------|-------|------------------------|
+| `file.delete` | Kanca yok | Dosya sistemi izinleri (`chmod`, ACL) |
+| `file.create` | Kanca yok | Dizin izinleri (`chmod`) |
+| `net.accept` | Kanca yok | Dinleyici tarafında denetim |
+| `process.signal` | Planlandı | — |
+
+Silme denetimi için `lsm/inode_unlink_at` kancasının eklenmesi
+gerekir. Bu, AXlinux'un bilinen ve belgelenmiş bir
+eksikliğidir; sürpriz bir hata değil, açık bir kapsam sınırıdır.
 
 ## Etiketler
 

@@ -238,6 +238,52 @@ class TestDaemonClientErrors(unittest.TestCase):
             dclient.get_status()
         self.assertIn("axdaemon", str(e.exception))
 
+    def test_permission_error_is_not_reported_as_missing(self):
+        """0600 socket: root olmayan kullanici icin "yok" denmemeli.
+
+        Eski kod once Path.exists() ile kontrol ediyordu. Izni
+        olmayan bir kullanici icin bu False doner ve kullaniciya
+        "axdaemon calismiyor" denirdi; oysa daemon calisiyor,
+        yalnizca yetki yok. Yaniltici tani kullaniciyi servis
+        yeniden baslatmaya yonlendirir.
+        """
+        import socket as _socket
+        from axctl.exceptions import DaemonError
+
+        real_connect = _socket.socket.connect
+
+        def fake_connect(self, address):
+            raise PermissionError(13, "Permission denied")
+
+        _socket.socket.connect = fake_connect
+        try:
+            with self.assertRaises(DaemonError) as e:
+                dclient.get_status()
+        finally:
+            _socket.socket.connect = real_connect
+
+        msg = str(e.exception)
+        # Izni oldugunu SOYLEMELI, "calismiyor" DEMEMELI.
+        #
+        # Onceki kontrol tam kelime "izin" ariyordu. Dogru Turkce
+        # mesaj "Socket izni yok" diyor; Turkce eklemeyle birlikte
+        # "izin" -> "izni" yazimi degisiyor ve "izin" kelimesi
+        # metinde bulunmuyor. Yani test dogru davranisi reddediyor,
+        # yalnizca mesajin kurgusuyla oynuyor.
+        #
+        # Niyet "izin bilgisi gecsin" oldugu icin kabul edilen
+        # yazimlar listelenir. Not: Turkce eklemeyle birlikte yazim
+        # degisiyor ("izin" -> "izni") ve "izin" kelimesi "izni"
+        # icinde gecmiyor; onceden tek kelime aramak bu yuzden dogru
+        # mesaji reddediyordu.
+        low = msg.lower()
+        self.assertTrue(
+            any(w in low for w in ("izin", "izni", "yetki", "permission")),
+            f"mesaj izin/yetki bilgisi icermiyor: {msg}")
+        self.assertNotIn("çalışmıyor", low)
+        # Kullaniciya ne yapacagini soylemeli.
+        self.assertIn("sudo", msg)
+
     def test_is_available_false(self):
         self.assertFalse(dclient.is_available())
 

@@ -178,11 +178,191 @@ func TestModeConstantsMatch(t *testing.T) {
 	}
 }
 
+// TestProtectedProcessesRejectRules is the daemon-side lockout guard.
+//
+// The kernel refuses to enforce rules against these processes
+// (ax_protected). This check is duplicated here so that a stale or
+// unbuildable axbpf.o cannot reintroduce the lockout: a rule aimed
+// at "bash" must be refused by the daemon rather than written to a
+// map nothing will ever consult.
+func TestProtectedProcessesRejectRules(t *testing.T) {
+	m := &Manager{}
+
+	// Liste KURTARMA YOLUNU kapsar: init/oturum acma, yetki
+	// alma, ag ve kabuk. Yorumlayicilar (python3, node, perl)
+	// BILINCLI olarak burada degildir; bkz.
+	// TestInterpretersAreNotProtected.
+	for _, comm := range []string{"bash", "sudo", "systemd", "sshd",
+		"login", "agetty", "su", "doas"} {
+		// ValidateRule saf dogrulama katmanidir; WriteRule once
+		// bunu cagirir. Korumayi burada olcuyoruz, cunku
+		// WriteRule'in hatasi "hedef map nil" ile de gelebilir
+		// ve test yanlis sebeple yesil olurdu.
+		err := ValidateRule(comm, "/etc/hostname", "file.read", 0)
+		if err == nil {
+			t.Errorf("korumali surece kural kabul edildi: %q", comm)
+		} else if !strings.Contains(err.Error(), "korumali") {
+			t.Errorf("hata mesaji korumayi anlatmiyor (%q): %v",
+				comm, err)
+		}
+		// WriteRule de ayni hatayi vermeli: koruma kontrolu
+		// harita erisiminden ONCE gelir, aksi halde korumali
+		// surece kural yazilabilirdi.
+		if werr := m.WriteRule(comm, "/etc/hostname", "file.read", 0, 1,
+			EffectDeny); werr == nil ||
+			!strings.Contains(werr.Error(), "korumali") {
+			t.Errorf("WriteRule korumali sureci engellemedi (%q): %v",
+				comm, werr)
+		}
+		if !IsProtected(comm) {
+			t.Errorf("IsProtected(%q) = false, true olmali", comm)
+		}
+	}
+}
+
+// TestInterpretersAreNotProtected pins a decision that is easy to
+// undo by accident and expensive to get wrong.
+//
+// A MAC built on interpreters (python3, node, perl) cannot protect
+// anything: those processes run the user's shell, editors, build
+// tools and login sessions as children. Denying them locks the user
+// out of their own session, and the exemption cannot be expressed in
+// policy anyway because the control unit is the program the
+// interpreter launches, not the interpreter.
+//
+// The consequence is deliberate and must stay visible: a rule whose
+// subject is an interpreter is accepted, and it is enforced against
+// the interpreter process - which does not cover what it spawns. Real
+// MAC targets are named in TestUnprotectedProcessesAccepted.
+func TestInterpretersAreNotProtected(t *testing.T) {
+	for _, comm := range []string{"python3", "python", "node", "perl",
+		"ruby", "tmux"} {
+		if IsProtected(comm) {
+			t.Errorf("%q koruma listesinde; yorumlayicilari "+
+				"korumak kullaniciyi kendi oturumundan kipar", comm)
+		}
+		// Korumali olmadigi icin dogrulama KABUL etmeli.
+		if err := ValidateRule(comm, "/etc/shadow", "file.read", 0); err != nil {
+			t.Errorf("%q icin kural reddedildi: %v", comm, err)
+		}
+	}
+}
+
+// TestUnprotectedProcessesAccepted guards the opposite direction: if
+// the list ever grows too far the MAC silently stops working for the
+// applications it exists to protect.
+func TestUnprotectedProcessesAccepted(t *testing.T) {
+	for _, comm := range []string{"firefox", "nginx", "apache2", "curl",
+		"wget", "git", "redis-server", "postgres", "docker"} {
+		if IsProtected(comm) {
+			t.Errorf("%q koruma listesinde ama MAC'in hedefi; "+
+				"listeyi daraltin", comm)
+		}
+	}
+}
+
+// TestProtectedListCoversShell pins the minimum set. Losing any of
+// these means the user can be locked out.
+func TestProtectedListCoversShell(t *testing.T) {
+	must := []string{"bash", "sh", "dash", "zsh", "sudo", "su",
+		"systemd", "sshd", "login", "agetty"}
+	for _, p := range must {
+		if !IsProtected(p) {
+			t.Errorf("%q koruma listesinde olmali", p)
+		}
+	}
+}
+
+// TestProcessOnlyRulesAreAccepted guards a rule that used to be
+// impossible to write.
+//
+// A rule like "nginx may not run any program" has no object and no
+// port, so the kernel key legitimately carries an empty path. The
+// keyIsEmpty check in ValidateRule was meant to catch truncated
+// paths, but it also rejected every process-only rule: the user
+// wrote a policy, the daemon refused it, and the only clue was
+// "yol anahtari uretilemedi".
+//
+// The empty-path case is now distinguished from the
+// unrepresentable-path case instead of being conflated with it.
+func TestProcessOnlyRulesAreAccepted(t *testing.T) {
+	cases := []struct{ comm, path, action string; port int }{
+		{"nginx", "", "process.exec", 0},
+		{"dd", "", "file.read", 0},
+		{"dd", "", "file.write", 0},
+		{"dd", "", "file.execute", 0},
+	}
+	for _, c := range cases {
+		if err := ValidateRule(c.comm, c.path, c.action, c.port); err != nil {
+			t.Errorf("surec bazli kural reddedildi (%s %s): %v; "+
+				"yolsuz kurallar gecerli olmali", c.comm, c.action, err)
+		}
+	}
+}
+
+// TestUnrepresentablePathStillRejected is the other half: relaxing
+// the empty-path case must not let genuinely broken paths through.
+func TestUnrepresentablePathStillRejected(t *testing.T) {
+	deep := "/"
+	for i := 0; i < PathDepth+3; i++ {
+		deep += "x/"
+	}
+	if err := ValidateRule("firefox", deep, "file.read", 0); err == nil {
+		t.Error("temsil edilemeyen yol reddedilmeliydi")
+	}
+	long := "/" + strings.Repeat("a", PathSlot+1)
+	if err := ValidateRule("firefox", long, "file.read", 0); err == nil {
+		t.Error("asiri uzun bilesen reddedilmeliydi")
+	}
+}
+
+// TestUnimplementedActionsRejected proves the daemon refuses actions
+// no hook can produce.
+//
+// file.delete, file.create and net.accept all have valid numeric
+// constants, so the key builds fine and the rule would be written to
+// the map. But no attached hook ever generates those action values,
+// so the entry can never match. The user would be told "1 kural
+// yuklendi" and would go on believing the file cannot be deleted.
+//
+// Rejecting at load time is the only honest option.
+func TestUnimplementedActionsRejected(t *testing.T) {
+	for action := range UnimplementedActions {
+		err := ValidateRule("firefox", "/tmp/x", action, 0)
+		if err == nil {
+			t.Errorf("%q aksiyonu kabul edildi ama hicbir kanca "+
+				"uretmiyor; kural sessizce islevsiz kalir", action)
+			continue
+		}
+		if !strings.Contains(err.Error(), action) {
+			t.Errorf("hata mesaji aksiyonu belirtmeli (%q): %v",
+				action, err)
+		}
+	}
+}
+
+// TestImplementedActionsStillAccepted keeps the rejection from
+// over-reaching into actions that do work.
+func TestImplementedActionsStillAccepted(t *testing.T) {
+	for _, action := range []string{"file.read", "file.write",
+		"file.execute", "net.connect", "net.bind", "process.exec"} {
+		if _, bad := UnimplementedActions[action]; bad {
+			t.Errorf("%q uygulanabilir bir aksiyon olmali; "+
+				"reddedilmesi MAC'i islevsizlestirir", action)
+		}
+		err := ValidateRule("dd", "/tmp/x", action, 0)
+		if err != nil {
+			t.Errorf("%q reddedildi: %v", action, err)
+		}
+	}
+}
+
 // TestStructLayoutsMatch checks the on-wire sizes of the map key and
 // value against the compiler's view of the C structs.
 func TestStructLayoutsMatch(t *testing.T) {
-	// policy_key: char comm[16] + char path[256] + u32 action
-	wantKey := 16 + 256 + 4
+	// policy_key: char comm[16] + char path[AX_PATH_DEPTH][AX_PATH_SLOT]
+	//             + u32 action  =  16 + 8*32 + 4 = 276
+	wantKey := 16 + PathDepth*PathSlot + 4
 	if got := SizeOfMapKey(); got != wantKey {
 		t.Errorf("MapKey boyutu: Go=%d beklenen=%d", got, wantKey)
 	}
@@ -194,9 +374,104 @@ func TestStructLayoutsMatch(t *testing.T) {
 	}
 }
 
+// TestKeyPathRoundTrip proves the Go-side split and the kernel-side
+// block layout agree.
+//
+// eBPF fills block (PathDepth-1-d) for the d'th dentry component, so
+// Go must write the LAST component into the LAST block. If this
+// ordering drifts, every path rule silently stops matching: the map
+// entry is written, the daemon reports "1 rule loaded", and nothing
+// is ever denied.
+func TestKeyPathRoundTrip(t *testing.T) {
+	cases := []struct {
+		path  string
+		blocks [PathDepth]string
+	}{
+		{"/etc/hostname", [PathDepth]string{
+			"", "", "", "", "", "", "/etc", "/hostname",
+		}},
+		{"/usr/bin/cat", [PathDepth]string{
+			"", "", "", "", "", "/usr", "/bin", "/cat",
+		}},
+		{"/a", [PathDepth]string{
+			"", "", "", "", "", "", "", "/a",
+		}},
+		{"p:8080", [PathDepth]string{
+			"p:8080", "", "", "", "", "", "", "",
+		}},
+	}
+
+	for _, tc := range cases {
+		var k MapKey
+		setKeyPath(&k, tc.path)
+		for i, want := range tc.blocks {
+			got := strings.TrimRight(string(k.Path[i][:]), "\x00")
+			if got != want {
+				t.Errorf("setKeyPath(%q) blok %d = %q, beklenen %q",
+					tc.path, i, got, want)
+			}
+		}
+	}
+}
+
+// TestKeyPathTooLongIsRejected proves that a path which cannot be
+// represented produces an EMPTY key rather than a truncated one.
+//
+// A silently truncated key would match some other file, or none, and
+// the rule would be reported as loaded while doing nothing. WriteRule
+// turns the empty key into an explicit error; this test locks the
+// precondition that makes that possible.
+func TestKeyPathTooLongIsRejected(t *testing.T) {
+	long := ""
+	for i := 0; i < PathSlot; i++ {
+		long += "a"
+	}
+
+	var k MapKey
+	setKeyPath(&k, "/"+long)
+
+	if !keyIsEmpty(&k) {
+		t.Errorf("cok uzun yol kirpildi, anahtar bos degil: %q",
+			KeyToString(k))
+	}
+	if !keyIsEmpty(&k) {
+		t.Error("keyIsEmpty kirpma durumunu yakalamadi")
+	}
+}
+
+// TestKeyPathRejectsTooManyComponents pins the other half of the same
+// guard: more than PathDepth components cannot be represented.
+func TestKeyPathRejectsTooManyComponents(t *testing.T) {
+	p := "/"
+	for i := 0; i < PathDepth+3; i++ {
+		p += "x/"
+	}
+	var k MapKey
+	setKeyPath(&k, p)
+	// Tam doldurulmus bir anahtar uretilmemeli; en az bir blok
+	// bos kalir ve kirpma yapilmamis olmali.
+	filled := 0
+	for i := range k.Path {
+		if strings.TrimRight(string(k.Path[i][:]), "\x00") != "" {
+			filled++
+		}
+	}
+	if filled == PathDepth {
+		t.Errorf("%d bilesenli yol %d bloga sigmiyor ama hepisi dolu",
+			PathDepth+3, PathDepth)
+	}
+}
+
 // TestActionRoundTrip makes sure the string mapping is a bijection, so
 // no two YAML actions collapse onto the same kernel constant.
 func TestActionRoundTrip(t *testing.T) {
+	// Not: liste UnimplementedActions'takileri de icerir. Sabit
+	// esleme HENUZ bozulmadigi icin round trip gecerliligini
+	// korumak burada degerlidir: bir aksiyonun sabiti yanlislikla
+	// 0'a dustugunde ya da iki aksiyon ayni sayiya dustugunde
+	// hata burada yakalanir. Bu aksiyonlarin YUKLENEMEMESI
+	// ayrica ValidateRule seviyesinde test edilir
+	// (TestUnimplementedActionsRejected).
 	actions := []string{
 		"file.read", "file.write", "file.execute", "file.delete",
 		"file.create", "net.connect", "net.bind", "net.accept",

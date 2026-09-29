@@ -62,16 +62,36 @@ class TestValidator(unittest.TestCase):
         with self.assertRaises(PolicyError):
             validate_policy(bad)
 
-    def test_file_aksiyonu_object_ister(self):
-        bad = P([{"name": "x", "subject": "a",
-                  "action": "file.read", "effect": "deny"}])
+    def test_file_aksiyonu_object_istege_bagli(self):
+        """Yol bazli kurallarda object gerekli, surec bazlilarda degil.
+
+        Once her file.* icin object zorunluydu; bu, Go'nun
+        kabul ettigi "nginx hicbir sey calistiramaz" turu kurallari
+        reddediyordu. Iki katman celisiyordu.
+        """
+        yolsuz = P([{"name": "x", "subject": "nginx",
+                     "action": "file.read", "effect": "deny"}])
+        self.assertEqual(validate_policy(yolsuz), [])
+
+        yollu = P([{"name": "x", "subject": "nginx",
+                    "object": "/etc/shadow",
+                    "action": "file.read", "effect": "deny"}])
+        self.assertEqual(validate_policy(yollu), [])
+
+    def test_net_aksiyonu_port_ister(self):
+        """net.* kurali portsuz yazilirsa reddedilir.
+
+        Port yoksa anahtar "p:0" olur ve hicbir baglantiyi tutmaz.
+        Kurallar yuklenir, ag serbest kalir: sessiz basarisizlik.
+        """
+        bad = P([{"name": "x", "subject": "python",
+                  "action": "net.connect", "effect": "deny"}])
         with self.assertRaises(PolicyError) as e:
             validate_policy(bad)
-        self.assertIn("object", str(e.exception))
+        self.assertIn("port", str(e.exception).lower())
 
-    def test_net_aksiyonu_object_ister_gerekmez(self):
         ok = P([{"name": "x", "subject": "python",
-                 "action": "net.connect", "effect": "deny"}])
+                 "action": "net.connect", "port": 443, "effect": "deny"}])
         self.assertEqual(validate_policy(ok), [])
 
     def test_cakisan_kurallar_reddedilir(self):
@@ -213,6 +233,106 @@ class TestShippedPolicies(unittest.TestCase):
                         self.assertFalse(
                             obj.startswith("~"),
                             f"{f.name}: {r['name']} -> {obj}")
+
+
+class TestNetworkRulesNeedPort(unittest.TestCase):
+    """Ag kurallari portsuz yazilirsa ETKISIZ kalir; reddedilmeli.
+
+    net.* kurallari "p:PORT" anahtari uretir. Port verilmezse
+    anahtar "p:0" olur ve HICBIR baglantiyi tutmaz. Kural map'e
+    yazilir, "1 kural yuklendi" ciktisi gelir, ag serbest kalir.
+    Bu, sessiz basarisizligin en yaygin bicimidir: kullanici
+    "nginx aga cikamasin" yazip gonderiyor, nginx cikiyor.
+    """
+
+    def _policy(self, action, port=None):
+        rule = {
+            "name": "r",
+            "subject": "nginx",
+            "action": action,
+            "effect": "deny",
+        }
+        if port is not None:
+            rule["port"] = port
+        return {
+            "version": 1, "mode": "enforcing",
+            "labels": {}, "rules": [rule],
+        }
+
+    def test_port_required(self):
+        for action in ("net.bind", "net.connect"):
+            with self.subTest(action=action):
+                with self.assertRaises(PolicyError) as cm:
+                    compile_policy(self._policy(action))
+                self.assertIn("port", str(cm.exception).lower())
+
+    def test_port_accepted(self):
+        for action in ("net.bind", "net.connect"):
+            for port in (80, 443, 8080, 65535):
+                with self.subTest(action=action, port=port):
+                    compiled = compile_policy(
+                        self._policy(action, port))
+                    self.assertEqual(compiled["rules"][0]["port"], port)
+
+    def test_invalid_port_rejected(self):
+        for bad in (0, -1, 70000, "http"):
+            with self.subTest(port=bad):
+                with self.assertRaises(PolicyError):
+                    compile_policy(self._policy("net.bind", bad))
+
+
+class TestProcessOnlyRulesAccepted(unittest.TestCase):
+    """Yolsuz kurallar gecerlidir; Go tarafi da kabul ediyor.
+
+    Validator once her file.* aksiyonu icin 'object' zorunlu
+    kiliyordu. Bu, "nginx /etc/shadow okuyamaz" gibi yol bazli
+    kurallar icin dogru ama "nginx hicbir sey calistiramaz" gibi
+    surec bazli kurallar icin yanlisti; Go tarafi ValidateRule
+    bunlari kabul ediyor ve iki katman celisiyordu.
+    """
+
+    def test_pathless_file_rule_accepted(self):
+        policy = {
+            "version": 1, "mode": "enforcing",
+            "labels": {},
+            "rules": [{
+                "name": "nginx hicbir sey calistiramaz",
+                "subject": "nginx",
+                "action": "process.exec",
+                "effect": "deny",
+            }],
+        }
+        compiled = compile_policy(policy)
+        self.assertEqual(compiled["rules"][0]["object"], "")
+
+    def test_path_rule_still_accepted(self):
+        policy = {
+            "version": 1, "mode": "enforcing",
+            "labels": {},
+            "rules": [{
+                "name": "nginx /etc/shadow okuyamaz",
+                "subject": "nginx",
+                "object": "/etc/shadow",
+                "action": "file.read",
+                "effect": "deny",
+            }],
+        }
+        compiled = compile_policy(policy)
+        self.assertEqual(compiled["rules"][0]["object"], "/etc/shadow")
+
+    def test_file_execute_without_object_accepted(self):
+        """object'siz file.execute: "hicbir sey calistirma"."""
+        policy = {
+            "version": 1, "mode": "enforcing",
+            "labels": {},
+            "rules": [{
+                "name": "nginx hicbir sey calistiramaz",
+                "subject": "nginx",
+                "action": "file.execute",
+                "effect": "deny",
+            }],
+        }
+        compile_policy(policy)
 
 
 if __name__ == "__main__":

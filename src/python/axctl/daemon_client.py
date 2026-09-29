@@ -5,7 +5,7 @@ axctl.paths.DEFAULT_SOCKET içinde tanımlıdır.
 """
 import json
 import socket
-from pathlib import Path
+import sys
 
 from axctl.exceptions import DaemonError
 from axctl.paths import get_socket_path
@@ -18,28 +18,41 @@ def _connect(timeout: float = DEFAULT_TIMEOUT) -> socket.socket:
     """Daemon socket'ine bağlanır."""
     path = get_socket_path()
 
-    if not Path(path).exists():
-        raise DaemonError(
-            f"axdaemon çalışmıyor veya socket bulunamadı: {path}\n"
-            "  Başlatmak için: sudo systemctl start axdaemon"
-        )
-
+    # Socket 0600 iznine sahip: yalnizca root baglanabilir. Root
+    # olmayan bir kullanici icin Path.exists() izne takilip False
+    # doner ve "daemon calismiyor" denir; oysa daemon calisiyor,
+    # yalnizca yetki yok. Bu yaniltici tani, kullaniciyi servis
+    # yeniden baslatmaya yonlendirir.
+    #
+    # Bu yuzden socket'a dogrudan baglanmayi deniyoruz; izin
+    # hatasi ile yokluk hatasi ayri ele aliniyor.
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
     try:
         s.connect(path)
+    except FileNotFoundError as e:
+        s.close()
+        raise DaemonError(
+            f"axdaemon çalışmıyor veya socket bulunamadı: {path}\n"
+            "  Başlatmak için: sudo systemctl start axdaemon"
+        ) from e
     except PermissionError as e:
         s.close()
         raise DaemonError(
             f"Socket izni yok: {path}\n"
-            "  axctl'i root olarak çalıştırın ya da socket izinlerini "
-            "düzenleyin."
+            "  Bu komut sistem genelinde politika degistirdigi icin "
+            "root gerekir:\n"
+            "    sudo axctl " + " ".join(sys.argv[1:]) + "\n"
+            "  Socket izni 0600'dir: herkesin baglanabilmesi icin "
+            "acilsaydi herhangi bir yerel kullanici politika "
+            "degistirebilirdi."
         ) from e
     except ConnectionRefusedError as e:
         s.close()
         raise DaemonError(
             f"Bağlantı reddedildi: {path}\n"
-            "  axdaemon çalışmıyor gibi görünüyor."
+            "  axdaemon çalışmıyor gibi görünüyor.\n"
+            "  Kontrol: sudo systemctl status axdaemon"
         ) from e
     except OSError as e:
         s.close()
@@ -101,14 +114,26 @@ def get_status() -> dict:
     return _send_request("get_status")
 
 
-def get_logs(filters: dict | None = None, limit: int = 100) -> list:
-    """Audit log kayıtlarını döndürür."""
+def get_logs(filters: dict | None = None, limit: int = 100,
+             since: str | None = None) -> dict:
+    """Audit log kayitlarini doner.
+
+    Sozlesme: donus degeri DICT'tir ve icinde "logs", "count",
+    istege bagli olarak "filters_applied", "filters_ignored" ve
+    "filter_warning" alanlari bulunur. "filter_warning" varsa
+    sunucu bir filtre alanini tanimiyor ve o filtre UYGULANMADI;
+    bu sessizce gecirilmemelidir.
+
+    "since" filtreye karistirilmaz: sunucu "since"u ayri bir
+    parametre olarak bekler, filtre icinde gonderilirse bilinmeyen
+    alan sayilir.
+    """
     params: dict = {"limit": limit}
     if filters:
         params["filters"] = filters
-    result = _send_request("get_logs", params)
-    logs = result.get("logs", []) if isinstance(result, dict) else []
-    return logs
+    if since:
+        params["since"] = since
+    return _send_request("get_logs", params)
 
 
 def set_mode(mode: str) -> dict:

@@ -22,9 +22,28 @@ venv/
 .pytest_cache/
 .mypy_cache/
 
+# Gecici teşhis araclari (cmd/mapdump, cmd/mapcmp). Sorun
+# tespitinde kullanildi, uretim kodu degildir.
+# NOT: kok dizine gore yazilir, onceki "axlinux/src/..." yazimi
+# yanlitti ve hicbir seyi dislamiyordu.
+/src/go/axdaemon/cmd/mapcmp/
+/src/go/axdaemon/cmd/mapdump/
+
+# Test artiklari. verify_all.sh gecici dosyalari /tmp altinda
+# uretir, ama bir testin yarida kesilmesi veya TMPDIR degismesi
+# durumunda repo icinde kalabilir; git add -A bunlari yakalayip
+# kalici olarak kaydederdi.
+/ax-write-test.*
+/ax-write-ok.*
+/axd-verify.log
+/coverage.out
+
 # editor / OS
 *.swp
 *~
 .idea/
 .vscode/
 .DS_Store
+
+# gecici test artiklari
+.wtest

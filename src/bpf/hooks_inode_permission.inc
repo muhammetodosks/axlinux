@@ -19,7 +19,7 @@ static __always_inline __u32 mask_to_action(int mask)
 SEC("lsm/inode_permission")
 int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 {
-	struct policy_key *key = ax_key();
+	struct policy_key *key = ax_key(0);
 	struct audit_event *event = ax_event();
 	struct policy_value *val;
 	__u32 mode;
@@ -42,7 +42,11 @@ int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 	ax_get_comm(key->comm);
 	key->action = action;
 	/* Bu kancada yol cozumlenmez, sadece surec bazli kurallar */
-	key->path[0] = '\0';
+	ax_clear_path(key);
+
+	/* Kritik sistem surecleri hicbir kurala tabi degildir */
+	if (ax_protected(key->comm))
+		return 0;
 
 	val = ax_lookup(key);
 	if (!val || val->effect != EFFECT_DENY)

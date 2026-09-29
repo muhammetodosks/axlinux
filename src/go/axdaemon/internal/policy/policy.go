@@ -26,6 +26,10 @@ type Rule struct {
 	Action   string   `json:"action"`
 	Effect   Effect   `json:"effect"`
 	Priority int      `json:"priority"`
+	// Port ag kurallari icin gereklidir: eBPF tarafi anahtari
+	// "p:PORT" biciminde uretir, bu yuzden object alanindan
+	// ayri olarak tasinmasi gerekir.
+	Port int `json:"port"`
 }
 
 // Policy is the full compiled policy document.
@@ -101,6 +105,16 @@ func (m *Manager) RuleCount() int {
 }
 
 // validate checks the policy structure for correctness.
+// isNetAction reports whether the action is matched by the socket
+// hooks, which key on "p:PORT" rather than on a path.
+func isNetAction(action string) bool {
+	switch action {
+	case "net.connect", "net.bind", "net.accept":
+		return true
+	}
+	return false
+}
+
 func validate(p *Policy) error {
 	if p.Version != 1 {
 		return fmt.Errorf("desteklenmeyen policy versiyonu: %d", p.Version)
@@ -108,10 +122,33 @@ func validate(p *Policy) error {
 	if len(p.Rules) == 0 {
 		return fmt.Errorf("policy en az bir kural icermeli")
 	}
+	// Mod burada dogrulanmazsa gecersiz deger politika uzerinden
+	// gelebilir ve handlers'taki modeNumeric onu sessizce
+	// "permissive"a esler. Kullanici YAML'a "mod: engelle" yazip
+	// enforcement'in aktif oldugunu sanar, halbuki ne engelleme ne
+	// serbestlik uygulanir. Bos mod kabul edilmez ama policynin
+	// varsayilanini devralmasi normaldir.
+	if p.Mode != "" && p.Mode != "enforcing" &&
+		p.Mode != "permissive" && p.Mode != "disabled" {
+		return fmt.Errorf("gecersiz policy modu: %q "+
+			"(gecerli: enforcing, permissive, disabled)", p.Mode)
+	}
+
+	// Kural kimlikleri benzersiz olmali. Iki kural ayni id'yi
+	// paylasirsa audit kayitlarinda hangisinin tetiklendigi
+	// ayirt edilemez ve operator ihlali kaynagina isaret edemez.
+	seen := make(map[string]int, len(p.Rules))
 	for i, r := range p.Rules {
 		if r.ID == "" {
 			return fmt.Errorf("kural %d: id gerekli", i)
 		}
+		if prev, dup := seen[r.ID]; dup {
+			return fmt.Errorf("kural id tekrar ediyor: %q "+
+				"(kural %d ve %d). Audit kayitlarinda hangi "+
+				"kuralin tetiklendigi ayirt edilemez", r.ID, prev, i)
+		}
+		seen[r.ID] = i
+
 		if r.Action == "" {
 			return fmt.Errorf("kural %s: action gerekli", r.ID)
 		}
@@ -120,6 +157,40 @@ func validate(p *Policy) error {
 		}
 		if len(r.Subject) == 0 {
 			return fmt.Errorf("kural %s: subject gerekli", r.ID)
+		}
+		// Port negatif veya 65535 ustu olamaz; kernel __u16
+		// bekliyor ve tasma sessizce farkli portu hedefler.
+		if r.Port < 0 || r.Port > 65535 {
+			return fmt.Errorf("kural %s: gecersiz port %d (0-65535)",
+				r.ID, r.Port)
+		}
+		// Bir nesne ayni anda yol ve port olamaz. Ag kurallari
+		// "p:PORT" anahtarini uretir, yol kurallari yol blogunu;
+		// ikisi birden verilirse Go tarafi portu onceliklendirir
+		// ve nesne sessizce yok sayilir.
+		if r.Port > 0 && r.Object != "" {
+			return fmt.Errorf("kural %s: port ve object birlikte "+
+				"verilemez (ag kurallari port, dosya kurallari "+
+				"yol kullanir)", r.ID)
+		}
+		// Ag kurallarinda port ZORUNLUDUR.
+		//
+		// eBPF tarafi ag kurallarini "p:PORT" anahtariyla yazar
+		// (bkz. hooks_socket_connect.inc). Port verilmezse Go
+		// buildKeyPort bos yol anahtari uretir, o da hicbir
+		// baglantiyla eslesmez. Boyle bir kural haritaya yazilir,
+		// "N kural yuklendi" bildirimi cikar ve operator kuralin
+		// calistigini sanar - ama HICBIR zaman tetiklenmez.
+		//
+		// Python dogrulayicisi da bunu reddediyor; ancak politika
+		// dogrudan RPC uzerinden de gelebilir ve o zaman Python
+		// tamamen devre disi kalir. Enforcement'in son kapisi
+		// Go oldugu icin kural burada da uygulanir.
+		if isNetAction(r.Action) && r.Port == 0 {
+			return fmt.Errorf("kural %s: %s kurali port gerektirir; "+
+				"port verilmezse kural hicbir baglantiyla "+
+				"eslesmez ve sessizce etkisiz kalir",
+				r.ID, r.Action)
 		}
 	}
 	return nil

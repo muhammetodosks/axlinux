@@ -5,7 +5,6 @@ import sys
 import time
 
 import click
-import yaml
 
 from axctl import __version__
 from axctl.compiler import compile_policy
@@ -119,6 +118,25 @@ def _policy_check():
 
         stats = get_policy_stats()
         print_success(f"{stats['rules']} kural, {stats['labels']} etiket bulundu")
+
+        # compile_policy, sessiz basarisizligi onleyen denetimleri de
+        # icerir: uygulanamaz yollar acik hata verir, korumali
+        # surecleri hedefleyen kurallar uyarilir. Bu olmadan politika
+        # "gecerli" gorunur ama hicbir seyi engellemez.
+        import warnings as _warnings
+
+        from axctl.compiler import compile_policy
+
+        with _warnings.catch_warnings(record=True) as caught:
+            _warnings.simplefilter("always")
+            compiled = compile_policy(policy)
+
+        print_success(
+            f"Uygulanabilirlik denetimi: {len(compiled['rules'])} kural")
+
+        for w in caught:
+            print_warning(str(w.message))
+
         print_success("Çakışma yok")
         print_success("Öncelik sıralaması tamam")
 
@@ -165,7 +183,19 @@ def reload(mode, force_empty):
 
             backup_policy(policy_path)
             policy = load_policy(policy_path)
-            compiled = compile_policy(policy)
+
+            # compile_policy, sessiz basarisizligi onleyen
+            # denetimleri de icerir. Yakalayip gosteriyoruz:
+            # derleyici uyarisi, kuralin UYGULANMAYACAGI
+            # anlamina gelir ve kullaniciya soylemeliyiz.
+            import warnings as _warnings
+
+            with _warnings.catch_warnings(record=True) as caught:
+                _warnings.simplefilter("always")
+                compiled = compile_policy(policy)
+
+            for w in caught:
+                print_warning(str(w.message))
 
         print_info("Politika derleniyor...")
         print_success(f"{len(compiled['rules'])} kural, {len(compiled['labels'])} etiket")
@@ -218,18 +248,44 @@ def logs(follow, filter_str, since, limit):
                     key, value = part.split("=", 1)
                     filters[key.strip()] = value.strip()
 
+        # since AYRI gonderilir: sunucu "since"u bilinen bir
+        # filtre alani olarak tanimaz. Filtreye karistirilirsa
+        # sunucu "bilinmeyen filtre alani" uyarisi verir ve
+        # --since sessizce etkisiz kalir.
         if since:
-            filters["since"] = since
+            filters.pop("since", None)
 
-        log_entries = get_logs(filters=filters, limit=limit)
+        # get_logs bir DICT doner: hem kayitlari hem de sunucunun
+        # uygulamadigi filtre uyarisini tasir. Kayitlar "logs"
+        # anahtarinin altindadir.
+        payload = get_logs(filters=filters, limit=limit, since=since)
+        log_entries = payload.get("logs", []) if isinstance(payload, dict) else []
         print_logs(log_entries)
+        _warn_ignored_filters(payload)
 
         if follow:
             print_info("Canlı izleme başlatıldı. Durdurmak için Ctrl+C.")
+            # GORULEN KAYITLARIN KIMLIGI TUTULUR.
+            #
+            # Onceki surum her saniye get_logs(limit=10) cagirip
+            # son 10 kaydi oldugu gibi yaziyordu; kullanici ayni
+            # satirlari tekrar tekrar goruyordu. Yeni kayitlar
+            # (pid, timestamp, comm, path, action) imzasiyla
+            # ayirt edilir; daha once gorulmus olanlar atlanir.
+            seen = {log_key(e) for e in log_entries}
             try:
                 while True:
                     time.sleep(1)
-                    new_logs = get_logs(filters=filters, limit=10)
+                    fresh = get_logs(filters=filters, limit=50,
+                                     since=since)
+                    new_logs = []
+                    for entry in (fresh.get("logs", [])
+                                  if isinstance(fresh, dict) else []):
+                        k = log_key(entry)
+                        if k in seen:
+                            continue
+                        seen.add(k)
+                        new_logs.append(entry)
                     if new_logs:
                         print_logs(new_logs)
             except KeyboardInterrupt:
@@ -238,6 +294,37 @@ def logs(follow, filter_str, since, limit):
     except DaemonError as e:
         print_error(str(e))
         sys.exit(4)
+
+
+def log_key(entry: dict) -> tuple:
+    """Bir log kaydinin kimligi.
+
+    Ayirt edici olmasi gerekir: ayni surec ayni yolu ayni anda
+    yeniden deneyebilir, ama kayitlar farkli zamanlarda farkli
+    olaylari gosterir. Zaman damgasi tek basina yetmez (cift
+    kayit ayni nanoyu alabilir), o yuzden tum alanlar birlikte
+    kullanilir.
+    """
+    return (
+        entry.get("timestamp"),
+        entry.get("pid"),
+        entry.get("comm"),
+        entry.get("path"),
+        entry.get("action"),
+        entry.get("rule_id"),
+    )
+
+
+def _warn_ignored_filters(payload) -> None:
+    """Sunucunun uygulamadigi filtre varsa kullaniciyi uyarir.
+
+    Filtre sessizce yok sayilirsa kullanici "deny kayitlarini
+    filtreledim" sanir ve listede allow kayitlari gorup dogru
+    calistigini dusundugunu sanar.
+    """
+    warning = payload.get("filter_warning") if isinstance(payload, dict) else None
+    if warning:
+        print_warning(warning)
 
 
 @cli.group()
@@ -252,9 +339,17 @@ def learn_start_cmd(days):
     """Öğrenme modunu başlatır."""
     try:
         result = learn_start(days=days)
-        print_success(f"Öğrenme modu başlatıldı. {days} gün izlenecek.")
-        print_info("'axctl learn report' ile önerileri görebilirsin.")
-        print_info("İpucu: Öğrenme modu sırasında normal şeyleri yap.")
+        # Sunucu artık gerçek bir bitiş zamanı döndürüyor. Eski
+        # sürümde "3 gün izlenecek" yazıp hiçbir şey yapmıyordu.
+        if result.get("until"):
+            print_success(
+                f"Öğrenme modu başlatıldı. {result.get('days', days)} "
+                f"gün boyunca kayıt tutulacak.")
+            print_info(f"Bitiş: {result['until']}")
+        else:
+            print_success("Öğrenme modu başlatıldı.")
+        if result.get("how"):
+            print_info(result["how"])
     except DaemonError as e:
         print_error(str(e))
         sys.exit(4)
@@ -264,8 +359,20 @@ def learn_start_cmd(days):
 def learn_stop_cmd():
     """Öğrenme modunu durdurur."""
     try:
-        learn_stop()
-        print_success("Öğrenme modu durduruldu.")
+        result = learn_stop()
+        n = result.get("observations", 0)
+        if n:
+            print_success(
+                f"Öğrenme modu durduruldu. {n} gözlem toplandı.")
+            print_info("Raporu görmek için: axctl learn report")
+        else:
+            print_warning(
+                "Öğrenme modu durduruldu ama HİÇ gözlem toplanmadı.")
+            print_info(
+                "Bu iki şeyden biri: sistemde hiç işlem yapılmadı, "
+                "ya da gözlem toplama bağlantısı hiç kurulmadı. "
+                "Çalışırken 'axctl status' ile learning_active "
+                "alanını kontrol edin.")
     except DaemonError as e:
         print_error(str(e))
         sys.exit(4)
@@ -280,18 +387,50 @@ def learn_report_cmd(output_format):
 
         if output_format == "json":
             console.print_json(data=report)
-        else:
-            console.print(f"\n[bold]Öğrenme Raporu ({report.get('days', 3)} gün)[/bold]")
-            console.print("=" * 40)
+            return
 
-            for subject, actions in report.get("observations", {}).items():
-                console.print(f"\n[bold]{subject}:[/bold]")
-                for action, count in actions.items():
-                    console.print(f"  → {action}: {count} kez")
+        console.print("\n" + "=" * 40)
+        console.print("[bold]Öğrenme Raporu[/bold]")
+        if report.get("duration"):
+            console.print(f"Süre: {report['duration']}")
+        if report.get("total_count"):
+            console.print(f"Toplam gözlem: {report['total_count']} "
+                          f"({report.get('pattern_count', 0)} desen)")
+        console.print("=" * 40)
 
-            if report.get("suggestions"):
-                console.print(f"\n[bold]Önerilen Politika:[/bold]")
-                console.print(yaml.dump(report["suggestions"], default_flow_style=False))
+        # Sunucu, ogrenme aktif DEGILSE ve hic gozlem yoksa
+        # bunu acikca bildirir. Eski surumde anahtarlar uyusmadigi
+        # icin rapor sessizce bos gorunuyordu; kullanici "sistemde
+        # hicbir sey olmadi" saniyordu. Oysa hic gozlem
+        # TOPLANMAMISTI. Bu ayrim, ogrenme aracinin varlik
+        # nedenidir.
+        if not report.get("active"):
+            print_warning(
+                report.get("message")
+                or "Öğrenme modu aktif değil. "
+                   "'axctl learn start' ile başlatın.")
+        if not report.get("total_count"):
+            print_info(
+                "Gözlem yok. Öğrenme modu açıkken yaptığınız "
+                "işlemler (dosya okuma, ağ bağlantısı) kaydedilir.")
+            return
+
+        for subject, actions in (report.get("observations") or {}).items():
+            console.print(f"\n[bold]{subject}:[/bold]")
+            for action, count in sorted(
+                    actions.items(), key=lambda kv: -kv[1]):
+                console.print(f"  → {action}: {count} kez")
+
+        # suggestions DUNYAYA DUZ YAML metnidir. Onceki surumde
+        # yaml.dump() ile bir kez daha sariliyordu ve cift
+        # tirnakli, hatali bir blok basiliyordu. Metin oldugu
+        # icin oldugu gibi yazilir.
+        if report.get("suggestions"):
+            console.print("\n[bold]Önerilen Politika:[/bold]")
+            console.print(
+                "[dim]Bu kuralları ~/.axlinux/policy.yaml içine "
+                "yapıştırıp 'axctl policy check' ile doğrulayın.[/dim]")
+            console.print(report["suggestions"])
 
     except DaemonError as e:
         print_error(str(e))
