@@ -117,3 +117,33 @@ derlenmemisti.
   satirda, blok girintileri tutarsiz). Dosya hic derlenmiyordu;
   `make install` hatayi `>/dev/null 2>&1` ile gizledigi ici
   fark edilmemisti. `reload` fonksiyonu yeniden yazildi.
+
+## 0.1.1 - Tek komut kurulum
+
+- `install.sh`: tek komutla kurulum. Ortam denetimi, bagimliliklar,
+  derleme, kurulum, servis baslatma ve **dogrulama** yapar.
+  "Dosyalar kopyalandi" demekle yetinmez; kancalarin baglanip
+  baglanmadigini ve soketlerin acilip acilmadigini olcer.
+- `update-grub` Ubuntu cloud image'da `lsm=` yazmadigi icin
+  bootloader'a dogrudan yazilir. Kurtarma modu girdisine `lsm=`
+  YAZILMAZ; bpf LSM boot'u kirarsa sistem rescue ile kurtarilir.
+- GRUB degistirilmeden once `.axlinux-backup` alinir. Otomatik
+  yeniden baslatma YAPILMAZ.
+- Kurulum araci kendini onarir: zincirdeki tekrar eden `bpf`
+  girdileri temizlenir, ayni komut tekrar calistirilabilir.
+
+Sanal makinede dogrulandi (Ubuntu 24.04, kernel 6.8, KVM):
+sifirdan kurulum 10/10, ikinci calistirma 10/10, kurulum sonrasi
+enforcement file_open rc=37 ve bprm rc=1 (kontrol gruplari rc=0),
+kilitlenme korumasi saglam, acil kapatma rc=0.
+
+Test sirasinda bulunan kurulum betigi hatalari:
+- `/sys/kernel/btf/vmlinux` bir dosyadir; `-d` (dizin) ile
+  kontrol edildigi icin "kernel BTF yok" deyip kurulum
+  durduruyordu
+- `summary()` adimlardan sonra tanimliydi; once cagrildigi icin
+  "command not found" veriyordu
+- `done_step` bos argumanla cagrilinda `$2` unbound oluyordu
+  (`set -u` altinda script cokuyordu)
+- zincirde bpf zaten varken yine ekleniyordu; ikinci calistirmada
+  `lsm=...,bpf,bpf,...` olusuyordu

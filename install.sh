@@ -191,13 +191,36 @@ else
         warn_step "atlandi (--no-lsm). Politika UYGULANMAYACAK."
     else
         info "GRUB'a eklenmesi gerekiyor..."
+        # bpf ZATEN zincirdeyse hicbir sey eklenmez. Onceki surum
+        # yama'dan sonra her zaman "bpf" ekliyordu; betik ikinci kez
+        # calistirildiginda zincir "...,yama,bpf,bpf,apparmor" oluyordu.
+        # Ayni komutu iki kez calistirmak guvenli olmali.
         NEWCHAIN=""
+        SEEN_BPF=0
         for l in $(echo "$CHAIN" | tr ',' ' '); do
             [ -z "$l" ] && continue
+            if [ "$l" = "bpf" ]; then
+                # Ikinci (ve sonraki) bpf atlanir. Onceki surum
+                # yama'dan sonra her zaman bpf ekledigi icin, o
+                # surumle kurulmus bir sistemde zincir
+                # "...,bpf,bpf,..." olabiliyordu. Kurulum araci
+                # kendini onarmalidir.
+                [ "$SEEN_BPF" = "1" ] && continue
+                SEEN_BPF=1
+            fi
             NEWCHAIN="${NEWCHAIN:+$NEWCHAIN,}$l"
-            [ "$l" = "yama" ] && NEWCHAIN="$NEWCHAIN,bpf"
         done
-        echo "$NEWCHAIN" | grep -qw bpf || NEWCHAIN="$NEWCHAIN,bpf"
+        if [ "$SEEN_BPF" = "0" ]; then
+            # Zincirde yoksa yama'dan hemen sonra ekle; yama yoksa
+            # sona ekle.
+            OUT=""
+            for l in $(echo "$NEWCHAIN" | tr ',' ' '); do
+                OUT="${OUT:+$OUT,}$l"
+                [ "$l" = "yama" ] && OUT="$OUT,bpf"
+            done
+            echo "$OUT" | grep -qw bpf || OUT="$OUT,bpf"
+            NEWCHAIN="$OUT"
+        fi
         info "yeni zincir: $NEWCHAIN"
 
         if [ -w "$GRUB_DEFAULT" ] || is_root; then
