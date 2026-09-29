@@ -123,7 +123,7 @@ test-silent:
 test-python:
 	@echo "== Python testleri =="
 	@$(PYTHON) -m pytest tests/test_axctl.py tests/test_paths.py \
-		tests/test_silent_failure.py -q 2>/dev/null \
+		tests/test_silent_failure.py tests/test_install_guard.py -q \
 		|| $(PYTHON) -m unittest discover -s tests -p 'test_*.py' -v
 
 # Gercek daemon + gercek enforcement. Unit test'te CALISMAZ:

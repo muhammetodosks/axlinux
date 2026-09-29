@@ -23,6 +23,54 @@ bad(){ printf '%s\n' "${RED}  FAIL${RST} $*"; FAIL=$((FAIL+1)); }
 warn(){ printf '%s\n' "${YEL}  dikkat${RST} $*"; }
 PASS=0; FAIL=0
 check(){ if [ "$2" = "$3" ]; then ok "$1 ($3)"; else bad "$1 (beklenen: $2, gelen: $3)"; fi; }
+  # ---------------------------------------------------------------
+  # KALICI KORUMA: fiziksel makinede calistirma.
+  #
+  # Bu betik GERCEK enforcement uygular: politika yukler, mod
+  # enforcing'e ceker, sureclerin erisimini keser. Korumali
+  # sureclere dokunmaz ve her adimdan sonra modu geri ceker,
+  # yani sistemi kilitlemez - ama yine de calistirildigi makinede
+  # gecici erisim kisitlamasi yapar.
+  #
+  # Bu proje icin enforcement YALNIZCA sanal makinede
+  # dogrulanir. Fiziksel makinede yanlislikla calistirilmasini
+  # engellemek icin burada duruyoruz.
+  #
+  # ATLAMAK icin:  AXLINUX_ALLOW_PHYSICAL=1 tests/verify_all.sh
+  # ---------------------------------------------------------------
+  if [ "${AXLINUX_ALLOW_PHYSICAL:-0}" != "1" ]; then
+      # systemd-detect-virt, fiziksel makine buldugunda "none"
+      # YAZAR ve CIKIS KODU 1 doner. Onceki surum
+      # "$(... || echo bilinmiyor)" yaziyordu; bu yuzden _VIRT
+      # iki satirlik "none\nbilinmiyor" oluyor ve case "none" ile
+      # ESLESMIYORDU. Koruma sessizce hicbir sey yapmiyordu.
+      # Cikis kodu hic kullanilmaz; sadece ilk satir alinir.
+      _VIRT=""
+      if command -v systemd-detect-virt >/dev/null 2>&1; then
+          _VIRT="$(systemd-detect-virt 2>/dev/null | head -1)"
+      fi
+      if [ -z "$_VIRT" ]; then
+          if [ -f /.dockerenv ]; then
+              _VIRT="docker"
+          elif grep -qa 'container=' /proc/1/environ 2>/dev/null; then
+              _VIRT="container"
+          else
+              _VIRT="none"
+          fi
+      fi
+      case "$_VIRT" in
+          none|"")
+              printf '%s\n' "${RED}HATA: fiziksel makine (sanal: $_VIRT).${RST}"
+              printf '%s\n' "Bu betik GERCEK enforcement uygular ve yalnizca"
+              printf '%s\n' "sanal makinede calistirilmalidir."
+              printf '%s\n' ""
+              printf '%s\n' "  Sanal makinede calistirin, ya da bilerek atlakin:"
+              printf '%s\n' "    AXLINUX_ALLOW_PHYSICAL=1 tests/verify_all.sh"
+              exit 1
+              ;;
+      esac
+  fi
+
 
 SOCK=/run/axlinux/axdaemon.sock
 TARGET=/etc/hostname          # denenecek dosya

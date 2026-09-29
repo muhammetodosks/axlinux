@@ -147,3 +147,39 @@ Test sirasinda bulunan kurulum betigi hatalari:
   (`set -u` altinda script cokuyordu)
 - zincirde bpf zaten varken yine ekleniyordu; ikinci calistirmada
   `lsm=...,bpf,bpf,...` olusuyordu
+
+### Guvenlik korumasi: verify_all.sh fiziksel makinede calismaz
+
+`tests/verify_all.sh` gercek enforcement uygular. Gelistirme ortaminda
+enforcement yalnizca sanal makinede dogrulandigi icin betik artik
+fiziksel makinede calistirilmayi reddediyor:
+
+    HATA: fiziksel makine (sanal: none).
+    AXLINUX_ALLOW_PHYSICAL=1 tests/verify_all.sh   # bilerek atlamak icin
+
+Bu koruma iki kez sessizce calismadi ve ikisi de duzeltildi:
+
+1. `systemd-detect-virt` fiziksel makinede "none" YAZAR ve **cikis
+   kodu 1 doner**. `$(systemd-detect-virt || echo bilinmiyor)` yazildigi
+   icin `_VIRT` iki satirlik "none\nbilinmiyor" oluyor ve `case "none"`
+   ile ESLESMIYORDU. Koruma hic tetiklenmedi.
+2. Korumanin kendi regresyon testi `verify_all.sh`'i SANAL MAKİNEDE
+   calistiriyordu. Betik enforcement uygulayip adim sonunda modu
+   "disabled"a cekiyor; yani test, denetledigi seyi bozuyordu. Test
+   artik yalnizca fiziksel makinede subprocess calistiriyor, sanal
+   makinede atlaniyor.
+
+### Yeni regresyon testleri
+
+`tests/test_install_guard.py` (13 test). Daha once sessizce gecmis
+veya yanlis calismis her seyi sabitler:
+
+- vmlinux bir dosyadir (`-d` degil)
+- `summary()` adimlardan once tanimlidir
+- `done_step`/`warn_step`/`fail_step` bos argumanla cagirilabilir
+- adim sayaci ile gercek adim sayisi esittir (cift `TOTAL` tanimi
+  kaldirildi)
+- LSM zinciri idempotenttir (bpf iki kez eklenmez)
+- kurulum araci otomatik reboot yapmaz
+- GRUB degistirilmeden once yedek alinir
+- recovery girdisine lsm= yazilmaz (boot kirarsa kurtarma yolu acik)

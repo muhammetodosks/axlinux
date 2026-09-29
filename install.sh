@@ -49,7 +49,6 @@ fi
 
 # ------------------------------------------------------------------ durum
 STEP=0
-TOTAL=0
 FAILED=0
 WARNED=0
 declare -a STEP_NAME=() STEP_STATE=() STEP_NOTE=()
