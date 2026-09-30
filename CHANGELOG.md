@@ -183,3 +183,36 @@ veya yanlis calismis her seyi sabitler:
 - kurulum araci otomatik reboot yapmaz
 - GRUB degistirilmeden once yedek alinir
 - recovery girdisine lsm= yazilmaz (boot kirarsa kurtarma yolu acik)
+
+## Dagitimlar arasi test (Devam - tamamlanmadi)
+
+Pardus 25.2 ve Debian 12 uzerinde kurulum denendi. Ubuntu'da calisan
+install.sh'in baska dagitimlarda kirildigi yerler bulundu ve duzeltildi:
+
+- **Tek bulunamayan paket tum kurulumu dusuruyordu.** apt/dnf, listede
+  var olmayan bir paket buldugunda (Debian 12'de `linux-tools-common`
+  "no installation candidate") ISLEMI TAMAMEN BIRAKIR. Sonuc: hicbir
+  paket kurulmuyor, "kurulamayan araclar: git" ile kurulum duruyor ve
+  axctl hic kurulmuyordu - 69 test basarisiz oluyordu. Artik paketler
+  TEK TEK kurulur, bulunamayanlar atlanir.
+- **Kontrol edilen araclar kurulum listesinde degildi.** `git` gerekli
+  arac sayiliyordu ama `install_pkgs` cagrisinda gecmiyordu. Ubuntu'da
+  git onceden kurulu oldugu icin sorun gorunmedi.
+- **apt kilidi beklenmiyordu.** cloud-init, unattended-upgrades veya
+  apt-daily kilidi tutuyorsa kurulum sessizce basarisiz oluyordu;
+  gercek sebep "kurulamayan araclar" mesajiyla gizleniyordu.
+
+### KAPSAMLI TEST PAKETI
+
+`tests/deep_verify.sh`: 9 bolum, CLI komutlari, ogrenme modu,
+bes LSM kanca, kalici audit, modlar, kilitlenme korumasi, hata
+yollari, politika dili kenar durumlari.
+
+### ACIK KALAN ISLER
+
+- `axctl status` Debian 12'de hata veriyor; nedeni henuz
+  tespit edilmedi. Kapsamli test 40/95 geciyor.
+- Pardus'un TAM paket deposu kurulamadi: kurulum ISO'su yalnizca
+  Debian 13 tabanini tasiyor (`dists/yirmibes-deb/main` = Debian),
+  gercek Pardus paketleri `contrib` altinda ve ISO'da bos.
+  Bu yuzden Pardus 25.2 UZERINDE tam dogrulama YAPILAMADI.

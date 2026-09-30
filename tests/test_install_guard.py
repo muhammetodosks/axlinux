@@ -173,6 +173,66 @@ class TestInstallScript(unittest.TestCase):
         # ve sayac resetlenmeli
         self.assertIn("SEEN_BPF=0", src)
 
+
+    def test_required_tools_are_also_installed(self):
+        """Kontrol edilen her arac kurulum listesinde de gecmeli.
+
+        "git" kontrol ediliyordu ama install_pkgs cagrisinda
+        yoktu; Ubuntu'da onceden kurulu oldugu icin sorun
+        gorunmedi, Debian'da kurulum durdu.
+        """
+        src = read(INSTALL)
+        m = re.search(r"for t in ([^;]+);", src)
+        self.assertIsNotNone(m, "arac kontrol listesi bulunamadi")
+        checked = set(re.findall(r"[\w+]+", m.group(1)))
+        self.assertIn("git", checked, "git kontrol ediliyor olmali")
+        flat = re.sub(r"\\\s*\n\s*", " ", src)
+        calls = " ".join(re.findall(r"install_pkgs\s+([^;]*?);", flat))
+        for tool in ("git", "clang", "llvm", "rsync", "curl"):
+            if tool in checked:
+                self.assertIn(
+                    tool, calls,
+                    f"{tool} kontrol ediliyor ama install_pkgs "
+                    f"cagrisinda gecmiyor")
+
+    def test_packages_installed_individually(self):
+        """Regresyon: tek bulunamayan paket tum kurulumu dusuruyordu.
+
+        apt/dnf, "bulunamayan paket" hatasinda islemin tamamini
+        birakir. Listede dagitima gore olmayan bir paket varsa
+        (linux-tools-common Debian 12'de "no installation candidate")
+        HICBIR paket kurulmuyor, kurulum "kurulamayan araclar: git"
+        ile duruyor ve axctl hic kurulmuyordu - 69 test basarisiz.
+
+        Cozum: paketler tek tek kurulur, bulunamayanlar atlanir.
+        """
+        src = read(INSTALL)
+        self.assertIn("install_one", src)
+        self.assertIn("pkg_available", src)
+        # toplu kurulum KALMAMALI
+        self.assertNotRegex(
+            src, r'apt-get install -y -qq "\$@"',
+            "toplu kurulum kaldirilmali; paketler tek tek kurulmali")
+
+    def test_waits_for_apt_lock(self):
+        """Regresyon: apt kilidi tutuldugunda kurulum SESSIZCE
+        basarisiz oluyordu.
+
+        cloud-init, unattended-upgrades veya apt-daily kilidi
+        tutuyorsa apt-get "Could not get lock" verir. Onceki surum
+        bunu /dev/null'a atiyor ve kullaniciya "araclar kurulamadi"
+        diyordu; gercek sebep gizliydi.
+        """
+        src = read(INSTALL)
+        self.assertIn("wait_for_apt_lock", src)
+        self.assertRegex(src, r'dpkg/lock-frontend',
+                         "kilit kontrolu /var/lib/dpkg/lock-frontend "
+                         "olmalidir")
+        # paket kurulum ciktisi gizlenmemeli
+        self.assertNotRegex(
+            src, r'apt-get install -y -qq[^\n]*>/dev/null',
+            "apt-get install ciktisi gizlenmemeli; hata gorunmelidir")
+
     def test_no_automatic_reboot(self):
         src = read(INSTALL)
         dangerous = re.findall(r'^\s*(sudo\s+)?reboot\s*$', src, re.M)

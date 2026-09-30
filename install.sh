@@ -55,6 +55,7 @@ declare -a STEP_NAME=() STEP_STATE=() STEP_NOTE=()
 SPINNER='|/-\'
 SPIN_I=0
 BPF_ACTIVE=0
+PKGMGR=""
 
 # ------------------------------------------------------------------ cikti
 hr()    { printf '%s%s%s\n' "$D" "──────────────────────────────────────────────────────────────────────" "$R"; }
@@ -118,6 +119,86 @@ confirm() {
         e|E|evet|y|Y|yes|"") return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# ------------------------------------------------------------------ paket
+# Dagitimlar arasindaki en buyuk fark burada: ayni arac farkli adiyla
+# veya hic bulunmayan bir paketten gelir. Iki ders cikarildi:
+#   1) Bir bulunamayan paket TUM apt islemini dusurur. Bu yuzden
+#      paketler TEK TEK kurulur; olmayan atlanir.
+#   2) apt/dpkg kilidi cloud-init, unattended-upgrades veya apt-daily
+#      tarafindan tutulabilir. Onceki surum beklemiyordu ve cikti
+#      gizlendigi icin kurulum sessizce basarisiz oluyordu.
+
+OPTIONAL_PKGS="linux-tools-common bpftool"
+
+wait_for_apt_lock() {
+    local i=0
+    while [ $i -lt 60 ]; do
+        if ! fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 &&
+           ! fuser /var/lib/dpkg/lock >/dev/null 2>&1; then
+            return 0
+        fi
+        if [ $i -eq 0 ]; then
+            printf '    %sbekleniyor: apt kilidi baska bir surecte%s\n' "$D" "$R"
+            fuser -v /var/lib/dpkg/lock-frontend 2>&1 | sed 's/^/      /'
+        fi
+        sleep 10
+        i=$((i + 1))
+    done
+    printf '    %sapt kilidi 10 dakika boyunca birakilmadi%s\n' "$RED" "$R"
+    return 1
+}
+
+pkg_available() {
+    case "$PKGMGR" in
+        apt-get) apt-cache show "$1" >/dev/null 2>&1 ;;
+        dnf|yum) dnf list "$1" >/dev/null 2>&1 ;;
+        pacman)  pacman -Si "$1" >/dev/null 2>&1 ;;
+        apk)     apk info -e "$1" >/dev/null 2>&1 ;;
+        zypper)  zypper --non-interactive search -i "$1" >/dev/null 2>&1 ;;
+        *) return 0 ;;
+    esac
+}
+
+install_one() {
+    case "$PKGMGR" in
+        apt-get) DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$1" ;;
+        dnf|yum) dnf install -y -q "$1" ;;
+        pacman)  pacman -S --noconfirm --needed "$1" ;;
+        apk)     apk add --no-cache "$1" ;;
+        zypper)  zypper --non-interactive install -y "$1" ;;
+        *) return 0 ;;
+    esac
+}
+
+install_pkgs() {
+    if [ "$PKGMGR" = "apt-get" ]; then
+        export DEBIAN_FRONTEND=noninteractive
+        wait_for_apt_lock || return 1
+        apt-get update -qq >/dev/null 2>&1
+    fi
+    local missing=0
+    for p in "$@"; do
+        case " $OPTIONAL_PKGS " in
+            *" $p "*) : ;;
+            *)
+                if ! pkg_available "$p"; then
+                    warn "paket yok, atlaniyor: $p"
+                    missing=1
+                    continue
+                fi
+                ;;
+        esac
+        if ! install_one "$p" >/dev/null 2>&1; then
+            warn "kurulamadi: $p"
+            case " $OPTIONAL_PKGS " in
+                *" $p "*) : ;;
+                *) missing=1 ;;
+            esac
+        fi
+    done
+    [ "$missing" = "0" ]
 }
 
 # summary() burada TANIMLANIR cunku adimlar onu cagirir;
@@ -259,49 +340,48 @@ fi
 
 # ------------------------------------------------------------------ 3 bagimliliklar
 begin "Bagimliliklar"
-PKGMGR=""
-for c in apt-get dnf yum pacman apk zypper; do
-    has "$c" && { PKGMGR="$c"; break; }
-done
+if [ -z "$PKGMGR" ]; then
+    for c in apt-get dnf yum pacman apk zypper; do
+        has "$c" && { PKGMGR="$c"; break; }
+    done
+fi
 if [ -z "$PKGMGR" ]; then
     fail_step "paket yoneticisi bulunamadi"
     summary; exit 1
 fi
 ok "paket yoneticisi: $PKGMGR"
 
-install_pkgs() {
-    case "$PKGMGR" in
-        apt-get)
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq >/dev/null 2>&1
-            apt-get install -y -qq "$@" >/dev/null 2>&1
-            ;;
-        dnf|yum)   dnf install -y -q "$@" >/dev/null 2>&1 ;;
-        pacman)    pacman -Sy --noconfirm "$@" >/dev/null 2>&1 ;;
-        apk)       apk add --no-cache "$@" >/dev/null 2>&1 ;;
-        zypper)    zypper -n install "$@" >/dev/null 2>&1 ;;
-        *) return 1 ;;
-    esac
-}
-
+# Kurulumdan sonra gercekten var olacaklar. bpftool surume ozel
+# bir paket oldugu icin ayrica ele alinir (OPTIONAL_PKGS).
 NEED=""
-for t in clang llvm bpftool make gcc git python3 rsync curl; do
+for t in clang llvm-objdump make gcc git python3 rsync curl; do
     has "$t" || NEED="$NEED $t"
 done
+
 if [ -z "$NEED" ]; then
     ok "tum araclar hazir"
 else
-    info "kurulacak:$NEED"
+    info "eksik:$NEED"
     tick "paketler kuruluyor (bir surebilir)"
     case "$PKGMGR" in
         apt-get) install_pkgs clang llvm libbpf-dev linux-headers-generic \
-                              python3-pytest build-essential ;;
+                              linux-tools-common python3-pytest \
+                              build-essential git rsync curl ca-certificates ;;
+        dnf|yum) install_pkgs clang llvm libbpf-devel linux-headers \
+                              python3-pytest gcc make git rsync curl ;;
+        pacman)  install_pkgs clang llvm libbpf libbpf-devel linux-headers \
+                              python-pytest base-devel git rsync curl ;;
+        apk)     install_pkgs clang llvm libbpf-dev linux-headers \
+                              py3-pytest build-base git rsync curl ;;
         *)       install_pkgs clang llvm libbpf-devel linux-headers \
-                              python3-pytest base-devel ;;
+                              python3-pytest base-devel git rsync curl ;;
     esac
     untick
+    # bpftool: bazi dagitimlarda surume ozel paketten gelir
+    has bpftool || has /usr/sbin/bpftool || has /usr/bin/bpftool || \
+        install_pkgs bpftool
     MISS=""
-    for t in clang llvm-objdump make gcc git python3; do
+    for t in clang llvm-objdump make gcc git python3 rsync curl; do
         has "$t" || MISS="$MISS $t"
     done
     if [ -n "$MISS" ]; then
