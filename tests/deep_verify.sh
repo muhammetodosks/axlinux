@@ -255,13 +255,58 @@ if sect C "Ogrenme modu"; then
     # report
     if emits_output axctl learn report; then ok "learn report cikti verdi"
     else no "learn report cikti vermedi"; fi
-    # YAML olarak da uretebilmeli
-    if axctl learn report 2>/dev/null | python3 -c \
-       'import sys,yaml;yaml.safe_load(sys.stdin.read())' 2>/dev/null; then
-        ok "learn report gecerli YAML"
+    # Oneri blogu YAML OLMALI: kullanicinin politika.yaml'a
+    # yapistiracagi metin bu. Once butun rapor YAML'a sokuluyordu;
+    # raporun kendisi insan-okur metin (kutu karakterleri iceriyor)
+    # ve bu yuzden test HER ZAMAN "atla"yordu - gercek bir
+    # belirsizlik degil, yanlis varsayim.
+    #
+    # Dogrulanan sey: yapistirilabilir metin gercekten YAML mi?
+    # Once politika ve etiket uretildigi icin burada gercek bir
+    # oneriyi dogrulamak gerekir; yoksa blok bos olur.
+    cat >/tmp/ax-learn.yaml <<YAML'
+version: 1
+mode: enforcing
+labels:
+  web: [curl]
+rules:
+  - id: l1
+    name: "etiket kurali"
+    subject: web
+    object: /etc/ax-secret
+    action: file.read
+    effect: deny
+YAML
+    apply_policy /tmp/ax-learn.yaml
+    sleep 1
+    curl -s file:///etc/ax-secret >/dev/null 2>&1
+    sleep 1
+    if axctl learn report 2>/dev/null | python3 -c '
+import sys, re, yaml
+txt = sys.stdin.read()
+m = re.search(r"rules:", txt)
+if not m:
+    sys.exit(1)
+# Oneri blogu: "rules:" sonrasi YAML parcasini dene
+frag = txt[m.start():]
+try:
+    yaml.safe_load("version: 1\nmode: enforcing\n" + frag)
+except Exception:
+    sys.exit(1)
+' 2>/dev/null; then
+        ok "learn report onerisi gecerli YAML"
     else
-        skip "learn report YAML (pyyaml yok olabilir)"
+        # Gozlem toplanmadiysa oneri uretilmez; bu bir hata degil,
+        # akisin bir sonraki asamasi
+        if [ "${obs:-0}" -gt 0 ] 2>/dev/null; then
+            no "learn report onerisi gecersiz YAML"
+        else
+            skip "learn report onerisi (gozlem toplanmadi)"
+        fi
     fi
+    # Politika icin geri don: ogrenme akisi kendi durumunu
+    # kullanmali
+    axctl policy check -f /tmp/ax-learn.yaml >/dev/null 2>&1 || true
     rc_is "learn stop" 0 axctl learn stop
     sleep 1
     st=$(axctl status --json 2>/dev/null | python3 -c \
@@ -281,7 +326,12 @@ if sect C "Ogrenme modu"; then
     # Once kuyruk otursun, sonra taban al, sonra YENI aktivite
     # uret: sayi artarsa bayrak dusmemis demektir.
     sleep 2
-    o1=$obs
+    # TAZE OKUNUR. Once "o1=$obs" yaziliyordu; $obs degiskeni
+    # "learn stop"tan ONCE okunmus oldugu icin o1 stop oncesi bir
+    # degerdi ve o2 (stop sonrasi) ile karsilastiriliyordu. Yani
+    # "artti" sonucu, tanim geregi, stop'un dogal sonucuydu.
+    o1=$(axctl status --json 2>/dev/null | python3 -c \
+         'import json,sys;print(json.load(sys.stdin).get("learning_observations"))' 2>/dev/null)
     for i in 1 2 3; do curl -s file:///etc/ax-secret >/dev/null 2>&1; done
     sleep 2
     o2=$(axctl status --json 2>/dev/null | python3 -c \
@@ -357,7 +407,21 @@ YAML
         curl -s file:///etc/ax-secret2
 
     info "D) file_open - write"
-    rc_is "curl -o /etc/ax-secret (deny)" 37 \
+    # Yazma engeli CURL'IN CIKIS KODU DEGIL, DOSYANIN ICERIGIYLE
+    # dogrulanir.
+    #
+    # Once test rc=37 bekliyordu; 37 = CURLE_FILE_COULDNT_READ_FILE,
+    # yani OKUMA reddi. Yazma reddinde curl 23 (CURLE_WRITE_ERROR)
+    # donuyor. Urun dogru calisiyordu, test yanlis kodu bekliyordu.
+    # Daha guclu ve kirsilmayla ilgisiz olcum: dosya degismemeli.
+    printf 'GIZLI ICERIK\n' >/etc/ax-secret
+    curl -s -o /etc/ax-secret file:///etc/hostname >/dev/null 2>&1
+    if grep -q 'GIZLI ICERIK' /etc/ax-secret 2>/dev/null; then
+        ok "curl -o /etc/ax-secret engellendi (dosya degismedi)"
+    else
+        no "curl -o /etc/ax-secret YAZILDI (file.write deny calismadi)"
+    fi
+    rc_is "curl -o reddi curl hatasi donduruyor" 23 \
         curl -s -o /etc/ax-secret file:///etc/hostname
     info "  (yazma icin curl farkli bir dosya hedeflemeli; "
     info "   asagida python ile yazma denenecek)"
@@ -365,8 +429,38 @@ YAML
     info "D) bprm - file.execute"
     rc_is "python3 -> /bin/ls (deny)" 1 \
         python3 -c "import os;os.execv('/bin/ls',['ls'])"
-    rc_is "python3 -> /bin/pwd (serbest)" 0 \
+    # Digeri: "python3 -> /bin/pwd serbest" bekleniyordu. Ama ayni
+    # politikada k4 var:
+    #   - id: k4  subject: python3  object: ""  action: process.exec
+    # yani python3 HICBIR sey calistiramaz; /bin/pwd de buna
+    # girer. Test kendi politikasiyla celisiyordu.
+    #
+    # Asil sorulacak soru "kural nesneyle sinirli mi" degil,
+    # "kural hedef disi sureclere siziyor mu"dur. Ayri bir
+    # politika ile SADECE /bin/ls yasaklanir: /bin/ls engellenir,
+    # /bin/pwd serbest kalir. Boylece hem iki kancanin da
+    # calistigi hem de kuralin hedefleme ile sinirli oldugu
+    # gorulmus olur.
+    cat >/tmp/ax-scope.yaml <<YAML
+version: 1
+mode: enforcing
+rules:
+  - id: s1
+    name: "sadece /bin/ls"
+    subject: python3
+    object: /bin/ls
+    action: file.execute
+    effect: deny
+YAML
+    apply_policy /tmp/ax-scope.yaml
+    sleep 1
+    rc_is "yalnizca /bin/ls yasakken /bin/ls engelli" 1 \
+        python3 -c "import os;os.execv('/bin/ls',['ls'])"
+    rc_is "yalnizca /bin/ls yasakken /bin/pwd serbest" 0 \
         python3 -c "import os;os.execv('/bin/pwd',['pwd'])"
+    # Tam politikaya don: sonraki bolumler bunu bekliyor
+    cp /tmp/ax-full.yaml "$POLICY_PATH"
+    axctl reload --mode enforcing >/dev/null 2>&1
 
     info "D) bprm - process.exec"
     rc_is "python3 -> her sey (process.exec deny)" 1 \
