@@ -264,7 +264,7 @@ if sect C "Ogrenme modu"; then
     # Dogrulanan sey: yapistirilabilir metin gercekten YAML mi?
     # Once politika ve etiket uretildigi icin burada gercek bir
     # oneriyi dogrulamak gerekir; yoksa blok bos olur.
-    cat >/tmp/ax-learn.yaml <<YAML'
+    cat >/tmp/ax-learn.yaml <<YAML
 version: 1
 mode: enforcing
 labels:

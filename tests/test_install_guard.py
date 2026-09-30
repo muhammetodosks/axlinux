@@ -8,6 +8,7 @@ beklenmedik davraninca sessizce devre disi kaliyordu.
 Sessiz gecen bir guvenlik korumasi, hic koruma olmamasindan
 kotudur: kullanici korundugunu sanar.
 """
+import os
 import re
 import subprocess
 import sys
@@ -675,6 +676,62 @@ class TestInexpressibleRulesRejected(unittest.TestCase):
         self.assertNotIn("printf 'd%.0s' {1..12}", s)
         self.assertRegex(s, r"for i in \$\(seq 1 12\)",
                          "bilesen sayisi kadar yol uretilmeli")
+
+
+class TestSuggestionsNotWrapped(unittest.TestCase):
+    """Oneri blogu YAPISTIRILABILIR olmali.
+
+    CLI kullaniciya "bu kurallari policy.yaml'a yapistirip policy
+    check ile dogrulayin" diyor ve ekrana bastigi sey de
+    YAPISTIRILACAK metin. rich varsayilan olarak metni ekran
+    genisligine gore kaydirir ve satirlari boler. Oneriler tek
+    satirlik YAML degerleri icerdiginden kaydirma soyle bir
+    blok uretiyordu:
+
+        name: "ogrenme: curl file.read
+        /usr/lib/x86_64-linux-gnu/liblber-2.5.so.0.1.8"
+
+    Artik tirnak disinda YAML parcasi kaliyor ve dosya AYRIŞMAZ.
+    Yani CLI komutu calistirmaya calisan kullaniciya hatayi
+    bizzat uretiyordu.
+
+    Dogrulama: ham suggestions YAML olarak GECERLI
+    (yaml.safe_load basarili); yalnizca goruntuleme bozuyordu.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+    CLI = ROOT / "src" / "python" / "axctl" / "cli.py"
+
+    def test_suggestions_printed_with_soft_wrap(self):
+        txt = read(self.CLI)
+        self.assertIn('console.print(report["suggestions"], soft_wrap=True)', txt,
+                      "oneriler soft_wrap ile basilmali; rich kaydirmasi "
+                      "YAML'i bozuyor")
+
+    def test_other_copied_blocks_also_unwrapped(self):
+        """Yapistirilan her blok kaydirilmamali."""
+        txt = read(self.CLI)
+        for expr in ('report["suggestions"]',):
+            for line in txt.splitlines():
+                if f"console.print({expr})" in line:
+                    self.fail(f"{expr} soft_wrap'siz basiliyor; "
+                              f"uzun satirlar kirpilir ve metin bozulur")
+
+    def test_generated_yaml_is_valid(self):
+        """Uretilen YAML GERCEKTEN gecerli olmali.
+
+        Go tarafinda yamlQuote kacis dogru; burada onun yerine
+        gecerli YAML uretildigini dogruluyoruz.
+        """
+        import subprocess
+        gopath = self.ROOT / "src" / "go" / "axdaemon"
+        if not (gopath / "go.mod").exists():
+            self.skipTest("go.mod yok")
+        r = subprocess.run(
+            ["go", "test", "./internal/learning/", "-run", "Test", "-count=1"],
+            cwd=gopath, capture_output=True, text=True,
+            env={**os.environ, "PATH": os.environ.get("PATH", "") + ":/usr/local/go/bin"})
+        self.assertEqual(r.returncode, 0, f"learning testleri basarisiz:\n{r.stdout[-800:]}")
 
 
 if __name__ == "__main__":

@@ -557,7 +557,24 @@ def learn_report_cmd(output_format):
             console.print(
                 "[dim]Bu kuralları ~/.axlinux/policy.yaml içine "
                 "yapıştırıp 'axctl policy check' ile doğrulayın.[/dim]")
-            console.print(report["suggestions"])
+            # SOFT_WRAP ZORUNLU. rich varsayilan olarak metni
+            # ekran genisligine gore KAYDIRIR ve satirlari boler.
+            # Oneriler tek satirlik YAML degerleri icerir:
+            #     name: "ogrenme: curl file.read /usr/lib/x86_64...so"
+            # ~82 karakterlik bu satir kaydirildiginda soyle oluyor:
+            #     name: "ogrenme: curl file.read
+            #     /usr/lib/x86_64...so"
+            # Artik tirnak disinda bir YAML parcasi kaliyor ve dosya
+            # AYRIŞMAZ.
+            #
+            # Dogrulama: ham suggestions YAML olarak GECERLI
+            # (yaml.safe_load basarili, 1477 satir); yalnizca ekran
+            # ciktisi bozuktu. Ama kullaniciya yapistirilacak metin
+            # ekran ciktisidir: "policy.yaml'a yapistirip policy
+            # check ile dogrulayin" diyen mesajin yaninda bozuk
+            # metin gostermek, komutu calistirmaya calisan
+            # kullaniciya hatayi bizzat uretmek demektir.
+            console.print(report["suggestions"], soft_wrap=True)
 
     except DaemonError as e:
         print_error(str(e))
