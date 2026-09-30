@@ -58,8 +58,26 @@ def init(force):
     policy_path = get_policy_path()
 
     if axlinux_home.exists() and not force:
-        print_warning(f"{axlinux_home} zaten mevcut. "
-                      "--force ile sıfırlayabilirsiniz.")
+        # init idempotent olmali: dizin varsa AMA politika dosyasi
+        # yoksa (silinmis, yarim kurulum, elle temizlik) sessizce
+        # cikis yapmak sistemi politika dosyasi olmadan birakirdi.
+        # Sonrasi kullanici "axctl reload" calistirir, "Politika
+        # dosyasi yok" hatasi alir ve nedenini bulamaz.
+        # Dizin var, dosya yok -> dosyayi olusturup devam et.
+        if policy_path.exists():
+            print_warning(f"{axlinux_home} zaten mevcut. "
+                          "--force ile sıfırlayabilirsiniz.")
+            return
+        print_warning(f"{axlinux_home} var ama {policy_path.name} "
+                      "eksik; oluşturuluyor.")
+        ensure_layout()
+        save_policy(policy_path, {
+            "version": 1,
+            "mode": "enforcing",
+            "rules": [],
+        })
+        print_success(f"{policy_path} oluşturuldu (boş politika, sistem serbest)")
+        print_info("Hazır. 'axctl policy edit' ile politikanı yaz.")
         return
 
     if force and axlinux_home.exists():
@@ -198,9 +216,15 @@ def reload(mode, force_empty):
         else:
             policy_path = get_policy_path()
             if not policy_path.exists():
-                print_error("Politika dosyasi yok. Once 'axctl init' "
-                            "calistirin.")
-                sys.exit(1)
+                # PolicyError -> exit_code 2. Once dogrudan
+                # sys.exit(1) vardi; politika sorunlarinin kodu
+                # 2, ama bu yol 1 donuyordu. Kullanici betik
+                # yazarken "reload 1 donerse politika yok" ile
+                # "reload 2 donerse politika bozuk" ayrimini
+                # yapamiyordu.
+                raise PolicyError(
+                    f"Politika dosyasi yok: {policy_path}. "
+                    f"Once 'axctl init' calistirin.")
 
             backup_policy(policy_path)
             policy = load_policy(policy_path)
@@ -254,7 +278,11 @@ def reload(mode, force_empty):
         sys.exit(2)
     except DaemonError as e:
         print_error(str(e))
-        sys.exit(4)
+                # Sinifin exit_code'u kullanilir. Sabit 4 her zaman
+        # "altyapi hatasi" diyordu; oysa DaemonAppError
+        # exit_code=1 doner (uygulama seviyesi ret, orn.
+        # "ogrenme modu zaten aktif").
+        sys.exit(e.exit_code)
 
 
 @cli.command()
@@ -271,7 +299,11 @@ def status(output_json):
 
     except DaemonError as e:
         print_error(str(e))
-        sys.exit(4)
+                # Sinifin exit_code'u kullanilir. Sabit 4 her zaman
+        # "altyapi hatasi" diyordu; oysa DaemonAppError
+        # exit_code=1 doner (uygulama seviyesi ret, orn.
+        # "ogrenme modu zaten aktif").
+        sys.exit(e.exit_code)
 
 
 @cli.command()
@@ -279,7 +311,15 @@ def status(output_json):
 @click.option("--filter", "filter_str", help="Filtre (örn: action=file.read,effect=deny)")
 @click.option("--since", help="Zamandan beri (1h, 1d, 1w)")
 @click.option("--limit", "-n", default=100, help="Maksimum kayıt sayısı")
-def logs(follow, filter_str, since, limit):
+@click.option("--json", "output_json", is_flag=True, help="JSON çıktı (status ile aynı)")
+@click.option("--subject", help="İşlem adına göre filtre (örn: curl)")
+@click.option("--action", help="Aksiyona göre filtre (örn: file.read)")
+@click.option(
+    "--effect",
+    type=click.Choice(["allow", "deny", "allowed", "denied"], case_sensitive=False),
+    help="Karara göre filtre (allow/deny; allowed/denied de kabul edilir)",
+)
+def logs(follow, filter_str, since, limit, output_json, subject, action, effect):
     """Audit log'u okur."""
     try:
         filters = {}
@@ -288,6 +328,27 @@ def logs(follow, filter_str, since, limit):
                 if "=" in part:
                     key, value = part.split("=", 1)
                     filters[key.strip()] = value.strip()
+
+        # Alan bazli secenekler --filter SOZLESMESINE cevrilir.
+        # Once yalnizca --filter vardi; "axctl logs --effect denied"
+        # yazmak click tarafindan "bilinmeyen secenek" hatasina
+        # dusuyordu (rc=2). "status --json" varken "logs --json"
+        # olmamasi da tutarsizdi: audit kayitlarini arac olarak
+        # islemek isteyen kullanici elle metin ayiklamak
+        # zorunda kaliyordu.
+        if subject:
+            filters["subject"] = subject
+        if action:
+            filters["action"] = action
+        if effect:
+            # Audit kayitlari "denied"/"allowed" yaziyor, --filter
+            # yardimi ise "deny" ornegi gosteriyordu. Ikisi de
+            # kabul edilsin ve DAIMONUN bekledigi deger gonderilsin
+            # ("deny"/"allow"): kullanicinin yazdigi bicim degisse
+            # de filtre hep calissin.
+            filters["effect"] = (
+                "deny" if effect.lower().startswith("den") else "allow"
+            )
 
         # since AYRI gonderilir: sunucu "since"u bilinen bir
         # filtre alani olarak tanimaz. Filtreye karistirilirsa
@@ -301,7 +362,11 @@ def logs(follow, filter_str, since, limit):
         # anahtarinin altindadir.
         payload = get_logs(filters=filters, limit=limit, since=since)
         log_entries = payload.get("logs", []) if isinstance(payload, dict) else []
-        print_logs(log_entries)
+
+        if output_json:
+            console.print_json(data=payload)
+        else:
+            print_logs(log_entries)
         _warn_ignored_filters(payload)
 
         if follow:
@@ -334,7 +399,11 @@ def logs(follow, filter_str, since, limit):
 
     except DaemonError as e:
         print_error(str(e))
-        sys.exit(4)
+                # Sinifin exit_code'u kullanilir. Sabit 4 her zaman
+        # "altyapi hatasi" diyordu; oysa DaemonAppError
+        # exit_code=1 doner (uygulama seviyesi ret, orn.
+        # "ogrenme modu zaten aktif").
+        sys.exit(e.exit_code)
 
 
 def log_key(entry: dict) -> tuple:
@@ -393,7 +462,11 @@ def learn_start_cmd(days):
             print_info(result["how"])
     except DaemonError as e:
         print_error(str(e))
-        sys.exit(4)
+                # Sinifin exit_code'u kullanilir. Sabit 4 her zaman
+        # "altyapi hatasi" diyordu; oysa DaemonAppError
+        # exit_code=1 doner (uygulama seviyesi ret, orn.
+        # "ogrenme modu zaten aktif").
+        sys.exit(e.exit_code)
 
 
 @learn.command("stop")
@@ -416,7 +489,11 @@ def learn_stop_cmd():
                 "alanını kontrol edin.")
     except DaemonError as e:
         print_error(str(e))
-        sys.exit(4)
+                # Sinifin exit_code'u kullanilir. Sabit 4 her zaman
+        # "altyapi hatasi" diyordu; oysa DaemonAppError
+        # exit_code=1 doner (uygulama seviyesi ret, orn.
+        # "ogrenme modu zaten aktif").
+        sys.exit(e.exit_code)
 
 
 @learn.command("report")
@@ -475,7 +552,11 @@ def learn_report_cmd(output_format):
 
     except DaemonError as e:
         print_error(str(e))
-        sys.exit(4)
+                # Sinifin exit_code'u kullanilir. Sabit 4 her zaman
+        # "altyapi hatasi" diyordu; oysa DaemonAppError
+        # exit_code=1 doner (uygulama seviyesi ret, orn.
+        # "ogrenme modu zaten aktif").
+        sys.exit(e.exit_code)
 
 
 @cli.group()
@@ -536,6 +617,40 @@ def label_add(name, process):
         sys.exit(2)
 
 
+@label.command("rm")
+@click.argument("name")
+def label_rm(name):
+    """Bir etiketi siler.
+
+    Once "label" komutu yalnizca "add" ve "ls" destekliyordu:
+    etiket EKLENIRDI ama SILINEMEZDI. Politika elle
+    duzeltilmeden bir etiketi kaldirmenin hicbir yolu yoktu;
+    kullanici policy.yaml'i duzenlemek zorunda kaliyordu.
+    """
+    try:
+        policy = load_policy()
+        labels = policy.get("labels", {})
+
+        if name not in labels:
+            # Zaten yoksa hata: kullanici "silindi" sanip sistemi
+            # yanlis varsaymasin.
+            raise PolicyError(
+                f"Etiket bulunamadı: {name}. "
+                f"Mevcut etiketler: axctl label ls"
+            )
+
+        del labels[name]
+        policy["labels"] = labels
+        save_policy(get_policy_path(), policy)
+
+        print_success(f"Etiket silindi: {name}")
+        print_info("Değişikliği etkinleştirmek için: axctl reload")
+
+    except PolicyError as e:
+        print_error(str(e))
+        sys.exit(e.exit_code)
+
+
 @cli.command()
 @click.argument("mode", type=click.Choice(["enforcing", "permissive", "disabled"]))
 def mode(mode):
@@ -553,7 +668,11 @@ def mode(mode):
 
     except DaemonError as e:
         print_error(str(e))
-        sys.exit(4)
+                # Sinifin exit_code'u kullanilir. Sabit 4 her zaman
+        # "altyapi hatasi" diyordu; oysa DaemonAppError
+        # exit_code=1 doner (uygulama seviyesi ret, orn.
+        # "ogrenme modu zaten aktif").
+        sys.exit(e.exit_code)
 
 
 @cli.group()

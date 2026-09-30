@@ -496,5 +496,137 @@ class TestPolicyCheckAcceptsFile(unittest.TestCase):
         self.assertRegex(sim, r"def simulate_policy\(path")
 
 
+class TestDaemonErrorHandling(unittest.TestCase):
+    """Daemon hatalari kullaniciya anlasilir sekilde donmeli.
+
+    JSON-RPC hata nesnesi bir SOZLUKTUR:
+        {"code": -32000, "message": "ogrenme modu zaten aktif"}
+    Once f-string ile basilirdi ve kullanicya ham Python sozlugu
+    gorunuyordu:
+        x Daemon hatasi: {'code': -32000, 'message': '...'}
+    Ayrica "zaten aktif" bir ALTYAPI hatasi degil, uygulama
+    seviyesinde bir ret; ama exit code 4 ile cikiyordu.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+    DC = ROOT / "src" / "python" / "axctl" / "daemon_client.py"
+    EX = ROOT / "src" / "python" / "axctl" / "exceptions.py"
+    CLI = ROOT / "src" / "python" / "axctl" / "cli.py"
+
+    def test_app_error_class_exists_and_inherits(self):
+        txt = read(self.EX)
+        self.assertIn("class DaemonAppError(DaemonError)", txt)
+        # Miras iliskisi calisma aninda dogrulanir: sinif
+        # tanimlanma SIRASI hataliysa modul hic import olmaz.
+        import subprocess
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import sys;sys.path.insert(0,'src/python');"
+             "from axctl.exceptions import DaemonAppError,DaemonError;"
+             "assert issubclass(DaemonAppError,DaemonError);"
+             "print(DaemonAppError.exit_code)"],
+            cwd=self.ROOT, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0,
+                         f"exceptions.py import edilemiyor: {r.stderr}")
+        self.assertEqual(r.stdout.strip(), "1",
+                         "uygulama seviyesi hata exit_code=1 olmali")
+
+    def test_error_dict_is_unpacked(self):
+        txt = read(self.DC)
+        self.assertNotIn("f\"Daemon hatası: {response['error']}\"", txt,
+                         "ham sozluk f-string ile basilmaya devam ediyor")
+        self.assertIn("DaemonAppError(msg)", txt,
+                      "hata mesaji temizlenip uygulama hatası olarak "
+                      "yükseltilmeli")
+        self.assertIn('err.get("message")', txt)
+
+    def test_cli_uses_exception_exit_code(self):
+        txt = read(self.CLI)
+        self.assertNotRegex(txt, r"except DaemonError as e:\n\s+"
+                                r"print_error\(str\(e\)\)\n\s+sys\.exit\(4\)",
+                           "sabit exit 4 kullaniliyor; sinifin exit_code'u "
+                           "kullanilmali")
+        self.assertGreaterEqual(txt.count("sys.exit(e.exit_code)"), 5)
+
+    def test_logs_has_structured_options(self):
+        """logs yalnizca --filter metni kabul ediyordu.
+
+        "axctl logs --effect denied" click tarafindan "bilinmeyen
+        secenek" hatasina dusuyordu (rc=2). Ayrica status --json
+        varken logs'ta --json yoktu; audit kayitlarini arac olarak
+        islemek isteyen kullanici elle metin ayiklamak zorundaydi.
+        """
+        txt = read(self.CLI)
+        for opt in ('"--json"', '"--subject"', '"--action"', '"--effect"'):
+            self.assertIn(opt, txt, f"logs'ta {opt} secenegi olmali")
+        # Alan secenekleri filtre sozlesmesine cevrilmeli
+        self.assertIn('filters["subject"] = subject', txt)
+        self.assertIn('filters["action"] = action', txt)
+        # effect DAIMONUN bekledigi deger olarak normalize edilir
+        # ("deny"/"allow"); kullanicinin "denied" yazmasi calismali.
+        self.assertRegex(txt, r'filters\["effect"\] = \(\s*\n?\s*'
+                             r'"deny" if effect\.lower\(\)',
+                         "effect filtresi normalize edilmiyor")
+
+    def test_label_rm_exists(self):
+        """Etiket ekleniyordu ama SILINEMIYORDU."""
+        txt = read(self.CLI)
+        self.assertIn('@label.command("rm")', txt,
+                      "label rm yok; etiket kaldirilamiyor")
+        self.assertIn("del labels[name]", txt)
+        # Var olmayan etiket sessizce "silindi" dememeli
+        self.assertIn("Etiket bulunamadı", txt)
+
+
+class TestEmergencyEscapeHatch(unittest.TestCase):
+    """ACIL KURTARMA YOLU calismali.
+
+    "axctl reload --force-empty", kotu bir politika yuzunden
+    kilitlenen operatorun enforcement'i durdurma yoludur. Bos
+    politika reddedildigi icin komut KENDISI basarisiz oluyordu:
+
+        x policy yukleme hatasi: policy en az bir kural icermeli
+
+    Yani kurtarma araci sistemi kilitli birakirdi. Ayni
+    dogrulama "axctl init" + "axctl reload" ilk kurulum akisini
+    da kirip gecersiz kiliyordu: init bos politika yazar.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+    POL = ROOT / "src" / "go" / "axdaemon" / "internal" / "policy" / "policy.go"
+    CLI = ROOT / "src" / "python" / "axctl" / "cli.py"
+
+    def test_daemon_accepts_empty_rule_set(self):
+        import re
+        txt = read(self.POL)
+        # Eski hata metni aciklama yorumunda ANILIR; onemli olan
+        # canli bir hatada cikmasidir.
+        live = [ln for ln in txt.splitlines()
+                if "en az bir kural" in ln
+                and not ln.lstrip().startswith("//")]
+        self.assertEqual(live, [],
+                         "bos kural listesi yine reddediliyor; acil "
+                         "kurtarma yolu calismaz")
+        # Kural sayisi yerine anahtarin VARLIGI denetlenmeli
+        self.assertIn('probe["rules"]', txt,
+                      "'rules' anahtarinin varligi denetlenmeli; yazim "
+                      "hatasi sessizce kisitlamasiz sistem uretmemeli")
+
+    def test_go_test_covers_escape_hatch(self):
+        t = read(self.ROOT / "src" / "go" / "axdaemon" / "internal"
+                 / "policy" / "policy_test.go")
+        self.assertIn("TestLoadAcceptsEmptyRuleSet", t)
+        self.assertIn("TestLoadRejectsMissingRulesKey", t)
+
+    def test_init_completes_partial_install(self):
+        """init, dizin var ama politika dosyasi yoksa cikis yapmamali."""
+        txt = read(self.CLI)
+        self.assertRegex(txt, r"if policy_path\.exists\(\):\s*\n\s*"
+                              r"print_warning",
+                         "init, politika dosyasi eksikken de cikiyor")
+        self.assertIn("oluşturuluyor", txt,
+                      "eksik politika dosyasi olusturulmali")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

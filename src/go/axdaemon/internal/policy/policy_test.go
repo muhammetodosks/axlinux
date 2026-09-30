@@ -237,7 +237,18 @@ func TestStructuralValidation(t *testing.T) {
 		wantSub string
 	}{
 		{"versiyon", func(p *Policy) { p.Version = 2 }, "versiyon"},
-		{"kural yok", func(p *Policy) { p.Rules = nil }, "kural"},
+		// "kural yok" durumu artik hata DEGILDIR ve burada
+		// yer almaz. Once validate() bos kural listesini
+		// reddediyordu; bu iki yolu birden kirip gecersiz
+		// kiliyordu:
+		//   - "axctl reload --force-empty" (acil kurtarma yolu)
+		//     hata veriyordu
+		//   - "axctl init" + "axctl reload" (ilk kurulum)
+		//     hata veriyordu
+		// Bos kural listesinin GECERLI sayilmasi artik
+		// TestLoadAcceptsEmptyRuleSet ile, "rules" anahtari
+		// olmadiginda yazim hatasinin reddi ise
+		// TestLoadRejectsMissingRulesKey ile korunuyor.
 		{"id yok", func(p *Policy) { p.Rules[0].ID = "" }, "id"},
 		{"action yok", func(p *Policy) { p.Rules[0].Action = "" }, "action"},
 		{"effect gecersiz", func(p *Policy) { p.Rules[0].Effect = "maybe" }, "effect"},
@@ -321,5 +332,46 @@ func TestConcurrentLoadGet(t *testing.T) {
 	if m.RuleCount() != 1 {
 		t.Errorf("esh zamanli erisim sonrasi sayim %d, 1 bekleniyor",
 			m.RuleCount())
+	}
+}
+
+// TestLoadAcceptsEmptyRuleSet protects the EMERGENCY ESCAPE HATCH.
+//
+// "axctl reload --force-empty" is how an operator stops enforcement
+// after a bad policy locks them out. It was broken: the daemon
+// rejected any policy with zero rules, so the rescue command itself
+// failed with "policy en az bir kural icermeli".
+//
+// It also broke first-time setup: "axctl init" writes "rules: []"
+// and tells the user to run "axctl reload", which then errored.
+func TestLoadAcceptsEmptyRuleSet(t *testing.T) {
+	m := NewManager()
+	snap, err := m.Load([]byte(`{"version":1,"mode":"disabled","rules":[]}`))
+	if err != nil {
+		t.Fatalf("bos politika reddedildi, acil kurtarma yolu calismiyor: %v", err)
+	}
+	if snap.Policy.Mode != "disabled" {
+		t.Errorf("mod kayboldu: %q", snap.Policy.Mode)
+	}
+}
+
+// TestLoadRejectsMissingRulesKey guards against the SILENT failure
+// that removing the rule-count check would otherwise introduce.
+//
+// If the user typos the key ("rule:", "ruleset:"), the policy would
+// decode to zero rules and the system would silently become
+// unrestricted. That is the most dangerous outcome for a security
+// tool: the operator believes enforcement is active when nothing
+// is being enforced. A missing key must be an explicit error.
+func TestLoadRejectsMissingRulesKey(t *testing.T) {
+	m := NewManager()
+	for _, body := range []string{
+		`{"version":1,"mode":"enforcing"}`,
+		`{"version":1,"mode":"enforcing","rule":[]}`,
+		`{"version":1,"mode":"enforcing","ruleset":[]}`,
+	} {
+		if _, err := m.Load([]byte(body)); err == nil {
+			t.Errorf("'rules' anahtari olmayan politika kabul edildi: %s", body)
+		}
 	}
 }

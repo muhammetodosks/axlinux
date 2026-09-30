@@ -46,10 +46,14 @@ type Snapshot struct {
 	LoadedAt     time.Time
 	RulesLoaded  int
 	LabelsLoaded int
-	// Loaded reports whether a policy has ever been loaded. The zero
-	// value of a Snapshot is ambiguous otherwise: a policy with zero
-	// rules is rejected by validate, so RulesLoaded==0 could mean
-	// either "nothing loaded yet" or "loaded and empty".
+	// Loaded reports whether a policy has ever been loaded.
+	//
+	// Once "bos kural listesi reddedilir" diye bir dogrulama
+	// vardi ve bu bayrak ona dayaniyordu. Artik "rules: []"
+	// gecerli oldugu icin RulesLoaded==0 iki anlama gelebilir:
+	// "hicbir sey yuklenmedi" ve "bos politika yuklendi". Ayrim
+	// yalnizca bu bayrakla mumkundur; "bos kural = hata"
+	// varsayimi yanilticiydi.
 	Loaded bool
 }
 
@@ -69,6 +73,21 @@ func (m *Manager) Load(data []byte) (Snapshot, error) {
 	var p Policy
 	if err := json.Unmarshal(data, &p); err != nil {
 		return Snapshot{}, fmt.Errorf("policy JSON parse hatasi: %w", err)
+	}
+
+	// "rules" anahtarinin varligi denetlenir (dolulugu degil).
+	// Anahtar yoksa kullanici muhtemelen YANLIS YAZDI ve
+	// sistem sessizce "hicbir sey kisitlanmiyor" durumuna
+	// gecmemelidir: kullanici guvenlik acik sanilan bir sistemde
+	// kalir. Buna karsi "rules: []" acik bir istektir ve
+	// gecerlidir.
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return Snapshot{}, fmt.Errorf("policy JSON parse hatasi: %w", err)
+	}
+	if _, ok := probe["rules"]; !ok {
+		return Snapshot{}, fmt.Errorf("policy 'rules' anahtari eksik; " +
+			"kisitlamasiz sistem icin 'rules: []' yazilmalidir")
 	}
 
 	if err := validate(&p); err != nil {
@@ -119,9 +138,27 @@ func validate(p *Policy) error {
 	if p.Version != 1 {
 		return fmt.Errorf("desteklenmeyen policy versiyonu: %d", p.Version)
 	}
-	if len(p.Rules) == 0 {
-		return fmt.Errorf("policy en az bir kural icermeli")
-	}
+	// KURAL SAYISI DOGRULANMAZ. "rules: []" gecerli bir
+	// politikadir: sistem kisitlamasiz kalir.
+	//
+	// Once burada "policy en az bir kural icermeli" hatasi vardi
+	// ve iki yolu birden kirip gecersiz kiliyordu:
+	//
+	//   1) ACIL KURTARMA. "axctl reload --force-empty" kotu bir
+	//      politika yuzunden kilitlenen operatorun enforcement'i
+	//      durdurma yoludur. Bos politika reddedildigi icin
+	//      komut basarisiz oluyordu:
+	//        x policy yukleme hatasi: policy en az bir kural icermeli
+	//      Yani kurtarma araci kendisi kilitli birakirdi.
+	//
+	//   2) ILK KURULUM. "axctl init" bos politika yazar
+	//      ("rules: []") ve kullaniciya "axctl reload" demesi
+	//      soylenir. O reload her seferinde hata verirdi.
+	//
+	// Sessiz basarisizliktan kacinmak icin "rules" anahtarinin
+	// VARLIGI Load tarafindan ayrica denetlenir; kullanici
+	// "rule:" ya da "ruleset:" yazarak kazara bos bir sistem
+	// elde etmemelidir.
 	// Mod burada dogrulanmazsa gecersiz deger politika uzerinden
 	// gelebilir ve handlers'taki modeNumeric onu sessizce
 	// "permissive"a esler. Kullanici YAML'a "mod: engelle" yazip

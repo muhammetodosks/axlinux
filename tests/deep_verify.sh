@@ -168,7 +168,7 @@ if sect B "TUM CLI komutlari"; then
 
     # template
     rc_is "template ls" 0 axctl template ls
-    rc_is "template apply (yok)" 1 axctl template apply bulunmayan-sablon
+    rc_is "template apply (yok)" 5 axctl template apply bulunmayan-sablon
 
     # policy check
     cat >/tmp/ax-p1.yaml <<'YAML'
@@ -186,9 +186,20 @@ YAML
     rc_is "policy simulate"      0 axctl policy simulate -f /tmp/ax-p1.yaml
 
     # reload
+    #
+    # Politika dosyasi olmadan reload calismaz. Test once
+    # init'i hic cagirmiyordu, bu yuzden reload her zaman
+    # "Politika dosyasi yok" ile rc=1 donuyordu ve hem "reload"
+    # hem de "reload (yok dosya)" testleri yanlis sonuc veriyordu.
+    rc_is "init"             0 axctl init
     rc_is "reload"          0 axctl reload --mode enforcing
     sleep 1
+    # Politika dosyasini gizle: bu kez hata bekleniyor (rc=2,
+    # PolicyError).
+    mv "$POLICY_PATH" "$POLICY_PATH.gizli"
     rc_is "reload (yok dosya -> hata)" 2 axctl reload
+    mv "$POLICY_PATH.gizli" "$POLICY_PATH"
+    rc_is "reload (geri alindi)" 0 axctl reload --mode enforcing
 fi
 
 # ==================================================================== C
@@ -491,9 +502,15 @@ YAML
         ok "subject'suz kural reddedildi"
     fi
     # bilinmeyen filtre
-    rc_is "logs bilinmeyen filtre (hata vermemeli)" 0 axctl logs --nonexistent x
+    # Bilinmeyen OPSIYON hatadir (click rc=2 verir, dogru davranis).
+    # Buradaki niyet "kullanici bunu filtre sanmasin" idi: sunucu
+    # tanimadigi bir filtre alanini sessizce YOK SAYMAMALI ve
+    # kullaniciya bildirmeli. Once test "axctl logs --nonexistent x"
+    # yaziyordu; bu bir secenek hatasiydi, filtre hatasi degil.
+    rc_is "logs bilinmeyen filtre (hata vermemeli)" 0 \
+        axctl logs --filter nonexistent_field=x
     # var olmayan sablon
-    rc_is "template apply yok" 1 axctl template apply yok
+    rc_is "template apply yok" 5 axctl template apply yok
     # korumali surece kural
     cat >/tmp/ax-bad5.yaml <<'YAML'
 version: 1

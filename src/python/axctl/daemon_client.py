@@ -7,7 +7,7 @@ import json
 import socket
 import sys
 
-from axctl.exceptions import DaemonError
+from axctl.exceptions import DaemonAppError, DaemonError
 from axctl.paths import get_socket_path
 
 #: Tek istek için bekleme süresi (saniye)
@@ -93,7 +93,21 @@ def _send_request(method: str, params: dict | None = None,
         raise DaemonError(f"Geçersiz yanıt: {e}") from e
 
     if isinstance(response, dict) and response.get("error"):
-        raise DaemonError(f"Daemon hatası: {response['error']}")
+        # JSON-RPC hata nesnesi BIR SOZLUKTUR:
+        #   {"code": -32000, "message": "ogrenme modu zaten aktif"}
+        # Once f-string ile basilirdi ve kullaniciya ham Python
+        # sozlugu gorunurdu:
+        #   x Daemon hatasi: {'code': -32000, 'message': '...'}
+        # Ayrica bu, uygulama seviyesinde bir ret - altyapi hatasi
+        # degil - ama exit code 4 (altyapi) ile cikiyordu.
+        err = response["error"]
+        if isinstance(err, dict):
+            msg = err.get("message") or str(err)
+            code = err.get("code")
+        else:
+            msg = str(err)
+            code = None
+        raise DaemonAppError(msg) from None
 
     result = response.get("result") if isinstance(response, dict) else None
     if result is None:
