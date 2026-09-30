@@ -452,5 +452,49 @@ class TestSourceTreeNotPolluted(unittest.TestCase):
                          "kaynak agacini degil buraya yazilir")
 
 
+class TestPolicyCheckAcceptsFile(unittest.TestCase):
+    """policy check/simulate bir dosyayi denetleyebilmeli.
+
+    Once "check" ve "simulate" dosya ARGUMANI kabul etmiyordu;
+    yalnizca aktif politikayi (/…/.axlinux/policy.yaml) denetliyordu.
+    Sonuc: bir aday politikayi UYGULAMADAN ONCE dogrulamanin
+    hicbir yolu yoktu. Politika ancak aktif edilip hata
+    verildikten sonra denetlenebiliyordu, yani "check" komutu
+    uygulama sonrasi hatayi gormekten baska ise yaramiyordu.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+    CLI = ROOT / "src" / "python" / "axctl" / "cli.py"
+
+    def test_policy_group_has_file_option(self):
+        txt = read(self.CLI)
+        self.assertRegex(
+            txt, r'"--file",\s*"-f",\s*"file_path"',
+            "policy komut grubunda --file/-f secenegi olmali")
+
+    def test_check_receives_file_path(self):
+        txt = read(self.CLI)
+        self.assertRegex(txt, r"def _policy_check\(file_path",
+                         "_policy_check dosya almal")
+        self.assertIn("load_policy(file_path)", txt,
+                      "check verilen dosyayi yuklemeli")
+        self.assertIn("get_policy_stats(file_path)", txt,
+                      "istatistikler denetlenen dosyadan alinmali; "
+                      "aktif politikanin sayilari gosterilmemeli")
+
+    def test_simulate_receives_file_path(self):
+        txt = read(self.CLI)
+        self.assertRegex(txt, r"def _policy_simulate\(output_format[^)]*file_path")
+        self.assertIn("simulate_policy(file_path)", txt)
+
+    def test_underlying_functions_accept_path(self):
+        """Alt fonksiyonlar zaten destekliyordu; eksik olan yalnizca CLI."""
+        pol = read(self.ROOT / "src" / "python" / "axctl" / "policy.py")
+        self.assertRegex(pol, r"def load_policy\(path")
+        self.assertRegex(pol, r"def get_policy_stats\(path")
+        sim = read(self.ROOT / "src" / "python" / "axctl" / "simulator.py")
+        self.assertRegex(sim, r"def simulate_policy\(path")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

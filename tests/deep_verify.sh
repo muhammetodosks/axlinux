@@ -49,6 +49,7 @@ ONLY="${1:-}"
 GRN=$'\033[32m'; RED=$'\033[31m'; YEL=$'\033[33m'; CYN=$'\033[36m'; RST=$'\033[0m'
 P=0; F=0; SK=0
 LOG=/var/log/axlinux/deep_verify.log
+POLICY_PATH=/root/.axlinux/policy.yaml
 
 sect() {
     if [ -n "$ONLY" ] && [ "$ONLY" != "$1" ]; then return 1; fi
@@ -81,6 +82,26 @@ chmod 666 /etc/ax-secret2
 mkdir -p /etc/ax-dir
 echo "dir dosyasi" >/etc/ax-dir/inside.txt
 chmod 666 /etc/ax-dir/inside.txt
+
+# Bir politika dosyasini DENETLEYIP GERCEKTEN UYGULAR.
+#
+# Once test politikayi /tmp'ye yaziyor, "policy check" ile
+# dogruluyor, ama "axctl reload" /root/.axlinux/policy.yaml
+# OKUDUGU icin BAYAT politika yukleniyordu. Boylece asagidaki
+# "kural gercekten engellendi" iddialari uygulanmis hicbir seyi
+# olcuyordu: gecenler gecen, kalanlar kalan sebeplerden degil,
+# yanlis politikanin yuklenmesinden kaynaklaniyordu.
+#
+# Siralama onemli: once dogrula (sozdizimi hatasi aktif
+# politikayi degistirmesin), sonra kopyala, sonra reload et.
+apply_policy() {
+    local f="$1"
+    if ! axctl policy check -f "$f" >/dev/null 2>&1; then
+        return 2
+    fi
+    cp "$f" "$POLICY_PATH" || return 1
+    axctl reload --mode enforcing >/dev/null 2>&1
+}
 
 cleanup_all() {
     axctl reload --mode disabled >/dev/null 2>&1
@@ -161,8 +182,8 @@ rules:
     action: file.read
     effect: deny
 YAML
-    rc_is "policy check gecerli" 0 axctl policy check /tmp/ax-p1.yaml
-    rc_is "policy simulate"      0 axctl policy simulate /tmp/ax-p1.yaml
+    rc_is "policy check gecerli" 0 axctl policy check -f /tmp/ax-p1.yaml
+    rc_is "policy simulate"      0 axctl policy simulate -f /tmp/ax-p1.yaml
 
     # reload
     rc_is "reload"          0 axctl reload --mode enforcing
@@ -265,6 +286,12 @@ rules:
     action: net.bind
     effect: deny
 YAML
+    # Politika ONCE denetlenip AKTIF politika yapilmali. Once
+    # dogrudan reload vardi; reload /root/.axlinux/policy.yaml
+    # okudugu icin 6 kural degil BAYAT politika yukleniyordu
+    # ve asagidaki 5 kancanin tamami yanlis olcuyordu.
+    axctl policy check -f /tmp/ax-full.yaml >/dev/null 2>&1
+    cp /tmp/ax-full.yaml "$POLICY_PATH"
     if axctl reload --mode enforcing 2>&1 | grep -q '6 kural'; then
         ok "6 kural yuklendi"
     else
@@ -390,7 +417,7 @@ if sect H "Kilitlenme korumasi"; then
     else skip "systemd (bu ortamda yok olabilir)"; fi
     # korumali sureclere kural yazilamamali
     for p in bash sudo sshd login systemd sh; do
-        if axctl policy check /tmp/ax-p1.yaml >/dev/null 2>&1; then
+        if axctl policy check -f /tmp/ax-p1.yaml >/dev/null 2>&1; then
             ok "policy check calisiyor"
             break
         fi
@@ -411,7 +438,7 @@ rules:
     action: net.connect
     effect: deny
 YAML
-    if axctl policy check /tmp/ax-bad1.yaml >/dev/null 2>&1; then
+    if axctl policy check -f /tmp/ax-bad1.yaml >/dev/null 2>&1; then
         no "portsuz net kurali kabul edildi"
     else
         ok "portsuz net kurali reddedildi"
@@ -427,7 +454,7 @@ rules:
     action: file.delete
     effect: deny
 YAML
-    if axctl policy check /tmp/ax-bad2.yaml >/dev/null 2>&1; then
+    if axctl policy check -f /tmp/ax-bad2.yaml >/dev/null 2>&1; then
         no "file.delete kabul edildi"
     else
         ok "file.delete reddedildi"
@@ -443,7 +470,7 @@ rules:
     action: file.read
     effect: deny
 YAML
-    if axctl policy check /tmp/ax-bad3.yaml >/dev/null 2>&1; then
+    if axctl policy check -f /tmp/ax-bad3.yaml >/dev/null 2>&1; then
         no "gecersiz mod kabul edildi"
     else
         ok "gecersiz mod reddedildi"
@@ -458,7 +485,7 @@ rules:
     action: file.read
     effect: deny
 YAML
-    if axctl policy check /tmp/ax-bad4.yaml >/dev/null 2>&1; then
+    if axctl policy check -f /tmp/ax-bad4.yaml >/dev/null 2>&1; then
         no "subject'suz kural kabul edildi"
     else
         ok "subject'suz kural reddedildi"
@@ -479,7 +506,7 @@ rules:
     action: file.read
     effect: deny
 YAML
-    if axctl policy check /tmp/ax-bad5.yaml >/dev/null 2>&1; then
+    if axctl policy check -f /tmp/ax-bad5.yaml >/dev/null 2>&1; then
         no "korumali surece kural kabul edildi"
     else
         ok "korumali surece kural reddedildi"
@@ -502,8 +529,7 @@ rules:
     action: file.read
     effect: deny
 YAML
-    rc_is "etiketli politika" 0 axctl policy check /tmp/ax-lbl.yaml
-    axctl reload --mode enforcing >/dev/null 2>&1
+    apply_policy /tmp/ax-lbl.yaml
     sleep 1
     # etiket: curl icinde, wget haric
     eq "etiket curl uygulandi" "37" "$(curl -s file:///etc/ax-secret >/dev/null 2>&1; echo $?)"
@@ -519,7 +545,7 @@ rules:
     action: file.read
     effect: deny
 YAML
-    rc_is "joker subject" 0 axctl policy check /tmp/ax-star.yaml
+    rc_is "joker subject" 0 axctl policy check -f /tmp/ax-star.yaml
     # surec bazli (yolsuz) kural
     cat >/tmp/ax-proc.yaml <<'YAML'
 version: 1
@@ -532,7 +558,7 @@ rules:
     action: process.exec
     effect: deny
 YAML
-    rc_is "surec bazli kural" 0 axctl policy check /tmp/ax-proc.yaml
+    rc_is "surec bazli kural" 0 axctl policy check -f /tmp/ax-proc.yaml
     # merged-usr yol donusumu
     cat >/tmp/ax-bin.yaml <<'YAML'
 version: 1
@@ -545,8 +571,7 @@ rules:
     action: file.execute
     effect: deny
 YAML
-    rc_is "merged-usr yol (/bin/ls)" 0 axctl policy check /tmp/ax-bin.yaml
-    axctl reload --mode enforcing >/dev/null 2>&1
+    apply_policy /tmp/ax-bin.yaml
     sleep 1
     eq "/bin/ls gercekten engellendi" "1" \
         "$(python3 -c "import os;os.execv('/bin/ls',['ls'])" >/dev/null 2>&1; echo $?)"
@@ -563,7 +588,7 @@ rules:
     action: file.read
     effect: deny
 YAML
-    if axctl policy check /tmp/ax-long.yaml >/dev/null 2>&1; then
+    if axctl policy check -f /tmp/ax-long.yaml >/dev/null 2>&1; then
         info "uzun yol kabul edildi (bloga sigiyorsa normal)"
     else
         ok "bloga sigmayan yol reddedildi (dogru)"
@@ -581,7 +606,7 @@ rules:
     action: file.read
     effect: deny
 YAML
-    if axctl policy check /tmp/ax-deep.yaml >/dev/null 2>&1; then
+    if axctl policy check -f /tmp/ax-deep.yaml >/dev/null 2>&1; then
         no "derin yol kabul edildi (>8 bilesen)"
     else
         ok "derin yol reddedildi"

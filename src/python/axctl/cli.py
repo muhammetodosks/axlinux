@@ -84,14 +84,18 @@ def init(force):
 @click.argument("subcommand", type=click.Choice(["edit", "check", "simulate"]))
 @click.option("--editor", help="Editör seçimi")
 @click.option("--format", "output_format", type=click.Choice(["text", "json"]), default="text")
-def policy_cmd(subcommand, editor, output_format):
+@click.option(
+    "--file", "-f", "file_path", type=click.Path(exists=True, dir_okay=False),
+    help="Aktif politika yerine bu dosyayı kullan (check/simulate)",
+)
+def policy_cmd(subcommand, editor, output_format, file_path):
     """Politika yönetimi: edit, check, simulate."""
     if subcommand == "edit":
         _policy_edit(editor)
     elif subcommand == "check":
-        _policy_check()
+        _policy_check(file_path)
     elif subcommand == "simulate":
-        _policy_simulate(output_format)
+        _policy_simulate(output_format, file_path)
 
 
 def _policy_edit(editor: str | None):
@@ -107,16 +111,30 @@ def _policy_edit(editor: str | None):
     subprocess.call([editor, str(policy_path)])
 
 
-def _policy_check():
-    """Politika doğrulaması yapar."""
+def _policy_check(file_path: str | None = None):
+    """Politika doğrulaması yapar.
+
+    file_path verilirse o dosya denetlenir. Bu secenek onceden
+    YOKTU: "check" yalnizca aktif politikayi (/…/.axlinux/policy.yaml)
+    denetleyebiliyordu, yani bir aday politikayi uygulamadan once
+    dogrulamanin hicbir yolu yoktu. Politika ancak aktif edilip
+    hata verildikten sonra denetlenebiliyordu; yani "check"
+    komutu uygulama sonrasi hatayi gormekten baska bir ise
+    yaramiyordu.
+    """
     try:
-        policy = load_policy()
+        policy = load_policy(file_path)
         errors = validate_policy(policy)
 
         print_success("YAML syntax geçerli")
         print_success("Schema doğrulaması başarılı")
 
-        stats = get_policy_stats()
+        # Istatistikler DENETLENEN politika icin olmali. Once
+        # get_policy_stats() parametresiz cagriliyordu ve her
+        # zaman AKTIF politikanin sayilarini gosteriyordu; yani
+        # "policy check -f aday.yaml" adayin "3 kural" dedigi
+        # halde aktif politikanin sayisini yazardi.
+        stats = get_policy_stats(file_path) if file_path else get_policy_stats()
         print_success(f"{stats['rules']} kural, {stats['labels']} etiket bulundu")
 
         # compile_policy, sessiz basarisizligi onleyen denetimleri de
@@ -150,10 +168,10 @@ def _policy_check():
         sys.exit(2)
 
 
-def _policy_simulate(output_format: str):
+def _policy_simulate(output_format: str, file_path: str | None = None):
     """Politika simülasyonu yapar."""
     try:
-        simulation = simulate_policy()
+        simulation = simulate_policy(file_path)
 
         if output_format == "json":
             console.print_json(data=simulation)
