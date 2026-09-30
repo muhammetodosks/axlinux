@@ -73,7 +73,32 @@ go:
 # --- Python ---
 python:
 	@echo "== Python =="
-	@$(PYTHON) -m compileall -q $(PY_DIR)/axctl
+	@# Bytecode KAYNAK AGACINA YAZILMAZ. Once burada dogrudan
+	@# "compileall $(PY_DIR)/axctl" vardi ve kullanici "sudo make
+	@# install" dediginde derleyici kullanicinin deposuna root'a
+	@# ait __pycache__ birakiyordu. Sonrasi: kullanici artik
+	@# "rm -rf axlinux" bile yapamiyor ("Permission denied") ve
+	@# senkronizasyon sessizce ESKI kaynakla surer. (Debian 12'de
+	@# tam olarak goruldu: duzeltmeyi test etmek mumkun olmadi.)
+	@# pycache_prefix sayesinde bytecode .build/ altina gider.
+	@mkdir -p .build/pycache
+	@PYTHONPYCACHEPREFIX=$(CURDIR)/.build/pycache \
+		$(PYTHON) -m compileall -q $(PY_DIR)/axctl
+	@# Calisma zamani bagimliliklari. Onceki surumde hic kontrol
+	@# yoktu; Ubuntu'da click/rich/yaml baska paketler sayesinde
+	@# zaten kurulu oldugu icin sorun gorunmedi, Debian'da
+	@# "ModuleNotFoundError: No module named 'click'" ile CLI
+	@# coktu ve kurulum calisan bir sistem kurdugu halde
+	@# "axctl calismiyor" dedi.
+	@missing=; for m in click rich yaml; do \
+		$(PYTHON) -c "import $$m" >/dev/null 2>&1 || missing="$$missing $$m"; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "HATA: eksik Python bagimliliklari:$$missing"; \
+		echo "      kurmak icin: pip3 install -r $(PY_DIR)/requirements.txt"; \
+		exit 1; \
+	fi
+	@echo "   bagimliliklar: click, rich, yaml"
 	@echo "   axctl hazir"
 
 # --- Testler ---
@@ -154,6 +179,7 @@ install: all
 	@# basari bildiriyordu. Kurulum burada.
 	@install -d $(LIBDIR)/axctl
 	@install -m 0644 $(PY_DIR)/axctl/*.py  $(LIBDIR)/axctl/
+	@install -m 0644 $(PY_DIR)/requirements.txt $(PY_DIR)/pyproject.toml $(LIBDIR)/axctl/
 	@printf '#!/usr/bin/env python3\nimport sys, os\nsys.path.insert(0, "%s")\nfrom axctl.cli import main\nsys.exit(main())\n' \
 		"$(LIBDIR)" > $(BINDIR)/axctl
 	@chmod 0755 $(BINDIR)/axctl
@@ -169,6 +195,10 @@ install: all
 		$(DESTDIR)/lib/systemd/system/axdaemon.service 2>/dev/null || true
 	@install -m 0755 packaging/axlog.service \
 		$(DESTDIR)/lib/systemd/system/axlog.service 2>/dev/null || true
+	@# /run/axlinux'i tmpfiles yonetir; hicbir servis sahiplenmez
+	@# (bkz. axlinux-tmpfiles.conf icindeki kanit).
+	@install -m 0644 packaging/axlinux-tmpfiles.conf \
+		$(DESTDIR)/usr/lib/tmpfiles.d/axlinux.conf 2>/dev/null || true
 	@echo "   kuruldu: $(BINDIR), $(LIBDIR)"
 	@echo ""
 	@echo "   IKI SERVIS KURULDU. Kalici audit kaydi icin ikisi de"
@@ -185,6 +215,7 @@ uninstall:
 	@rm -rf $(LIBDIR) $(SYSCONF)
 	@rm -f $(DESTDIR)/lib/systemd/system/axdaemon.service
 	@rm -f $(DESTDIR)/lib/systemd/system/axlog.service
+	@rm -f $(DESTDIR)/usr/lib/tmpfiles.d/axlinux.conf
 	@rm -rf $(DESTDIR)/usr/share/doc/axlinux
 	@echo "   kaldirildi"
 

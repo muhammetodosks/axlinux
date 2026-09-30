@@ -47,3 +47,6 @@ venv/
 
 # gecici test artiklari
 .wtest
+
+# Bytecode buraya yonlendirilir; kaynak agaci temiz kalsin
+.build/

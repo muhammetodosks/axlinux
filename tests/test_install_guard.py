@@ -256,5 +256,201 @@ class TestInstallScript(unittest.TestCase):
                          "recovery girdisinden lsm= kaldirilmalidir")
 
 
+class TestPythonDependencies(unittest.TestCase):
+    """axctl'in calisma zamani bagimliliklari sozlesmeli.
+
+    Once hicbir bagimlilik tanimli degildi. Ubuntu'da click/rich/yaml
+    baska paketler sayesinde zaten kurulu oldugu icin sorun
+    gorunmedi; Debian'da kurulum "calisiyor" derken
+    "axctl status" "ModuleNotFoundError: No module named 'click'"
+    ile coktu. Kullanici kurulumu basarili saniyordu.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+    REQ = ROOT / "src" / "python" / "requirements.txt"
+    PKGDIR = ROOT / "src" / "python" / "axctl"
+    STDLIB = {
+        "axctl", "os", "sys", "json", "re", "pathlib", "shutil",
+        "subprocess", "socket", "time", "datetime", "typing", "enum",
+        "dataclasses", "collections", "itertools", "functools",
+        "textwrap", "hashlib", "stat", "tempfile", "errno",
+        "signal", "platform", "glob", "copy", "argparse", "abc",
+        "io", "contextlib", "logging", "pprint", "secrets", "string",
+        "uuid", "warnings", "ast", "unittest", "pytest",
+    }
+    # PyPI adi -> import adi
+    MAP = {"PyYAML": "yaml"}
+
+    def test_requirements_file_exists(self):
+        self.assertTrue(self.REQ.exists(),
+                        "src/python/requirements.txt yok; calisma zamani "
+                        "bagimliliklar tanimsiz")
+
+    def test_every_third_party_import_is_declared(self):
+        """Yeni import eklenip requirements.txt guncellenmezse yakalar."""
+        declared = set()
+        for line in read(self.REQ).splitlines():
+            line = line.split("#")[0].strip()
+            if line:
+                declared.add(re.split(r"[><=!\[]", line)[0].strip().lower())
+        imported = set()
+        for f in self.PKGDIR.glob("*.py"):
+            for m in re.finditer(r"^\s*(?:import|from)\s+([a-zA-Z_][\w]*)",
+                                 read(f), re.M):
+                mod = m.group(1)
+                if mod not in self.STDLIB:
+                    imported.add(mod.lower())
+        missing = imported - {d.lower() for d in declared} - \
+            {v.lower() for v in self.MAP.values()}
+        self.assertEqual(
+            missing, set(),
+            f"requirements.txt'te olmayan import'lar: {missing}. "
+            f"Yeni bir 3. taraf modul eklediyseniz requirements.txt "
+            f"ve pyproject.toml'a da ekleyin.")
+
+    def test_makefile_verifies_dependencies(self):
+        """make python bagimliliklari DOGRULAMALI.
+
+        Kurulumdan sonra degil, ONCEDEN bilmelidir: kurulum
+        basarili gorunup CLI cokmemelidir.
+        """
+        mk = read(self.ROOT / "Makefile")
+        # Makefile dongusu "import $m" yazar; tek tek ad aramak
+        # yanlis olurdu, dongunun varligi ve ad listesi denetlenir.
+        self.assertRegex(mk, r"for m in click rich yaml",
+                         "Makefile bagimlilik dongusu eksik")
+        self.assertIn('import $$m', mk,
+                      "Makefile her modulü import ile denemeli")
+        self.assertRegex(mk, r"eksik Python bagimliliklari",
+                         "eksik bagimlilik hatasi acikca bildirilmeli")
+
+    def test_installer_installs_dependencies(self):
+        s = read(self.ROOT / "install.sh")
+        self.assertIn("python3-click", s)
+        self.assertRegex(s, r"pip3 install.*click",
+                         "apt bulamazsa pip yolu da olmali")
+
+    def test_pyproject_declares_dependencies(self):
+        pp = self.ROOT / "src" / "python" / "pyproject.toml"
+        self.assertTrue(pp.exists(), "pyproject.toml yok")
+        txt = read(pp)
+        for d in ("click", "rich", "PyYAML"):
+            self.assertIn(d, txt, f"{d} pyproject.toml'da tanimli degil")
+
+    def test_install_copies_metadata(self):
+        mk = read(self.ROOT / "Makefile")
+        self.assertIn("requirements.txt", mk,
+                      "requirements.txt kurulumla birlikte kopyalanmali")
+
+
+class TestSharedRuntimeDirectory(unittest.TestCase):
+    """/run/axlinux birden fazla servis tarafindan paylasilir.
+
+    RuntimeDirectory, sahibi olan servis HER BASLADIGINDA dizini
+    silip yeniden olusturur. Dizin iki servis arasinda paylasildigi
+    icin bu, diger servisin soketini ortadan kaldirir. 2026-09-30
+    Debian 12'de boyle oldu: axlog 20:07:51'de basladi ve
+    axlog.sock olusturdu, axdaemon 20:07:52'de basladi ve dizini
+    sildi. axlog calismaya devam etti (3 socket fd bellekte)
+    ama diskte soket yoktu (ss -xl -> 0). Yani "aktif" gorunen
+    audit servisi KAYIT BIRAKMIYORDU ve kurulum yanlis olarak
+    basarisiz oldu.
+
+    Dizin artik systemd-tmpfiles ile kurulur; hicbir servis
+    sahiplenmez.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+    PKG = ROOT / "packaging"
+    TMPFILES = Path("/usr/lib/tmpfiles.d/axlinux.conf")
+
+    def units(self):
+        return {p.name: read(p) for p in self.PKG.glob("*.service")}
+
+    def test_no_unit_owns_shared_runtime_directory(self):
+        for name, txt in self.units().items():
+            for line in txt.splitlines():
+                line = line.strip()
+                if line.startswith("RuntimeDirectory="):
+                    self.fail(
+                        f"{name} RuntimeDirectory tanimliyor: {line!r}. "
+                        f"/run/axlinux paylasildigi icin hicbir servis "
+                        f"sahiplenmemeli; systemd sahibi baslarken dizini "
+                        f"silip diger servisin soketini yok ediyor. "
+                        f"Dizin axlinux-tmpfiles.conf'a tasindi.")
+
+    def test_tmpfiles_config_creates_runtime_dir(self):
+        f = self.PKG / "axlinux-tmpfiles.conf"
+        self.assertTrue(f.exists(),
+                        "axlinux-tmpfiles.conf yok; /run/axlinux'i "
+                        "kuran tek mekanizma bu olmali")
+        txt = read(f)
+        self.assertRegex(txt, r"(?m)^d /run/axlinux ",
+                         "tmpfiles /run/axlinux dizinini kurmali")
+        # onceki oturumdan kalmis soketler temizlenmeli
+        self.assertRegex(txt, r"(?m)^r /run/axlinux/axlog\.sock",
+                         "eski axlog.sock temizlenmeli")
+
+    def test_services_wait_for_tmpfiles(self):
+        for name, txt in self.units().items():
+            self.assertIn("systemd-tmpfiles-setup.service", txt,
+                          f"{name} tmpfiles kurulumunu beklemeli")
+
+    def test_installer_creates_dir_and_single_transaction(self):
+        s = read(self.ROOT / "install.sh")
+        self.assertIn("systemd-tmpfiles --create", s,
+                      "installer tmpfiles ile dizini kurmali")
+        # Iki ayri restart After= siralamasini UYGULAMAZ; tek
+        # transaction gerekir.
+        self.assertNotRegex(
+            s, r"systemctl restart axlog[^\n]*\n[^\n]*systemctl restart axdaemon",
+            "servisler ayri transaction'da baslatiliyor; After= "
+            "tek transaction icinde gecerlidir")
+        self.assertIn("systemctl restart axdaemon axlog", s,
+                      "servisler tek transaction'da baslatilmali")
+
+    def test_makefile_installs_tmpfiles(self):
+        mk = read(self.ROOT / "Makefile")
+        self.assertIn("axlinux-tmpfiles.conf", mk)
+        self.assertIn("tmpfiles.d/axlinux.conf", mk)
+
+
+class TestSourceTreeNotPolluted(unittest.TestCase):
+    """Kurulum kullanicinin deposunu kirletmemeli.
+
+    "sudo make install" derleme adimini da root olarak calistirir.
+    Onceki surumde "compileall src/python/axctl" dogrudan kaynak
+    agacina yaziyordu, sonuc root'a ait __pycache__ kaliyordu.
+    Sonrasi: kullanici artik "rm -rf axlinux" bile yapamiyor
+    ("Permission denied") ve yeni kaynak aktarimi sessizce
+    ESKI kaynakla surer. Debian 12'de duzeltmeyi test
+    etmek mumkun olmadi bu yuzden.
+
+    Bytecode .build/pycache altina yonlendirilir.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+
+    def test_compileall_does_not_write_to_source_tree(self):
+        mk = read(self.ROOT / "Makefile")
+        m = re.search(r"compileall[^\n]*", mk)
+        self.assertIsNotNone(m, "compileall cagrisi bulunamadi")
+        self.assertRegex(
+            mk, r"PYTHONPYCACHEPREFIX=\$\(CURDIR\)/\.build/pycache",
+            "compileall pycache-prefix olmadan calisiyor; kaynak "
+            "agacini root'a ait dosyalarla kirletir")
+        # Prefix tanimli olsa bile pycache_prefix'i unutmamali
+        self.assertNotRegex(
+            mk, r"^\s*@?\s*\$\(PYTHON\) -m compileall -q \$\(PY_DIR\)",
+            "prefix'siz dogrudan compileall cagrisi var")
+
+    def test_build_dir_ignored(self):
+        gi = self.ROOT / ".gitignore"
+        self.assertTrue(gi.exists())
+        self.assertRegex(read(gi), r"(?m)^/?\.build/",
+                         ".build/ gitignore'da olmali; bytecode "
+                         "kaynak agacini degil buraya yazilir")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

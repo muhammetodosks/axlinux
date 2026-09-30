@@ -410,6 +410,52 @@ else
     ok "Go: $(go version 2>/dev/null | awk '{print $3}')"
 fi
 
+# ------------------------------------------------------------ python bagimliliklari
+# CLI'nin calisma zamani bagimliliklari. Onceki surumde hic
+# kurulmuyordu: Ubuntu'da click/rich/yaml baska paketler sayesinde
+# zaten vardir, Debian'da ise kurulum "calisiyor" derken
+# "axctl status" "ModuleNotFoundError: No module named 'click'"
+# ile cokuyordu. Kullanici kurulumu basarili saniyor, sistem
+# kullanilamaz kaliyor.
+need_py_deps() {
+    local miss=""
+    for m in click rich yaml; do
+        python3 -c "import $m" >/dev/null 2>&1 || miss="$miss python3-$m"
+    done
+    echo "$miss"
+}
+PY_MISS="$(need_py_deps)"
+if [ -n "$PY_MISS" ]; then
+    info "Python bagimliliklari eksik:$PY_MISS"
+    tick "kuruluyor"
+    # Once apt ile denenir (paket adi ucu farkli olabilir)
+    case "$PKGMGR" in
+        apt-get) install_pkgs python3-click python3-rich python3-yaml ;;
+        dnf|yum) install_pkgs python3-click python3-rich python3-yaml ;;
+        pacman)  install_pkgs python-click python-rich python-yaml ;;
+        apk)     install_pkgs py3-click py3-rich py3-yaml ;;
+    esac
+    untick
+    # apt bulamazsa pip ile denenir (ozellikle cloud imajlarda)
+    PY_MISS="$(need_py_deps)"
+    if [ -n "$PY_MISS" ]; then
+        if command -v pip3 >/dev/null 2>&1; then
+            tick "pip ile kuruluyor"
+            pip3 install --quiet click rich pyyaml >/dev/null 2>&1
+            untick
+        fi
+    fi
+    PY_MISS="$(need_py_deps)"
+    if [ -n "$PY_MISS" ]; then
+        fail_step "Python bagimliliklari kurulamadi:$PY_MISS"
+        info "elle kurulum: pip3 install click rich pyyaml"
+        summary; exit 1
+    fi
+    ok "Python bagimliliklari kuruldu (click, rich, yaml)"
+else
+    ok "Python bagimliliklari hazir"
+fi
+
 # ------------------------------------------------------------------ 4 kaynak
 begin "Kaynak kod"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -499,13 +545,28 @@ if ! has systemctl; then
     warn_step "systemctl yok, servis baslatilamadi"
 else
     systemctl daemon-reload >/dev/null 2>&1
-    # axlog once: audit sink ayakta olmali
-    systemctl enable axlog  >/dev/null 2>&1
-    systemctl enable axdaemon >/dev/null 2>&1
-    systemctl restart axlog >/dev/null 2>&1
-    sleep 1
-    systemctl restart axdaemon >/dev/null 2>&1
-    sleep 3
+      systemctl enable axlog  >/dev/null 2>&1
+      systemctl enable axdaemon >/dev/null 2>&1
+      # /run/axlinux'i once biz kuralim; dizini hicbir servis
+      # sahiplenmez (bkz. axlinux-tmpfiles.conf).
+      systemd-tmpfiles --create /usr/lib/tmpfiles.d/axlinux.conf >/dev/null 2>&1
+      # IKISI TEK TRANSACTION'DA baslatilir.
+      #
+      # Once iki ayri "systemctl restart" vardi: once axlog, 1 sn
+      # sonra axdaemon ("audit sink once ayakta olmali" diye).
+      # Niyet dogruydu ama UYGULAMA hatayi uretiyordu. Onceki
+      # surumde axdaemon RuntimeDirectory=axlinux tasiyordu ve
+      # systemd servisi baslatirken dizini SILIP YENIDEN
+      # OLUSTURDUGU icin 1 sn once olusan axlog.sock'u siliyordu.
+      # Kanit (Debian 12): axlog 20:07:51 basladi + soket olustu,
+      # axdaemon 20:07:52 basladi; /proc/<axlog>/fd = 3 socket
+      # (bellekte), ss -xl = 0 (diskte). "axlog: active" yaziyordu
+      # ama audit kayitlari HICBIR YERE gitmiyordu; kurulum da
+      # "audit soketi yok" deyip basarisiz oluyordu.
+      # Artik dizini hicbir servis silemez; tek transaction da
+      # After= siralamasini gercekten uygular.
+      systemctl restart axdaemon axlog >/dev/null 2>&1
+      sleep 3
     A=$(systemctl is-active axdaemon 2>/dev/null)
     L=$(systemctl is-active axlog 2>/dev/null)
     [ "$A" = "active" ] && ok "axdaemon: active" || { err "axdaemon: $A"; journalctl -u axdaemon -n 8 --no-pager 2>/dev/null | sed 's/^/      /'; }

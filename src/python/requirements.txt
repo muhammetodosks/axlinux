@@ -1,0 +1,17 @@
+# AXlinux CLI (axctl) calisma zamani bagimliliklari.
+#
+# Bu dosya bir sozlesmedir: tests/test_install_guard.py her
+# yeni import eklediginizde bu listeyi denetler. Bir modul burada
+# yoksa kurulum oncesi hata verir, kurulumdan sonra sessizce
+# calismaz.
+#
+# Neden oyle: onceki surumde hicbir bagimlilik tanimli degildi.
+# Ubuntu'da click/rich/yaml baska paketler sayesinde zaten
+# kurulu oldugu icin sorun gorunmedi; Debian'da "axctl status"
+# "ModuleNotFoundError: No module named 'click'" ile coktu ve
+# kurulum "dogrulama basarisiz" dedi. "Bende calisiyor" turunde
+# sessiz bir bagimlilik hatasi.
+
+click>=8.0
+rich>=12.0
+PyYAML>=5.4

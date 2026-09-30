@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "axctl"
+version = "0.1.0"
+description = "AXlinux CLI - YAML yaz, AXlinux uygulasin"
+requires-python = ">=3.9"
+# Tek kaynak requirements.txt'tir; testler bu listeyi import
+# taramasiyla karsilastirir.
+dependencies = [
+    "click>=8.0",
+    "rich>=12.0",
+    "PyYAML>=5.4",
+]
+
+[project.scripts]
+axctl = "axctl.cli:main"
+
+[tool.setuptools]
+packages = ["axctl"]

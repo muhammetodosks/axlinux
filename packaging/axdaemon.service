@@ -1,7 +1,7 @@
 [Unit]
 Description=AXlinux MAC daemon (eBPF LSM enforcement)
 Documentation=file:///usr/share/doc/axlinux/docs/INSTALL.md
-After=network.target
+After=network.target systemd-tmpfiles-setup.service
 # sys-fs-bpf.mount BIR "Requires" OLARAK BURAYA YAZILAMAZ.
 #
 # Bu birim systemd'de tanimli bir mount birimi degil; onu bekleyen
@@ -29,8 +29,11 @@ RestartSec=3
 # 'bpf' yoksa EACCES alirsiniz. docs/INSTALL.md bolum 1'e bakin.
 Environment=AXLINUX_BPF_OBJ=/usr/lib/axlinux/axbpf.o
 
-RuntimeDirectory=axlinux
-RuntimeDirectoryMode=0755
+# /run/axlinux ARTIK BURAYA DEGIL: bkz. axlinux-tmpfiles.conf
+# Burada RuntimeDirectory tanimli olsaydi systemd her baslamada
+# dizini silip yeniden yaratirdi ve axlog'un soketini ortadan
+# kaldirirdi (2026-09-30'da boyle oldu). Paylasilan dizin
+# tmpfiles'a tasindi; hicbir servis sahiplenmez.
 # ReadWritePaths'ta listelenen dizinler ONCEDEN VAR OLMALI; systemd
 # olmayan bir yolu "Failed to set up mount namespacing" ile 226/
 # NAMESPACE hatasina dusurur ve servis hic acilmaz. onceki surumde
