@@ -94,6 +94,31 @@ chmod 666 /etc/ax-dir/inside.txt
 #
 # Siralama onemli: once dogrula (sozdizimi hatasi aktif
 # politikayi degistirmesin), sonra kopyala, sonra reload et.
+# Bir komutun cikti uretigini denetler.
+#
+# "cmd 2>&1 | grep -q ." YAZILMAZ. set -o pipefail varken grep ilk
+# eslesmede KAPANIR, komut (rich) stdout'a yazmaya devam eder ve
+# SIGPIPE alir; pipeline'in durumu grep'in 0'i degil komutun
+# SIGPIPE kodu (141) olur. if/else o yuzden yanlis kolu secer:
+# komut 298 bayt yazmasina ragmen "cikti vermedi" sanilir.
+#
+# Bu hata elle calistirildiginde gorunmez; stdout'un hedefi farkli
+# oldugu icin komut bazen SIGPIPE almadan bitiyor. Test hep
+# pipe icinden calistigi icin ise tutarli olarak yanlis sonuc
+# veriyordu.
+emits_output() {
+    [ -n "$("$@" 2>&1)" ]
+}
+
+# Bir komutun ciktisi bir kalip IÇERIYOR mu.
+output_matches() {
+    local pat="$1"; shift
+    case "$("$@" 2>&1)" in
+        *"$pat"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 apply_policy() {
     local f="$1"
     if ! axctl policy check -f "$f" >/dev/null 2>&1; then
@@ -151,7 +176,8 @@ if sect B "TUM CLI komutlari"; then
     rc_is "axctl template --help" 0 axctl template --help
 
     # --help ciktisinda komut gorunmeli
-    if axctl --help 2>&1 | grep -q 'init'; then ok "help init gosteriyor"
+    if emits_output axctl --help && output_matches 'init' axctl --help
+    then ok "help init gosteriyor"
     else no "help init gostermiyor"; fi
 
     # init
@@ -162,7 +188,7 @@ if sect B "TUM CLI komutlari"; then
     # label
     rc_is "label add"   0 axctl label add testgrp curl
     rc_is "label ls"    0 axctl label ls
-    if axctl label ls 2>&1 | grep -qi testgrp; then ok "label listeleniyor"
+    if output_matches 'testgrp' axctl label ls; then ok "label listeleniyor"
     else no "label listelenmiyor"; fi
     rc_is "label rm"    0 axctl label rm testgrp
 
@@ -206,7 +232,7 @@ fi
 if sect C "Ogrenme modu"; then
     rc_is "learn report (bos)" 0 axctl learn report
     # start
-    if axctl learn start --days 1 2>&1 | grep -q .; then
+    if emits_output axctl learn start --days 1; then
         ok "learn start cikti verdi"
     else
         no "learn start cikti vermedi"
@@ -227,7 +253,7 @@ if sect C "Ogrenme modu"; then
     if [ "${obs:-0}" -gt 0 ] 2>/dev/null; then ok "gozlem toplandi ($obs)"
     else no "gozlem toplanmadi (obs=$obs)"; fi
     # report
-    if axctl learn report 2>&1 | grep -q .; then ok "learn report cikti verdi"
+    if emits_output axctl learn report; then ok "learn report cikti verdi"
     else no "learn report cikti vermedi"; fi
     # YAML olarak da uretebilmeli
     if axctl learn report 2>/dev/null | python3 -c \
@@ -303,7 +329,7 @@ YAML
     # ve asagidaki 5 kancanin tamami yanlis olcuyordu.
     axctl policy check -f /tmp/ax-full.yaml >/dev/null 2>&1
     cp /tmp/ax-full.yaml "$POLICY_PATH"
-    if axctl reload --mode enforcing 2>&1 | grep -q '6 kural'; then
+    if output_matches '6 kural' axctl reload --mode enforcing; then
         ok "6 kural yuklendi"
     else
         no "6 kural yuklenmedi"
