@@ -41,7 +41,7 @@ from axctl.compiler import (  # noqa: E402
     PROTECTED_PROCESSES,
     check_path_representable,
     compile_policy,
-    warn_protected_subject,
+    check_protected_subject,
 )
 from axctl.exceptions import PolicyError  # noqa: E402
 
@@ -145,18 +145,20 @@ class TestPathRepresentability(unittest.TestCase):
         check_path_representable("p:8080", "r")
 
 
-class TestProtectedSubjectWarning(unittest.TestCase):
-    """Korumali surece yazilan kural sessizce etkisiz kalmamali."""
+class TestProtectedSubjectRejected(unittest.TestCase):
+    """Korumali surece yazilan kural REDDEDILMELI.
 
-    def test_warns_for_protected(self):
-        # Yalnizca KURTARMA YOLUNDAKI surecler uyari uretir.
+    Once bu yalnizca uyariydi: politika yukleniyor, map'e yaziliyor,
+    "N kural" deniyor, ama kural HICBIR zaman tetiklenmiyordu.
+    Operator enforcement aktifken saniyordu.
+    """
+
+    def test_rejects_protected(self):
+        # Yalnizca KURTARMA YOLUNDAKI surecler reddedilir.
         for proc in ("bash", "sh", "sudo", "systemd", "sshd", "login"):
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                warn_protected_subject([proc], "k")
-            self.assertEqual(len(w), 1,
-                             f"{proc} icin uyari bekleniyordu")
-            self.assertIn(proc, str(w[0].message))
+            with self.assertRaises(PolicyError) as cm:
+                check_protected_subject([proc], "k")
+            self.assertIn(proc, str(cm.exception))
 
     def test_no_warning_for_runtimes(self):
         """Dil kosullari KORUNMAMALI ve uyari uretmemeli.
@@ -170,12 +172,11 @@ class TestProtectedSubjectWarning(unittest.TestCase):
         """
         for proc in ("python3", "python", "node", "npm", "perl",
                      "ruby", "tmux", "screen", "code"):
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                warn_protected_subject([proc], "k")
-            self.assertEqual(len(w), 0,
-                             f"{proc} KORUMALI OLMAMALI (koruma listesi "
-                             f"cok genis; MAC islevsizlesir)")
+            try:
+                check_protected_subject([proc], "k")
+            except PolicyError:
+                self.fail(f"{proc} KORUMALI OLMAMALI (koruma listesi "
+                          f"cok genis; MAC islevsizlesir)")
 
     def test_runtimes_accept_real_rules(self):
         """En sik MAC kurallari derlenebilmeli."""
@@ -246,22 +247,19 @@ class TestProtectedSubjectWarning(unittest.TestCase):
         }
         compile_policy(policy)  # cokmemeli
 
-    def test_warns_for_label_expansion(self):
-        """Label ile gelen korumali surecler de uyarilir."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            warn_protected_subject(["firefox", "bash"], "k")
-        self.assertEqual(len(w), 1)
-        self.assertIn("bash", str(w[0].message))
+    def test_rejects_label_expansion(self):
+        """Label ile gelen korumali surecler de reddedilir."""
+        with self.assertRaises(PolicyError) as cm:
+            check_protected_subject(["firefox", "bash"], "k")
+        self.assertIn("bash", str(cm.exception))
 
     def test_silent_for_normal_subjects(self):
         for proc in ("firefox", "nginx", "curl", "chromium"):
-            with warnings.catch_warnings(record=True) as w:
-                warnings.simplefilter("always")
-                warn_protected_subject([proc], "k")
-            self.assertEqual(len(w), 0,
-                             f"{proc} icin UYARI OLMAMALI "
-                             f"(koruma listesi cok genis olabilir)")
+            try:
+                check_protected_subject([proc], "k")
+            except PolicyError:
+                self.fail(f"{proc} icin HATA OLMAMALI "
+                          f"(koruma listesi cok genis olabilir)")
 
     def test_protection_list_covers_shell(self):
         """Kabuk ve yetki araclari MUTLAKA korumali olmali."""
@@ -285,18 +283,21 @@ class TestCompileIntegration(unittest.TestCase):
         with self.assertRaises(PolicyError):
             compile_policy(policy)
 
-    def test_compile_warns_on_protected_subject(self):
+    def test_compile_rejects_protected_subject(self):
+        """Politika derlenmemeli, sadece uyarilmamali.
+
+        Once uyari uretiyordu ve politika YINE DE yukleniyordu:
+        kural map'e yaziliyor, "1 kural" deniyor, hicbir sey
+        engellenmiyordu.
+        """
         policy = {
             "version": 1,
             "mode": "enforcing",
             "rules": [rule(subject="bash", object_="")],
         }
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
+        with self.assertRaises(PolicyError) as cm:
             compile_policy(policy)
-        msgs = [str(x.message) for x in w]
-        self.assertTrue(any("bash" in m for m in msgs),
-                        f"korumali surec uyarisi gelmedi: {msgs}")
+        self.assertIn("bash", str(cm.exception))
 
     def test_compile_normal_policy_no_warning(self):
         policy = {
@@ -333,19 +334,22 @@ class TestSimulatorFlagsIneffectiveRules(unittest.TestCase):
         finally:
             os.unlink(path)
 
-    def test_protected_rule_marked_ineffective(self):
+    def test_simulate_explains_protected_rule(self):
+        """Simulator cokmeli, hatayi ACIKLAMALI.
+
+        Politika artik derlenmiyor; simulatorun isi de tam olarak
+        bunu anlatmak. Once hata yukseliyordu ve operator yalnizca
+        izsiz bir PolicyError goruyordu.
+        """
         sim = self._sim({
             "version": 1, "mode": "enforcing",
             "labels": {},
             "rules": [rule(subject="bash", object_="")],
         })
-        self.assertTrue(sim["ineffective_rules"],
-                        "korumali surece yazilan kural etkisiz "
-                        "isaretlenmeli")
-        self.assertEqual(sim["ineffective_rules"][0]["blocked_subjects"],
-                         ["bash"])
-        self.assertFalse(sim["rules"][0]["effective"],
-                         "kural effective=False isaretlenmeli")
+        self.assertIn("error", sim,
+                      "simulator derlenemeyen politika icin hata "
+                      "aciklamasi dondurmeli")
+        self.assertIn("bash", sim["error"])
 
     def test_normal_rule_marked_effective(self):
         sim = self._sim({

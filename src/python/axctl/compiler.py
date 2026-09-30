@@ -136,19 +136,35 @@ def check_path_representable(path: str, rule_name: str) -> None:
         )
 
 
-def warn_protected_subject(subjects, rule_name: str) -> None:
-    """Korumali surecleri hedefleyen kurallari uyarir."""
+def check_protected_subject(subjects, rule_name: str) -> None:
+    """Korumali surecleri hedefleyen kurallari REDDEDER.
+
+    Once bu yalnizca bir uyariydi ve politika yine de yukleniyordu.
+    Oysa uyari metninin kendisi diyordu: "Bu kurallar sessizce
+    etkisiz kalir." Yani kurallar map'e yaziliyor, derleme "1 kural"
+    diyor, kullanici politikayi yuklendigini saniyor - ve hicbir
+    sey engellenmiyor. Bu, sessiz basarisizligin en kotu hali:
+    operator guvenlik ONDAYKEN saniyor, sistemde ise hicbir sey
+    uygulanmiyor.
+
+    Ayni sinif sorun check_path_representable icin zaten ACIK HATA
+    sayiliyor ("sessizce bos bir anahtara donusur"). Iki durum da
+    "kural hicbir seyle eslesmez"; biri hata, digeri uyari
+    olmamalydi. Artik ikisi de hata.
+
+    Bu yuzden operator ya kurali gercek uygulamaya yazar
+    (firefox, nginx, curl) ya da kurali kaldirir.
+    """
     hits = [s for s in subjects if s in PROTECTED_PROCESSES]
     if not hits:
         return
-    warnings.warn(
+    raise PolicyError(
         f"Kural {rule_name!r} korumali sistem sureclerini hedefliyor: "
         f"{', '.join(hits)}. Bu surecler kurtarma yoludur (oturum acma "
         f"ve kabuk); AXlinux guvenlik geregi hicbir kural uygulamaz, "
-        f"cunku engellenmeleri sistemi kilitler. Bu kurallar sessizce "
-        f"etkisiz kalir. Kurali hedef uygulamaya yazin "
-        f"(orn. firefox, nginx, redis-server, curl).",
-        stacklevel=3,
+        f"cunku engellenmeleri sistemi kilitler. Kural sessizce etkisiz "
+        f"kalirdi. Kurali hedef UYGULAMAYA yazin "
+        f"(orn. firefox, nginx, redis-server, curl)."
     )
 
 
@@ -174,11 +190,11 @@ def compile_policy(policy: dict) -> dict:
         # Sessiz basarisizligi onle: uc kontrol yan yana.
         #   1) aksiyon gercekten uygulanabiliyor mu
         #   2) yol blok duzenine sigiyor mu
-        #   3) hedef korumali bir surec mi (etkisiz kalir)
+        #   3) hedef korumali bir surec mi (hicbir zaman etkisiz)
         # Ucunun de kabul etmesi durumunda kural gercekten calisir.
         check_action_implemented(rule.get("action", ""), name)
         check_path_representable(obj, name)
-        warn_protected_subject(subjects, name)
+        check_protected_subject(subjects, name)
 
         compiled_rules.append({
             "id": f"rule_{i + 1:03d}",

@@ -24,6 +24,12 @@ const (
 	AllowMapName = "allow_map"
 	DenyMapName  = "deny_map"
 	ModeMapName  = "mode_map"
+	// LearnMapName is the single-cell flag the LSM hooks read to
+	// decide whether ALLOWED operations become audit events too.
+	// Without it the learning mode can never observe anything:
+	// normal activity is by definition allowed, and allowed
+	// operations produced no events.
+	LearnMapName = "learn_map"
 	AuditMapName = "audit_buffer"
 )
 
@@ -136,6 +142,7 @@ type Manager struct {
 	allowMap *ebpf.Map
 	denyMap  *ebpf.Map
 	modeMap  *ebpf.Map
+	learnMap *ebpf.Map
 	auditMap *ebpf.Map
 }
 
@@ -154,6 +161,7 @@ func NewFromCollection(coll *ebpf.Collection) (*Manager, error) {
 		allowMap: maps[AllowMapName],
 		denyMap:  maps[DenyMapName],
 		modeMap:  maps[ModeMapName],
+		learnMap: maps[LearnMapName],
 		auditMap: maps[AuditMapName],
 	}
 
@@ -206,6 +214,7 @@ func NewManager(allowMapPath, denyMapPath, modeMapPath, pinDir string) (*Manager
 			AllowMapName: mgr.allowMap,
 			DenyMapName:  mgr.denyMap,
 			ModeMapName:  mgr.modeMap,
+			LearnMapName: mgr.learnMap,
 		} {
 			if m == nil {
 				continue
@@ -225,8 +234,9 @@ func NewManager(allowMapPath, denyMapPath, modeMapPath, pinDir string) (*Manager
 }
 
 // NewManagerWithMaps injects pre-opened maps (used in tests).
-func NewManagerWithMaps(allow, deny, modeMap *ebpf.Map) *Manager {
-	return &Manager{allowMap: allow, denyMap: deny, modeMap: modeMap}
+func NewManagerWithMaps(allow, deny, modeMap, learnMap *ebpf.Map) *Manager {
+	return &Manager{allowMap: allow, denyMap: deny, modeMap: modeMap,
+		learnMap: learnMap}
 }
 
 // AuditMap returns the perf event array used for audit records.
@@ -249,6 +259,48 @@ func (m *Manager) Map(name string) *ebpf.Map {
 
 // SetMode writes the enforcement mode into mode_map so the kernel-side
 // hooks can read it without a userspace round trip.
+// SetLearning raises or lowers the observation flag the LSM hooks read.
+//
+// This is what makes the learning mode able to observe anything at
+// all. The hooks only emitted events for operations matched by a
+// DENY rule; normal activity is by definition allowed, so it
+// produced nothing. "axctl learn start" reported success and
+// promised "3 gun kayit tutulacak" while collecting zero
+// observations forever.
+//
+// The flag is only set while learning is on: auditing every
+// allowed read all the time would be needless system load.
+func (m *Manager) SetLearning(on bool) error {
+	if m.learnMap == nil {
+		// Ogrenme bayragi yoksa gozlem toplanamaz. Sessizce
+		// gecmek, kullaniciya "ogrenme basladi" yazip hicbir
+		// sey toplanmamasina yol acar; acik hata verilir.
+		return fmt.Errorf("ogrenme map'i yok (learn_map); " +
+			"ogrenme modu gozlem toplayamaz")
+	}
+	var zero uint32
+	v := uint32(0)
+	if on {
+		v = 1
+	}
+	if err := m.learnMap.Put(zero, v); err != nil {
+		return fmt.Errorf("ogrenme bayragi yazilamadi: %w", err)
+	}
+	return nil
+}
+
+// GetLearning reads the observation flag back.
+func (m *Manager) GetLearning() (bool, error) {
+	if m.learnMap == nil {
+		return false, fmt.Errorf("ogrenme map'i yok (learn_map)")
+	}
+	var zero, v uint32
+	if err := m.learnMap.Lookup(zero, &v); err != nil {
+		return false, err
+	}
+	return v != 0, nil
+}
+
 func (m *Manager) SetMode(mode uint32) error {
 	if m.modeMap == nil {
 		return fmt.Errorf("mode map yok")

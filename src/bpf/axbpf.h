@@ -138,6 +138,33 @@ struct {
 	__type(value, __u32);
 } mode_map SEC(".maps");
 
+/* Ogrenme bayragi. Tek hucreli dizi: 0 = gozlem yok,
+ * 1 = izin verilen operasyonlar da audit olayina donusur.
+ *
+ * Neden gerekiyor: kancalar yalnizca DENY kurali eslesen
+ * operasyonlarda olay uretiyordu
+ *   val = ax_lookup(key);
+ *   if (!val || val->effect != EFFECT_DENY)
+ *           return 0;
+ * Ogrenme modunun ise tam tersi bir amaci var: "normalde ne
+ * yapiyorsun" gozlemi. Normal isler tanim geregi IZIN VERILEN
+ * operasyonlardir, yani hicbiri olay uretmiyordu. Sonuc:
+ * ogrenme modu AÇILSA BILE sifir gozlem toplaniyordu; ozellik
+ * kullaniciya "3 gun kayit tutulacak" yazip hicbir sey
+ * toplanmiyordu.
+ *
+ * Bayrak yalnizca ogrenme acikken set edilir: her izinli
+ * dosya okumasini surekli audit etmek sistemde gereksiz
+ * yuk olusturur. Ogrenme acik/kapali ogrendigi icin yol
+ * operatorun istegedir.
+ */
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, __u32);
+} learn_map SEC(".maps");
+
 /* Stack limiti (512B) policy_key + audit_event toplamini asamaz.
  * Bu yuzden calisma zamani tamponlari per-CPU map icinde tutulur. */
 /* iki slot: 0 = yol kurali anahtari, 1 = surec kurali anahtari.
@@ -485,6 +512,16 @@ static __always_inline __u32 ax_mode(void)
 	if (!mode)
 		return MODE_ENFORCING;
 	return *mode;
+}
+
+/* Ogrenme modu acik mi? Kancalar bunu, izin verilen
+ * operasyonlari da audit olayina cevirmek icin sorar. */
+static __always_inline int ax_learning(void)
+{
+	__u32 key = 0;
+	__u32 *on = bpf_map_lookup_elem(&learn_map, &key);
+
+	return on && *on;
 }
 
 /* deny_map once bakilir, sonra allow_map. Bulunamazsa NULL. */

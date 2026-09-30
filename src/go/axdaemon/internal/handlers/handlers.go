@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -751,6 +752,22 @@ func (h *Handler) handleLearnStart(req protocol.Request) protocol.Response {
 		return protocol.NewErrorResponse(req.ID, -32000, err.Error())
 	}
 
+	// Gozlem bayragi AYRICA set edilir. Manager.Start() yalnizca
+	// Go tarafindaki sayaci etkinlestirir; kancalar ise izin
+	// verilen operasyonlari olay uretmek icin bayragi sorar.
+	// Bayrak set edilmezse ogrenme "aktif" gorunur ama sifir
+	// gozlem toplanir.
+	//
+	// Hata DONDURULMEZ: ogrenme yine de baslar, ama operator
+	// bunu duyurmus olur. SESSIZCE gecmek, tam da duzeltilen
+	// hatayi yeniden uretirdi.
+	if h.maps != nil {
+		if err := h.maps.SetLearning(true); err != nil {
+			slog.Warn("ogrenme bayragi set edilemedi; "+
+				"gozlem toplanmayabilir", "error", err)
+		}
+	}
+
 	until := time.Now().UTC().AddDate(0, 0, params.Days)
 
 	result := map[string]interface{}{
@@ -775,6 +792,15 @@ func (h *Handler) handleLearnStop(req protocol.Request) protocol.Response {
 	// onaylamak icin gerekli.
 	collected := h.learning.ObservationCount()
 	h.learning.Stop()
+
+	// Bayrak dusurulur: kancalar bundan sonra yalnizca DENY
+	// olaylarini uretir. acik kalsaydi her izinli dosya okumasi
+	// audit akisina duser ve sistem gereksiz yuk tasirdi.
+	if h.maps != nil {
+		if err := h.maps.SetLearning(false); err != nil {
+			slog.Warn("ogrenme bayragi dusurulemedi", "error", err)
+		}
+	}
 
 	result := map[string]interface{}{
 		"status":       "ok",

@@ -49,15 +49,36 @@ int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 		return 0;
 
 	val = ax_lookup(key);
-	if (!val || val->effect != EFFECT_DENY)
-		return 0;
+	int denied = val && val->effect == EFFECT_DENY;
 
 	event->pid = bpf_get_current_pid_tgid() >> 32;
 	__builtin_memcpy(event->comm, key->comm, sizeof(event->comm));
 	event->action = action;
-	event->effect = EFFECT_DENY;
-	event->rule_id = val->rule_id;
+	event->effect = denied ? EFFECT_DENY : EFFECT_ALLOW;
+	event->rule_id = denied ? val->rule_id : 0;
 	event->hook_type = HOOK_INODE_PERMISSION;
+
+	if (!denied) {
+	/* Ogrenme gozlemi.
+	 *
+	 * Buraya kadar yalnizca DENY kurali eslesen operasyonlar
+	 * olay uretiyordu. Ogrenme modunun amaci ise tam tersidir:
+	 * "normalde ne yapiyorsun" gozlemi. Normal isler tanim
+	 * geregi IZIN VERILEN operasyonlardir, yani hicbiri olay
+	 * uretmiyordu. Sonuc: ogrenme modu AÇILSA BILE sifir
+	 * gozlem toplaniyordu; kullaniciya "3 gun kayit tutulacak"
+	 * yazilip hicbir sey toplanmiyordu.
+	 *
+	 * Burada izin verilen operasyon bir gozleme donusur.
+	 * Yalnizca ogrenme ACIKKEN: her izinli dosya okumasini
+	 * surekli audit etmek sistemde gereksiz yuk olusturur.
+	 */
+		if (ax_learning()) {
+			event->decision = DECISION_ALLOWED;
+			ax_audit(ctx, event);
+		}
+		return 0;
+	}
 
 	if (mode == MODE_ENFORCING) {
 		event->decision = DECISION_DENIED;

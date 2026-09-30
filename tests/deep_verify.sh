@@ -269,9 +269,21 @@ if sect C "Ogrenme modu"; then
     if [ "$st" = "False" ] || [ "$st" = "false" ]; then ok "ogrenme durdu"
     else no "ogrenme durmadi"; fi
     # stop sonrasi gozlem artmamali
+    # "Ogrenme durduysa gozlem ARTMAZ" denetlenir, ama stop ile
+    # hemen ayni anda olcum yapilmaz.
+    #
+    # Gozlemler perf buffer'indan gelir; stop cagrisi bayragi
+    # dusurur ve o anda kuyrukta olan onlarca olay HALA islenir.
+    # Olcum (Debian 12): stop oncesi 209, stop sonrasi 244, sonrasi
+    # ve yeni aktivite sonrasi degismiyor. Yani urun dogru
+    # calisiyor; test yalnizca kuyruktaki kuyrugu olcuyordu.
+    #
+    # Once kuyruk otursun, sonra taban al, sonra YENI aktivite
+    # uret: sayi artarsa bayrak dusmemis demektir.
+    sleep 2
     o1=$obs
-    curl -s file:///etc/ax-secret >/dev/null 2>&1
-    sleep 1
+    for i in 1 2 3; do curl -s file:///etc/ax-secret >/dev/null 2>&1; done
+    sleep 2
     o2=$(axctl status --json 2>/dev/null | python3 -c \
          'import json,sys;print(json.load(sys.stdin).get("learning_observations"))' 2>/dev/null)
     if [ "${o2:-0}" = "${o1:-0}" ]; then ok "durdurduktan sonra gozlem artmadi"
@@ -637,7 +649,13 @@ YAML
         ok "bloga sigmayan yol reddedildi (dogru)"
     fi
     # bilesen sayisi fazla
-    deepp="/$(printf 'd%.0s' {1..12})"
+    # 12 BILESENLI yol. Once "printf 'd%.0s' {1..12}" kullaniliyordu
+    # ve bu TEK bir 12 karakterlik bilesen uretiyordu
+    # (/dddddddddddd) - derinlik 1, sorun yok. Test "derin yol
+    # kabul edildi" diye basarisiz oluyordu ama politika gercekten
+    # derin degildi.
+    deepp=""
+    for i in $(seq 1 12); do deepp="$deepp/d$i"; done
     cat >/tmp/ax-deep.yaml <<YAML
 version: 1
 mode: enforcing

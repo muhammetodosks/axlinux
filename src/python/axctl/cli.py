@@ -191,6 +191,15 @@ def _policy_simulate(output_format: str, file_path: str | None = None):
     try:
         simulation = simulate_policy(file_path)
 
+        # Politika derlenemiyorsa simulator hatanin aciklamasini
+        # dondurur. Simule etmek isteyen operator icin bu, komutun
+        # hicbir sey yazdirmamaktan iyidir.
+        if simulation.get("error"):
+            print_error(simulation["error"])
+            print_info("Simulasyon yapilamadi; politika duzeltilip "
+                       "'axctl policy check -f <dosya>' ile dogrulanabilir.")
+            sys.exit(2)
+
         if output_format == "json":
             console.print_json(data=simulation)
         else:

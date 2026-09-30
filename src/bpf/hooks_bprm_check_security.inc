@@ -85,8 +85,29 @@ int BPF_PROG(ax_bprm_check, struct linux_binprm *bprm, int ret)
 	event->hook_type = HOOK_BPRM_CHECK_SECURITY;
 
 	val = ax_lookup2(pkey, skey);
-	if (!val || val->effect != EFFECT_DENY)
+	if (!val || val->effect != EFFECT_DENY) {
+	/* Ogrenme gozlemi.
+	 *
+	 * Buraya kadar yalnizca DENY kurali eslesen operasyonlar
+	 * olay uretiyordu. Ogrenme modunun amaci ise tam tersidir:
+	 * "normalde ne yapiyorsun" gozlemi. Normal isler tanim
+	 * geregi IZIN VERILEN operasyonlardir, yani hicbiri olay
+	 * uretmiyordu. Sonuc: ogrenme modu AÇILSA BILE sifir
+	 * gozlem toplaniyordu; kullaniciya "3 gun kayit tutulacak"
+	 * yazilip hicbir sey toplanmiyordu.
+	 *
+	 * Burada izin verilen operasyon bir gozleme donusur.
+	 * Yalnizca ogrenme ACIKKEN: her izinli dosya okumasini
+	 * surekli audit etmek sistemde gereksiz yuk olusturur.
+	 */
+		if (ax_learning()) {
+			event->effect = EFFECT_ALLOW;
+			event->rule_id = 0;
+			event->decision = DECISION_ALLOWED;
+			ax_audit(ctx, event);
+		}
 		return 0;
+	}
 	event->rule_id = val->rule_id;
 
 	if (mode == MODE_ENFORCING) {

@@ -15,7 +15,28 @@ def simulate_policy(path: str | None = None) -> dict:
     daemon reddeder ve kullanici neden calismadigini anlamaz.
     """
     policy = load_policy(path)
-    compiled = compile_policy(policy)
+
+    # Simulaturun isi ACIKLAMAKTIR. Politika derlenemiyorsa
+    # (korumali surece yazilmis kural, uygulanamaz yol) komut
+    # olmak yerine neyin yanlis oldugunu soylemelidir.
+    #
+    # Once burada dogrudan compile_policy cagriliyordu ve hata
+    # yukseliyordu; kullanici yalnizca "PolicyError" goruyordu.
+    # Simule etmeye calistigi seyi tam olarak gormek isteyen
+    # operator icin bu, ozellikle ise yaramaz.
+    try:
+        compiled = compile_policy(policy)
+    except PolicyError as e:
+        return {
+            "error": str(e),
+            "mode": policy.get("mode", "enforcing"),
+            "total_rules": len(policy.get("rules", []) or []),
+            "total_labels": len(policy.get("labels", {}) or {}),
+            "rules": [],
+            "conflicts": [],
+            "affected_processes": set(),
+            "ineffective_rules": [],
+        }
 
     simulation = {
         "mode": compiled["mode"],

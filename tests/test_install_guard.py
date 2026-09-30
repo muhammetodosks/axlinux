@@ -628,5 +628,54 @@ class TestEmergencyEscapeHatch(unittest.TestCase):
                       "eksik politika dosyasi olusturulmali")
 
 
+class TestInexpressibleRulesRejected(unittest.TestCase):
+    """HICBIR ZAMAN ESLESEMEYECEK kural reddedilmeli.
+
+    Iki durum da ayni sinif sorun: kural map'e yaziliyor, "N kural
+    yuklendi" ciktiyor, kullanici politikayi yuklendigini saniyor -
+    ama kural HICBIR zaman tetiklenmiyor. Operator enforcement
+    aktifken sanirken sistem bos durur.
+
+    Once ikisi de yalnizca UYARI idi ve politika yine de
+    yukleniyordu.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+    COMP = ROOT / "src" / "python" / "axctl" / "compiler.py"
+
+    def test_protected_subject_is_error_not_warning(self):
+        txt = read(self.COMP)
+        self.assertIn("def check_protected_subject(", txt)
+        self.assertNotIn("def warn_protected_subject(", txt,
+                         "uyari olarak kalmaliydi; sessiz etkisizlik")
+        # Fonksiyonun govdesinde PolicyError firlatmali
+        m = re.search(r"def check_protected_subject\(.*?\n\ndef ", txt, re.S)
+        self.assertIsNotNone(m)
+        self.assertIn("raise PolicyError", m.group(1))
+
+    def test_simulator_explains_instead_of_crashing(self):
+        """Simulatorun isi hatayi ACIKLAMAKTIR."""
+        sim = read(self.ROOT / "src" / "python" / "axctl" / "simulator.py")
+        self.assertRegex(sim, r"except PolicyError as e:\s*\n\s*return \{",
+                         "simulator derlenemeyen politika icin hata "
+                         "dondurmeli")
+        cli = read(self.ROOT / "src" / "python" / "axctl" / "cli.py")
+        self.assertIn('simulation.get("error")', cli,
+                      "CLI simulator hatasini gostermeli")
+
+    def test_deep_path_test_generates_real_depth(self):
+        """Derin yol testi gercekten derin yol uretmeli.
+
+        Once "printf 'd%.0s' {1..12}" ile TEK bir 12 karakterlik
+        bilesen uretiliyordu (/dddddddddddd): derinlik 1. Test
+        "derin yol kabul edildi" diye basarisiz oluyordu ama
+        politika hicbir zaman derin degildi.
+        """
+        s = read(self.ROOT / "tests" / "deep_verify.sh")
+        self.assertNotIn("printf 'd%.0s' {1..12}", s)
+        self.assertRegex(s, r"for i in \$\(seq 1 12\)",
+                         "bilesen sayisi kadar yol uretilmeli")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

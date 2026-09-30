@@ -90,6 +90,16 @@ func main() {
 			pinMaps(mapsMgr, *pinDir, logger)
 
 			// Baslangicta permissive: kernel bos karar vermesin.
+			// Ogrenme bayragi kalici bir map'te tutulur. Ogrenme
+			// acikken daemon yeniden baslatilirsa deger 1 kalir
+			// ve kancalar surekli audit uretirken operator ogrenme
+			// modunun kapandigini sanir. Her acilista sifirlanir:
+			// ogrenme durumu surec yasamindadir, dosya degil.
+			if err := mapsMgr.SetLearning(false); err != nil {
+				logger.Warn("ogrenme bayragi sifirlanamadi",
+					"error", err)
+			}
+
 			if err := mapsMgr.SetMode(maps.ModePermissive); err != nil {
 				logger.Warn("mod yazilamadi", "error", err)
 			}
