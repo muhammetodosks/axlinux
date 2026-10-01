@@ -540,24 +540,6 @@ else
     summary; exit 1
 fi
 
-# Kurulum root olarak calistiginda derleme ciktilari (.build/) root'a
-# ait olur ve kullanicinin DEPOSU silinemez hale gelir:
-#   rm -rf axlinux -> "Permission denied" (60+ dosya)
-# Sonrasi yeni kaynak aktarimi gerceklesmez, testler GUNCEL
-# OLMAYAN kodun sonucunu verir. Ubuntu ve Pardus'ta yasandi.
-#
-# Bytecode zaten src/ yerine .build/ altina yonlendiriliyor;
-# simdi sahibi de duzeltiyoruz. Sahibi SUDO_USER'dan DEGIL
-# kaynak agacinin sahibinden aliyoruz: install.sh cogu zaman
-# sudo'suz cagriliyor ve icindeki "sudo make" kendi kapsaminda
-# sudo kullaniyor; bu durumda SUDO_USER bos kalir.
-if [ -d .build ]; then
-    OWNER="$(stat -c %U . 2>/dev/null)"
-    if [ -n "$OWNER" ] && [ "$OWNER" != "root" ]; then
-        chown -R "$OWNER" .build 2>/dev/null && \
-            ok "derleme ciktilari $OWNER'a ait"
-    fi
-fi
 
 # ------------------------------------------------------------------ 6 kurulum
 begin "Kurulum"
@@ -620,6 +602,32 @@ else
         summary; exit 1
     fi
 fi
+
+  # Derleme ciktilarinin sahibi duzeltilir.
+  #
+  # "sudo make install" icindeki compileall .build/ altina bytecode
+  # yazar ve root'a ait dosyalar birakir. Sonrasi kullanicinin
+  # DEPOSU silinemez:
+  #   rm -rf axlinux -> "Permission denied" (60+ dosya)
+  # Yeni kaynak aktarimi sessizce gerceklesmez ve testler GUNCEL
+  # OLMAYAN kodun sonucunu verir. Ubuntu ve Pardus'ta yasandi.
+  #
+  # Konum ONEMLI: bu "6 kurulum" adimindan SONRA olmali. Go
+  # derlemesinden hemen sonra konuldugunda .build duzeltilir,
+  # ama ardindan "make install" yeniden calisip .build'i root'a
+  # ait dosyalarla yeniden dolduruyordu.
+  #
+  # Sahibi SUDO_USER'dan DEGIL kaynak agacinin sahibinden alinir:
+  # install.sh cogu zaman sudo'suz cagriliyor ve icindeki
+  # "sudo make" kendi kapsaminda sudo kullaniyor; bu durumda
+  # SUDO_USER bos kalir.
+  if [ -d .build ]; then
+      OWNER="$(stat -c %U . 2>/dev/null)"
+      if [ -n "$OWNER" ] && [ "$OWNER" != "root" ]; then
+          chown -R "$OWNER" .build 2>/dev/null && \
+              ok "derleme ciktilari $OWNER'a ait"
+      fi
+  fi
 
 # ------------------------------------------------------------------ 8 dogrulama
 begin "DogrULAMA"
