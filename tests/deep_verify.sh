@@ -467,10 +467,23 @@ YAML
         python3 -c "import os;os.execv('/bin/true',['true'])"
 
     info "D) socket_connect"
-    rc_is "nc 4444 (deny)" 1 timeout 4 nc -w 2 127.0.0.1 4444
+    # nc yoksa kural denetimi degil, komut yok hatasi gelir
+    # (rc=127) ve "deny calismiyor" izlenimi yaratir. Pardus'ta
+    # nc kurulu degil; install.sh artik kuruyor, yine de acik
+    # bir mesajla atlanir.
+    if command -v nc >/dev/null 2>&1; then
+        rc_is "nc 4444 (deny)" 1 timeout 4 nc -w 2 127.0.0.1 4444
+    else
+        skip "nc kurulu degil (socket_connect testi yapilamadi)"
+    fi
     info "D) socket_bind"
-    sudo bash -c 'timeout 4 nc -l -p 5555 >/dev/null 2>&1' 2>/dev/null
-    info "  (bind reddi ayrica 5555 dinleyememe olarak gozlenir)"
+    if command -v nc >/dev/null 2>&1; then
+        rc_is "nc 5555 (bind deny)" 1 \
+            timeout 4 nc -l -p 5555
+        info "  (bind reddi ayrica 5555 dinleyememe olarak gozlenir)"
+    else
+        skip "nc kurulu degil (socket_bind testi yapilamadi)"
+    fi
 fi
 
 # ==================================================================== F

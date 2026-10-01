@@ -366,11 +366,14 @@ else
     case "$PKGMGR" in
         apt-get) install_pkgs clang llvm libbpf-dev linux-headers-generic \
                               linux-tools-common python3-pytest \
-                              build-essential git rsync curl ca-certificates ;;
+                              build-essential git rsync curl ca-certificates
+                              netcat-openbsd ;;
         dnf|yum) install_pkgs clang llvm libbpf-devel linux-headers \
-                              python3-pytest gcc make git rsync curl ;;
+                              python3-pytest gcc make git rsync curl
+                              netcat-openbsd ;;
         pacman)  install_pkgs clang llvm libbpf libbpf-devel linux-headers \
-                              python-pytest base-devel git rsync curl ;;
+                              python-pytest base-devel git rsync curl
+                              netcat-openbsd ;;
         apk)     install_pkgs clang llvm libbpf-dev linux-headers \
                               py3-pytest build-base git rsync curl ;;
         *)       install_pkgs clang llvm libbpf-devel linux-headers \

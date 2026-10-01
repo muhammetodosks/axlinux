@@ -650,9 +650,14 @@ class TestInexpressibleRulesRejected(unittest.TestCase):
         self.assertNotIn("def warn_protected_subject(", txt,
                          "uyari olarak kalmaliydi; sessiz etkisizlik")
         # Fonksiyonun govdesinde PolicyError firlatmali
-        m = re.search(r"def check_protected_subject\(.*?\n\ndef ", txt, re.S)
-        self.assertIsNotNone(m)
-        self.assertIn("raise PolicyError", m.group(1))
+        # Govdeyi bul: "def check_protected_subject(" ile sonraki
+        # ust duzey "def " arasinda. Once ".*?\n\ndef " araniyordu;
+        # dosyanin sonundaki fonksiyonda bu kalip olmadigi icin
+        # IndexError veriyordu.
+        m = re.search(r"def check_protected_subject\(.*?(?=\ndef |\Z)", txt, re.S)
+        self.assertIsNotNone(m, "check_protected_subject bulunamadi")
+        self.assertIn("raise PolicyError", m.group(0),
+                      "korumali surece kurali HATA olarak reddedilmeli")
 
     def test_simulator_explains_instead_of_crashing(self):
         """Simulatorun isi hatayi ACIKLAMAKTIR."""
@@ -673,8 +678,18 @@ class TestInexpressibleRulesRejected(unittest.TestCase):
         politika hicbir zaman derin degildi.
         """
         s = read(self.ROOT / "tests" / "deep_verify.sh")
-        self.assertNotIn("printf 'd%.0s' {1..12}", s)
-        self.assertRegex(s, r"for i in \$\(seq 1 12\)",
+        # ACIKLAMADAKI metni sayma. Once dogrudan alt dizi denetimi
+        # yapiliyordu ve aciklamada gecegi icin test KIRILIYORDU:
+        #     # Once "printf 'd%.0s' {1..12}" kullaniliyordu
+        # Yani duzeltme yapildi ama test eski metni yorumda
+        # gördugu icin basarisiz oldu. Yalnizca CALISAN satirlar
+        # denetlenir.
+        code = [ln.strip() for ln in s.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")]
+        code = "\n".join(code)
+        self.assertNotIn("printf 'd%.0s' {1..12}", code,
+                         "derin yol uretimi hala tek bilesen uretiyor")
+        self.assertRegex(code, r"for i in \$\(seq 1 12\)",
                          "bilesen sayisi kadar yol uretilmeli")
 
 
