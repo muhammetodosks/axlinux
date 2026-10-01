@@ -503,6 +503,26 @@ else
 fi
 
 # ------------------------------------------------------------------ 5 derleme
+# Kurulum root olarak calistiginda derleme ciktilari (.build/) root'a
+# ait olur ve kullanicinin DEPOSU kalici olarak silinemez hale gelir:
+#   rm -rf axlinux -> "Permission denied" (60+ dosya)
+# Yeni kaynak aktarimi sessizce ESKI kaynakla surer ve testler
+# guncel olmayan kodun sonucunu verir. Ubuntu/Pardus'ta yasandi.
+#
+# Bytecode zaten .build/ altina yonlendiriliyor (kaynak agaci
+# temiz kalsin diye); simdi sahibi de duzeltiyoruz.
+# Sahibi SUDO_USER'dan DEGIL, kaynak agacinin kendi sahibinden
+# aliyoruz: install.sh cogu zaman sudo'suz cagriliyor ve icindeki
+# "sudo make" kendi kapsaminda sudo kullaniyor; bu durumda
+# SUDO_USER bos kalir ve duzeltme sessizce yapilmazdi.
+if [ -d .build ]; then
+    OWNER="$(stat -c %U . 2>/dev/null)"
+    if [ -n "$OWNER" ] && [ "$OWNER" != "root" ]; then
+        chown -R "$OWNER" .build 2>/dev/null && \
+            ok "derleme ciktilari $OWNER'a ait"
+    fi
+fi
+
 begin "Derleme"
 cd "$SRC" || { fail_step "kaynak dizinine girilemedi"; summary; exit 1; }
 
