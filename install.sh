@@ -358,6 +358,24 @@ for t in clang llvm-objdump make gcc git python3 rsync curl; do
     has "$t" || NEED="$NEED $t"
 done
 
+# netcat: socket_connect / socket_bind kancalarinin TEK kullanan
+# test araci. Urunun kendisi nc gerektirmiyor ama kurulumdan sonra
+# calisan test paketi gerektiriyor; Pardus'ta nc yoktu ve iki ag
+# kancası ATLANDI.
+#
+# DIKKAT: sadece paket listesine eklemek YETMIYOR. Arac kontrolu
+# "tum araclar hazir" dediginde paket listesi hic CALISMAZ. Bu
+# yuzden nc kontrol listesinde de olmali; her dagitimda adi
+# farkli olabildigi icin (nc, netcat, ncat) hepsi denetleniyor.
+#
+# busybox KONTROL EDILMEZ: Pardus tabaninda busybox kurulu ve
+# "busybox" var olunca burasi gecmis ve netcat kurulmamis olarak
+# kaliyordu. Ama testin kullandigi bayraklar (nc -w 2 host port)
+# busybox nc'de ayni degil.
+if ! has nc && ! has netcat && ! has ncat; then
+    NEED="$NEED netcat-openbsd"
+fi
+
 if [ -z "$NEED" ]; then
     ok "tum araclar hazir"
 else
@@ -366,18 +384,20 @@ else
     case "$PKGMGR" in
         apt-get) install_pkgs clang llvm libbpf-dev linux-headers-generic \
                               linux-tools-common python3-pytest \
-                              build-essential git rsync curl ca-certificates
-                              netcat-openbsd ;;
+                              build-essential git rsync curl \
+                              ca-certificates netcat-openbsd ;;
         dnf|yum) install_pkgs clang llvm libbpf-devel linux-headers \
-                              python3-pytest gcc make git rsync curl
+                              python3-pytest gcc make git rsync curl \
                               netcat-openbsd ;;
         pacman)  install_pkgs clang llvm libbpf libbpf-devel linux-headers \
-                              python-pytest base-devel git rsync curl
+                              python-pytest base-devel git rsync curl \
                               netcat-openbsd ;;
         apk)     install_pkgs clang llvm libbpf-dev linux-headers \
-                              py3-pytest build-base git rsync curl ;;
+                              py3-pytest build-base git rsync curl \
+                              netcat-openbsd ;;
         *)       install_pkgs clang llvm libbpf-devel linux-headers \
-                              python3-pytest base-devel git rsync curl ;;
+                              python3-pytest base-devel git rsync curl \
+                              netcat-openbsd ;;
     esac
     untick
     # bpftool: bazi dagitimlarda surume ozel paketten gelir
