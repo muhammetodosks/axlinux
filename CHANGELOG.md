@@ -216,3 +216,80 @@ yollari, politika dili kenar durumlari.
   Debian 13 tabanini tasiyor (`dists/yirmibes-deb/main` = Debian),
   gercek Pardus paketleri `contrib` altinda ve ISO'da bos.
   Bu yuzden Pardus 25.2 UZERINDE tam dogrulama YAPILAMADI.
+## Dogrulama: Ubuntu 24.04 + Debian 12 + GERCEx Pardus 25.2
+
+Uc dagitimda ayni kapsamli test paketi (`tests/deep_verify.sh`,
+9 bolum / 99 denetim) YESIL. Ana makinede AXlinux hic
+calistirilmadi; her sey sanal makinede yapildi.
+
+| Dagitim | Yerel+Go test | Kapsamli test | bpf | audit |
+|---------|---------------|---------------|-----|-------|
+| Ubuntu 24.04.5 | 125 gecen | 99/0/0 | 5/5 | saglikli |
+| Debian 12 (bookworm) | 125 gecen | 99/0/0 | 5/5 | saglikli |
+| Pardus 25.2 (yirmibes) | 125 gecen | 99/0/0 | 5/5 | saglikli |
+
+Pardus, resmi arsivden kuruldu: bilgemdepo.pardus.org.tr/pardus
+(Origin: Pardus, imzali). base-files 13.8+pardus25.2.1 ->
+`Pardus GNU/Linux 25.2 (yirmibes)`; pardus-backgrounds,
+pardus-bilge-grub-theme, desktop-base kurulu.
+
+### Bu turda bulunan ve duzeltilen gercek hatalar
+
+**Ogrenme modu hicbir sey toplamiyordu.** Kancalar olayi yalnizca
+DENY kurali eslesen operasyonlarda uretiyordu; normal isler
+tanim geregi IZIN VERILEN operasyonlar oldugu icin hicbiri olay
+uretmiyordu. "axctl learn start" basari diyor, "3 gun kayit
+tutulacak" yaziyor, sifir gozlem toplaniyordu. Yeni `learn_map`
+bayragi ve bes kancada izinli operasyon gozlemi: 0 -> 192 gozlem.
+
+**ACIL KURTARMA YOLU calismiyordu.** `axctl reload --force-empty`
+kotu bir politika yuzunden kilitlenen operatorun enforcement'i
+durdurma yoludur; bos politika reddedildigi icin komut KENDISI
+basarisiz oluyordu. Ayni dogrulama "axctl init" + reload ilk
+kurulum akisini da kiriyordu.
+
+**Calisma zamani bagimliliklari hic kurulmuyordu.** click/rich/yaml
+hic tanimli degildi; Ubuntu'da baska paketler sayesinde zaten
+vardi, Debian'da "ModuleNotFoundError" ile kurulum "calisiyor"
+diyordu.
+
+**/run/axlinux iki servis arasinda paylasiliyordu.** axdaemon
+`RuntimeDirectory=axlinux` tasiyordu; systemd servisi baslarken
+dizini SILIP YENIDEN OLUSTURUYOR, bir saniye once olusan
+axlog.sock'u yok ediyordu. "axlog: active" yaziyordu, audit
+kayitlari hicbir yere gitmiyordu. Dizin artik tmpfiles'a tasindi.
+
+**Rapor onerileri ekranda kirpilip YAML'i boszuyordu.** rich
+metni ekran genisligine gore kaydiriyor, tek satirlik YAML
+degerlerinden biri 82 karaktere yakin oldugu icin dosya
+ayrişiyordu; CLI "policy.yaml'a yapistirip policy check ile
+dogrulayin" diyordu.
+
+**Kurulum kullanicinin deposunu silinemez hale getiriyordu.**
+`sudo make install` root'a ait derleme ciktilari birakiyordu;
+`rm -rf axlinux` "Permission denied" veriyor, yeni kaynak
+aktarimi sessizce gerceklesmiyordu.
+
+**Bazi hatalar sessizce etkisiz kalmisti.** Korumali surece
+(bash, sudo, sshd...) yazilan kural ve 8'den derin yol yalnizca
+uyari uretiyordu; politika yukleniyor, "N kural" cikiyor, hicbir
+sey engellenmiyordu. Artik PolicyError.
+
+**Netcat hicbir yerde kurulmuyordu.** socket_connect ve
+socket_bind kancalarinin tek kullanan test araci; Pardus'ta
+yoktu ve iki ag kancasi atlandi.
+
+**Daemon hatalari kullanicya ham Python sozlugu gosteriyordu.**
+`Daemon hatası: {'code': -32000, 'message': '...'}`. Ayrica
+"zaten aktif" bir altyapi hatasi degil, uygulama seviyesinde bir
+ret; ama exit code 4 ile cikiyordu.
+
+### CLI bosluklari kapatildi
+
+- `policy check` / `policy simulate` artik `--file/-f` kabul
+  ediyor: aday politika UYGULAMADAN once dogrulanabiliyordu
+- `logs`: `--json`, `--subject`, `--action`, `--effect` eklendi
+- `label rm` eklendi (once etiket ekleniyor ama silinemiyordu)
+- `init` yarim kurulumu tamamliyor (dizin var, politika yok)
+- Politika dosyasi yokken `reload` 2 donuyor (dogru kod)
+- Cikis kodu semasi kodda belgeli: 0/1/2/4/5
