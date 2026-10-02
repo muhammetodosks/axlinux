@@ -927,3 +927,107 @@ class TestDebPackage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestInstallPathsAgree(unittest.TestCase):
+    """`make install` ve `.deb` paketi AYNI duzeni kurmali.
+
+    Ikisi ayri hedefler; biri LIBDIR/axctl/, digeri
+    STAGE/usr/lib/axlinux/axctl/ kuruyordu ama Python dosyalari
+    bir sure DUZ kopyalandigi icin paket eski surumu calistirmisti.
+    Ayri kalmalari sessizce ayrisir.
+
+    Bloklar hedefin BASLADIGI yerden sonraki hedefe kadar
+    alinir; hedeflerin dosyadaki sirasi varsayilmaz (package
+    install'ten once geliyor).
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+
+    def _block(self, target):
+        mk = read(self.ROOT / "Makefile")
+        lines = mk.split("\n")
+        start = None
+        for n, line in enumerate(lines):
+            if line.startswith(target + ":"):
+                start = n
+                break
+        self.assertIsNotNone(start, f"{target} hedefi bulunamadi")
+        end = len(lines)
+        for n in range(start + 1, len(lines)):
+            ln = lines[n]
+            if ln and not ln[0].isspace() and ":" in ln \
+                    and not ln.startswith("\t"):
+                end = n
+                break
+        return "\n".join(lines[start:end])
+
+    def test_libdir_is_usr_lib_axlinux(self):
+        mk = read(self.ROOT / "Makefile")
+        m = re.search(r"^LIBDIR\s*[?:]?=\s*(.+)$", mk, re.M)
+        self.assertIsNotNone(m, "LIBDIR tanimi yok")
+        # LIBDIR := $(DESTDIR)/usr/lib/axlinux; DESTDIR kurulumda
+        # bos, paket yolunda ayri bir deger alir
+        self.assertEqual(
+            m.group(1).strip(), "$(DESTDIR)/usr/lib/axlinux",
+            "LIBDIR degisti; wrapper ve paket yolu bozulur")
+
+    def test_bindir_is_local_bin(self):
+        mk = read(self.ROOT / "Makefile")
+        p = re.search(r"^PREFIX\s*[?:]?=\s*(.+)$", mk, re.M)
+        self.assertIsNotNone(p, "PREFIX tanimi yok")
+        self.assertEqual(p.group(1).strip(), "/usr/local",
+                         "PREFIX degisti; paket /usr/local/bin kuruyor")
+
+    def test_blocks_are_non_empty(self):
+        for t in ("install", "package"):
+            self.assertTrue(self._block(t).strip(),
+                            f"{t} blogu bos; blok cikarimi bozuk")
+
+    def test_both_paths_place_python_under_axctl(self):
+        """*.py dosyalari AXCTL/ ALT DIZININE kurulmali.
+
+        Duz kurulum (\$(LIBDIR)/*.py) kodun "axctl.cli" bekledigi
+        yoldan ayrilir ve paket eski surumu calistirir.
+        Blok genelinde arama yaniltici: "install -d \$(LIBDIR)/axctl"
+        satiri her zaman var olur ama dosyalar duz kopyalanirsa
+        o satir yalniz bos dizin olusturur. Bu yuzden .py satiri
+        DENETLENIYOR.
+        """
+        install_blk = self._block("install")
+        pkg_blk = self._block("package")
+        py_installs = [ln for ln in install_blk.split("\n")
+                       if ".py" in ln and "install -m" in ln]
+        self.assertTrue(py_installs, "install blogunda .py kurulumu yok")
+        for ln in py_installs:
+            self.assertIn(
+                "$(LIBDIR)/axctl/", ln,
+                f"make install .py dosyalarini axctl/ altina koymali: {ln.strip()}")
+        pkg_installs = [ln for ln in pkg_blk.split("\n")
+                        if ".py" in ln and "install -m" in ln]
+        self.assertTrue(pkg_installs, "package blogunda .py kurulumu yok")
+        for ln in pkg_installs:
+            self.assertIn(
+                "$(STAGE)/usr/lib/axlinux/axctl/", ln,
+                f"paket .py dosyalarini axctl/ altina koymali: {ln.strip()}")
+
+    def test_both_paths_place_binaries_identically(self):
+        install_blk = self._block("install")
+        pkg_blk = self._block("package")
+        self.assertIn("$(BINDIR)/axdaemon", install_blk)
+        self.assertIn("$(BINDIR)/axlog", install_blk)
+        self.assertIn("$(LIBDIR)/axbpf.o", install_blk)
+        self.assertIn("$(STAGE)/usr/local/bin/axdaemon", pkg_blk)
+        self.assertIn("$(STAGE)/usr/local/bin/axlog", pkg_blk)
+        self.assertIn("$(STAGE)/usr/lib/axlinux/axbpf.o", pkg_blk)
+
+    def test_wrapper_matches_libdir(self):
+        """Sarmalayicinin sys.path degeri LIBDIR ile ayni olmali."""
+        mk = read(self.ROOT / "Makefile")
+        libdir = re.search(r"^LIBDIR\s*[?:]?=\s*(.+)$", mk, re.M).group(1)
+        # $(DESTDIR) kurulumda bos; sarmalayici mutlak yol kullanir
+        libdir = libdir.replace("$(DESTDIR)", "")
+        wrapper = read(self.ROOT / "packaging" / "axctl")
+        self.assertIn(libdir, wrapper,
+                      f"sarmalayici {libdir} yolunu icermeli; kod "
+                      f"orayi sys.path'e ekliyor")
