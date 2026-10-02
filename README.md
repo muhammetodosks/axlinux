@@ -164,7 +164,7 @@ Ayrıntı: [docs/challenges-risks.md](docs/challenges-risks.md)
 ## Durum
 
 Sürüm **1.0.0**. Üç dağıtımda gerçek enforcement ile uçtan uca
-doğrulandı; kapsamlı test paketi 99 denetimin tamamını geçiyor.
+doğrulandı; kapsamlı test paketi 100 denetimin tamamını geçiyor.
 
 | Bileşen | Durum | Kanıt |
 |---------|-------|-------|

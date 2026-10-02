@@ -18,7 +18,7 @@ işaretliyordu; sürüm 1.0.0 olduğunda bu yanlış izlenim bırakıyordu.
 
 ### Doğrulama
 
-- [x] Kapsamlı test paketi (`tests/deep_verify.sh`, 9 bölüm / 99 denetim)
+- [x] Kapsamlı test paketi (`tests/deep_verify.sh`, 10 bölüm / 100 denetim)
 - [x] Fiziksel makine koruması (test VM dışında çalışmayı reddeder)
 - [x] Python ↔ Go ↔ eBPF sözleşme testleri
 - [x] Belge–CLI denetimi (`tests/test_docs.py`)

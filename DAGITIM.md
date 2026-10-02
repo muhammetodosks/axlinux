@@ -25,9 +25,9 @@ gerçekten eBPF'den geçirildi.
 
 | Doğrulanan | Sonuç |
 |---|---|
-| Ubuntu 24.04.5 LTS | 99/0/0 · 5/5 eBPF programı · 5/5 kanca · audit sağlıklı |
-| Debian 12 (bookworm) | 99/0/0 · 5/5 · 5/5 · audit sağlıklı |
-| Pardus 25.2 (yirmibes) | 99/0/0 · 5/5 · 5/5 · audit sağlıklı |
+| Ubuntu 24.04.5 LTS | 100/0/0 · 5/5 eBPF programı · 5/5 kanca · audit sağlıklı |
+| Debian 12 (bookworm) | 100/0/0 · 5/5 · 5/5 · audit sağlıklı |
+| Pardus 25.2 (yirmibes) | 100/0/0 · 5/5 · 5/5 · audit sağlıklı |
 
 Kapsanan alanlar: tüm CLI komutları, öğrenme modu baştan sona, 5 LSM
 kancası, 6 aksiyon türü, kalıcı JSONL audit, üç mod ve acil kapatma,
@@ -318,7 +318,7 @@ Kurulumdan sonra kendi doğrulamanı çalıştır:
 # hızlı: tek komut
 sudo axctl status
 
-# kapsamlı: 9 bölüm, 99 denetim (FİZİKSEL MAKİNEDE ÇALIŞMAZ)
+# kapsamlı: 10 bölüm, 100 denetim (FİZİKSEL MAKİNEDE ÇALIŞMAZ)
 sudo bash tests/deep_verify.sh
 
 # tek bölüm
@@ -331,7 +331,7 @@ sudo bash tests/deep_verify.sh -k D
 Kaynak geliştirme:
 
 ```bash
-make test          # Go + statik + koruma + sessiz hata + Python (125 test)
+make test          # Go + statik + koruma + sessiz hata + Python (164 test)
 make verify        # eBPF'yi derle ve denetle
 make clean
 ```
@@ -414,7 +414,7 @@ Bu belgenin eşlik ettiği kaynak arşivi:
 ```
 
 sha256 doğrulaması ve geri yükleme testi yapılmıştır (140 dosya;
-geri yüklendiğinde 125 test geçiyor).
+geri yüklendiğinde 164 test geçiyor).
 
 ---
 
