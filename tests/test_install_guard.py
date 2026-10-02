@@ -901,6 +901,19 @@ class TestDebPackage(unittest.TestCase):
         self.assertIn("lsm=apparmor,bpf", s,
                       "duzeltme yolu soylenmeli")
 
+    def test_postrm_cleans_pycache(self):
+        """Kaldirmada __pycache__ artik kalmiyor.
+
+        Python calisma aninda /usr/lib/axlinux/axctl/__pycache__
+        uretiyor. Bunlar paket dosyasi DEGIL; dpkg izlemez, bu
+        yuzden dpkg -r ve dpkg -P sonrasi kalir:
+            .../axctl/__pycache__/cli.cpython-312.pyc
+        postrm temizlemeli.
+        """
+        s = read(self.ROOT / "packaging" / "debian" / "postrm")
+        self.assertIn("/usr/lib/axlinux/axctl/__pycache__", s)
+        self.assertRegex(s, r"rm -rf .*__pycache__")
+
     def test_postrm_keeps_user_data(self):
         """Politika ve audit KULLANICI VERISIDIR; silinmemeli."""
         s = read(self.ROOT / "packaging" / "debian" / "postrm")

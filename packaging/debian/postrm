@@ -5,4 +5,13 @@ if [ -d /run/systemd/system ]; then
     systemctl disable axdaemon.service axlog.service 2>/dev/null || true
 fi
 # Politika ve audit KALICI: kullanici verisidir. Silinmez.
+
+# Python calisma aninda __pycache__ uretir. Bunlar PAKET dosyasi
+# degildir; dpkg izlemez. Bu yuzden dpkg -r ve dpkg -P sonrasi
+# /usr/lib/axlinux/axctl/__pycache__ artik kalir:
+#   .../axctl/__pycache__/cli.cpython-312.pyc
+# Kaldirmada temizleniyor.
+rm -rf /usr/lib/axlinux/axctl/__pycache__ 2>/dev/null || true
+rmdir /usr/lib/axlinux/axctl /usr/lib/axlinux 2>/dev/null || true
+
 exit 0
