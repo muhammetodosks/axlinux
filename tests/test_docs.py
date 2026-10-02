@@ -137,6 +137,124 @@ class TestDocsMatchCLI(unittest.TestCase):
                 f"{name} 'uygulanmamis' bolumunda ama CLI'de VAR")
 
 
+class TestAllDocsAreHonest(unittest.TestCase):
+    """TUM belgeler, hicbir yerde var olmayan komut gostermemeli.
+
+    Once denetim yalnizca cli-reference.md uzerinde calisiyordu.
+    Baska belgelerde kalan hayaletler vardi:
+      - component-design.md: "axctl template show" (CLI'da YOK)
+      - user-scenarios.md / component-design.md: trust add,
+        policy install/verify/use (CLI'da YOK)
+    Bunlar "v0.5" gibi gelecek surum etiketiyle yazilmis
+    ti; ancak surum 1.0.0 oldugu icin 0.5 coktan gelmeliydi.
+    Kullanici belgeyi okuyup calismayan komutu deniyordu.
+    """
+
+    DOCS = ["docs/cli-reference.md", "docs/INSTALL.md",
+            "docs/user-scenarios.md", "docs/component-design.md",
+            "docs/architecture.md", "docs/policy-language.md",
+            "docs/challenges-risks.md", "docs/roadmap.md",
+            "DAGITIM.md", "README.md"]
+
+    # Gelecek ozellik olan komut YOLLARI. Tam yol eslesmeli:
+    # "policy install" hayalet, ama "policy check" gecerli.
+    # Bunlar "Henuz uygulanmamis komutlar" bolumunde acikca
+    # "Yok" olarak isaretlenmelidir.
+    # Gelecek ozelligin koku (grup altinda degil): "axctl trust add"
+    FUTURE_HEADS = {"trust"}
+    # Gelecek ozelligin tam yolu (click grubunun altinda)
+    FUTURE_PATHS = {"policy install", "policy verify", "policy use"}
+
+    GROUPS = {"policy", "label", "learn", "template"}
+
+    def _commands_in(self, text):
+        """Belgedeki axctl cagrilarini tam yol olarak cikarir.
+
+        Kabaclik iki hatayi birakiyordu:
+          - "axctl policy edit" icindeki "policy" grub adi, komut
+            degildir; tek kelimeye bakilinca hatali "belgelenmemis"
+            sayiliyordu.
+          - Turkce metindeki "axctl ile ..." ("ile" = "with")
+            komut saniliyordu.
+        Bu yuzden en fazla iki kelime alinir ve grup yolu ayrica
+        dogrulanir.
+        """
+        out = set()
+        for m in re.finditer(r"\baxctl\s+([a-z][\w-]*)(?:\s+([a-z][\w-]*))?", text):
+            first, second = m.group(1), m.group(2)
+            # Turkce metin: "axctl ile birlikte ..." ("ile" = with)
+            if first in ("ile", "ve", "i", "icin", "ile"):
+                continue
+            if first in GROUPS:
+                if second:
+                    out.add(f"{first} {second}")
+                # grup adi tek basina yazildiysa alt komut
+                # belirtilmemis; atlanir
+            else:
+                # Ikinci kelime ARGUMANDIR, alt komut degil:
+                #   axctl mode enforcing   -> "enforcing" bir deger
+                #   axctl status && sudo   -> metin arasi
+                # Alt komut yalnizca click GRUPLARININ altinda
+                # olur (axctl policy check). Bu yuzden yalnizca ilk
+                # kelime alinir.
+                out.add(first)
+        return out
+
+    def test_docs_reference_existing_commands(self):
+        real = real_commands()
+        top = {c for c in real if " " not in c}
+        bad = {}
+        for doc in self.DOCS:
+            path = ROOT / doc
+            if not path.exists():
+                continue
+            for cmd in self._commands_in(path.read_text(encoding="utf-8")):
+                if (cmd in self.FUTURE_PATHS
+                        or cmd.split(" ")[0] in self.FUTURE_HEADS
+                        or cmd in ("--help", "-h")):
+                    continue
+                ok = cmd in real or cmd in top
+                if not ok:
+                    bad.setdefault(cmd, []).append(doc)
+        self.assertEqual(
+            bad, {},
+            "Belgeler CLI'da olmayan komutlar gosteriyor: "
+            f"{bad}. Ya komutu ekle ya da 'gelecek ozellik' olarak "
+            f"acikca isaretle.")
+
+    def test_future_commands_are_marked_not_implemented(self):
+        """Gelecek komutlar 'Yok' bolumunde acikca yazili olmali."""
+        text = (ROOT / "docs" / "cli-reference.md").read_text(
+            encoding="utf-8")
+        self.assertIn("Henüz uygulanmamış komutlar", text)
+        for cmd in ("trust add", "policy install", "policy verify",
+                    "policy use"):
+            self.assertIn(f"axctl {cmd}", text,
+                          f"'axctl {cmd}' gelecek ozellik; "
+                          f"'Henuz uygulanmamis komutlar' bolumunde "
+                          f"'Yok' olarak isaretlenmeli")
+
+    def test_no_lower_version_promised_as_future(self):
+        """Surum 1.0.0 iken 'v0.5' gelecek olamaz.
+
+        0.5 < 1.0.0 oldugu icin "v0.5+" etiketi, ozelligin coktan
+        gelmesi gerektigini ima eder. Kullanici belgeyi okuyup
+        eksik komutu arar.
+        """
+        for doc in self.DOCS:
+            path = ROOT / doc
+            if not path.exists():
+                continue
+            text = path.read_text(encoding="utf-8")
+            hits = re.findall(r"v0\.[1-4]\+?", text)
+            if hits:
+                self.fail(
+                    f"{doc}: {sorted(set(hits))} gelecek surum olarak "
+                    f"isaretlenmis. Surum 1.0.0; bundan kucuk bir "
+                    f"surum 'gelecek' olamaz. 'Gelecek ozellik' "
+                    f"ifadesi kullan ya da surumu yukselt.")
+
+
 class TestDocCodeSamplesRun(unittest.TestCase):
     """Belgelerdeki ornek komutlar gercekten calisiyor mu?"""
 

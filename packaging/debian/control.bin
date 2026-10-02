@@ -1,0 +1,23 @@
+Package: axlinux
+Version: 1.0.0
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: AXlinux <dev@axlinux.local>
+Installed-Size: 1
+Depends: python3 (>= 3.9), python3-click, python3-rich, python3-yaml
+Recommends: bpftool
+Suggests: netcat-openbsd
+Homepage: https://github.com/axlinux/axlinux
+Description: Mandatory access control with a YAML policy language
+ AXlinux attaches eBPF programs to the Linux LSM chain and enforces a
+ policy that YOU write. You describe who may read which path, connect
+ to which port, or execute which binary; AXlinux applies it live with
+ no reboot.
+ .
+ The policy is plain YAML, validated before it is applied, and audited
+ to a persistent JSONL log. A learning mode watches normal activity and
+ proposes a starting policy.
+ .
+ Recovery processes (bash, sudo, sshd, systemd and 25 more) are never
+ subject to rules, so a policy cannot lock you out of your system.

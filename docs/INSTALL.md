@@ -127,7 +127,7 @@ bile sonraki calistirmalarda oturum kilitlenmez.
 
 ### Dogrulama sirasinda takilirsaniz
 
-`tests/verify_all.sh` veya `axctl set-mode disabled` **calismiyorsa**
+`tests/verify_all.sh` veya `axctl mode disabled` **calismiyorsa**
 sistem kilitlenmis olabilir. Bu durumda:
 
 ```bash

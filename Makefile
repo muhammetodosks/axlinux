@@ -13,7 +13,21 @@ BINDIR    := $(DESTDIR)$(PREFIX)/bin
 LIBDIR    := $(DESTDIR)/usr/lib/axlinux
 SYSCONF   := $(DESTDIR)/etc/axlinux
 
-GO        ?= go
+# Go'yu PATH'e guvenerek bulma.
+#
+# Once dogrudan "go" idi. Bu, docs/INSTALL.md'in oneridigi
+# "sudo make install" yolunu bozuyordu: sudo guvenli PATH'i
+# (/usr/local/go/bin icermez) uzerinden calistigi icin:
+#   /bin/bash: line 1: go: command not found
+#   make: *** [Makefile:69: go] Error 127
+#
+# install.sh Go'yu kurup /usr/local/bin'e bagliyor; make ise
+# kurulumdan ONCE de calistigi icin ayni yollari kendisi
+# denemeli. GO=... ile disaridan da verilebilir.
+GO ?= $(shell command -v go 2>/dev/null || \
+        ls /usr/local/go/bin/go 2>/dev/null || \
+        ls /usr/lib/go-*/bin/go 2>/dev/null | head -1 || \
+        echo go)
 PYTHON    ?= python3
 CLANG     ?= clang
 
@@ -69,6 +83,14 @@ go:
 	@cd $(GO_DAEMON) && $(GO) build -o axdaemon .
 	@cd $(GO_LOG)    && $(GO) build -o axlog .
 	@echo "   axdaemon, axlog hazir"
+	@# Derleme ciktilari root'a ait kalirsa kullanicinin deposu
+	@# silinemez: "rm -rf axlinux" -> "Permission denied". Ayni
+	@# sorun .build/ icin de vardi, ikisi de burada duzeltiliyor.
+	@OWNER="$$(stat -c %U . 2>/dev/null)"; \
+	if [ -n "$$OWNER" ] && [ "$$OWNER" != "root" ]; then \
+	    chown "$$OWNER" $(GO_DAEMON)/axdaemon $(GO_LOG)/axlog \
+	          $(BPF_DIR)/axbpf.o 2>/dev/null || true; \
+	fi
 
 # --- Python ---
 python:
@@ -169,6 +191,90 @@ test-integration:
 	@echo "== Entegrasyon (calisan daemon gerekli) =="
 	@$(PYTHON) tests/integration.py
 
+# --- Paketleme ---
+#
+# Once tek dagitim yolu kaynak + install.sh idi. Bu gercek bir
+# dagitim degil: kullanici "kuruldu mu" diye soramaz, paket
+# yoneticisi guncellemez, geri yuklemez.
+#
+# Paket DERLENMIS ikilileri icerir; hedef makinede clang/Go
+# gerektirmez. Kurulum saniyeler icinde biter ve dpkg/apt ile
+# yonetilir.
+#
+# Politika (~/.axlinux) ve audit (/var/log/axlinux) PAKETE
+# girmez ve postrm'de de silinmez: kullanici verisidir.
+VERSION  := $(shell sed -n 's/^const Version = "\(.*\)"$$/\1/p' \
+              src/go/axdaemon/main.go)
+PKGNAME  := axlinux
+PKGARCH  := amd64
+STAGE    := $(CURDIR)/.pkg
+PKGFILE  := $(CURDIR)/../$(PKGNAME)_$(VERSION)_$(PKGARCH).deb
+
+package: all
+	@echo "== Paketleme: $(PKGNAME) $(VERSION) =="
+	@rm -rf $(STAGE)
+	@install -d $(STAGE)/DEBIAN
+	@# dpkg-deb ikili paket icin "Package:" alaninin basta olmasini
+	@# istiyor; kaynak kontrolu (Source:) ile ikili kontrol
+	@# (Package:) ayri dosyada tutulur.
+	@sed "s/^Version: .*/Version: $(VERSION)/" packaging/debian/control.bin \
+	    > $(STAGE)/DEBIAN/control
+	@install -m 0755 packaging/debian/postinst  $(STAGE)/DEBIAN/postinst
+	@install -m 0755 packaging/debian/prerm     $(STAGE)/DEBIAN/prerm
+	@install -m 0755 packaging/debian/postrm    $(STAGE)/DEBIAN/postrm
+	@# Uygulama
+	@install -d $(STAGE)/usr/local/bin $(STAGE)/usr/lib/axlinux
+	@install -m 0755 $(GO_DAEMON)/axdaemon $(STAGE)/usr/local/bin/axdaemon
+	@install -m 0755 $(GO_LOG)/axlog       $(STAGE)/usr/local/bin/axlog
+	@install -m 0755 $(BPF_DIR)/axbpf.o    $(STAGE)/usr/lib/axlinux/axbpf.o
+	@# Python paketi AXCTL/ ALT DIZININE kurulur; "make install"
+	@# ile ayni duzen. Once duz kuruluyordu (/usr/lib/axlinux/cli.py)
+	@# ve kod "axctl.cli" bekledigi icin paket ESKI kurulumu
+	@# (".../axctl/") ice aliyordu; sonuc yeni surum degil eski
+	@# surum calisiyordu. Sadece gercek kurulumla yakalandi:
+	@#   axctl version -> "No such command 'version'"
+	@install -d $(STAGE)/usr/lib/axlinux/axctl
+	@install -m 0644 $(PY_DIR)/axctl/*.py  $(STAGE)/usr/lib/axlinux/axctl/
+	@install -m 0644 $(PY_DIR)/requirements.txt $(STAGE)/usr/lib/axlinux/axctl/
+	@install -m 0644 $(PY_DIR)/pyproject.toml $(STAGE)/usr/lib/axlinux/axctl/
+	@# CLI giris noktasi: paket dizininden yukler
+	@install -m 0755 packaging/axctl $(STAGE)/usr/local/bin/axctl
+	@# Servisler ve tmpfiles
+	@install -d $(STAGE)/lib/systemd/system $(STAGE)/usr/lib/tmpfiles.d
+	@install -m 0644 packaging/axdaemon.service \
+	    $(STAGE)/lib/systemd/system/axdaemon.service
+	@install -m 0644 packaging/axlog.service \
+	    $(STAGE)/lib/systemd/system/axlog.service
+	@install -m 0644 packaging/axlinux-tmpfiles.conf \
+	    $(STAGE)/usr/lib/tmpfiles.d/axlinux.conf
+	@# Ornek politikalar
+	@install -d $(STAGE)/etc/axlinux
+	@for f in examples/*.yaml; do install -m 0644 $$f $(STAGE)/etc/axlinux/; done
+	@# Belgeler
+	@install -d $(STAGE)/usr/share/doc/$(PKGNAME)
+	@install -m 0644 DAGITIM.md README.md CHANGELOG.md \
+	    $(STAGE)/usr/share/doc/$(PKGNAME)/
+	@install -d $(STAGE)/usr/share/doc/$(PKGNAME)/docs
+	@install -m 0644 docs/*.md $(STAGE)/usr/share/doc/$(PKGNAME)/docs/
+	@# Installed-Size TUM dosyalar yerlestikten sonra hesaplanir.
+	@# Once placeholder vardi ve staging daha bitmeden
+	@# hesaplaniyordu; sonuc bos deger.
+	@# Tek recipe satiri: make her satiri AYRI bir shell'de
+	@# calistirir, $SIZE sonraki satira tasinmaz ve deger bos
+	@# kalir ("Installed-Size: " olarak yaziliyordu).
+	@SIZE="$$(du -ks $(STAGE) | cut -f1)"; \
+	 sed -i "s/^Installed-Size: .*/Installed-Size: $$SIZE/" \
+	    $(STAGE)/DEBIAN/control; \
+	 grep -q "^Installed-Size: [0-9]" $(STAGE)/DEBIAN/control || \
+	    { echo "HATA: Installed-Size hesaplanamadi (SIZE='$$SIZE')"; \
+	      exit 1; }
+	@dpkg-deb --root-owner-group --build $(STAGE) $(PKGFILE) >/dev/null
+	@rm -rf $(STAGE)
+	@echo "  uretildi: $(PKGFILE)"
+	@dpkg-deb --info $(PKGFILE) | sed 's/^/  /'
+	@echo "  kurulum:  sudo dpkg -i $(PKGFILE)"
+	@echo "  kaldirma: sudo apt remove axlinux   (politika ve audit korunur)"
+
 # --- Lint ---
 # gofmt denetimi CI'a da eklenebilsin diye ayri hedef.
 # Once 13 dosya bicimsizdi ve kimse fark etmedi; bicim tutarliligi
@@ -191,6 +297,27 @@ fmt:
 # --- Kurulum ---
 install: all
 	@echo "== Kurulum =="
+	@# Derleme ciktilarinin sahibi duzeltilir.
+	@#
+	@# "sudo make install" derleme adimlarini root olarak calistirir
+	@# ve .build/ altina root'a ait bytecode birakir. Sonrasi
+	@# kullanicinin DEPOSU silinemez:
+	@#   rm -rf axlinux -> "Permission denied" (60+ dosya)
+	@# Yeni kaynak aktarimi sessizce gerceklesmez ve testler
+	@# GUNCEL OLMAYAN kodun sonucunu verir. Ubuntu ve Pardus'ta
+	@# yasandi.
+	@#
+	@# Bu duzeltme install.sh icinde de var; burada TEKRAR
+	@# edilmesinin nedeni iki ayri giris noktasi olmasi:
+	@# docs/INSTALL.md "sudo make install" oneriyor. Yalnizca
+	@# install.sh'de duzeltilseydi o yoldan kurulum yapan
+	@# kullanici ayni hatayi yasardi.
+	@if [ -d .build ]; then \
+	    OWNER="$$(stat -c %U . 2>/dev/null)"; \
+	    if [ -n "$$OWNER" ] && [ "$$OWNER" != "root" ]; then \
+	        chown -R "$$OWNER" .build 2>/dev/null || true; \
+	    fi; \
+	fi
 	@install -d $(BINDIR) $(LIBDIR)
 	@install -m 0755 $(GO_DAEMON)/axdaemon $(BINDIR)/axdaemon
 	@install -m 0755 $(GO_LOG)/axlog       $(BINDIR)/axlog

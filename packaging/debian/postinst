@@ -1,0 +1,54 @@
+#!/bin/sh
+# LSM zincirinde bpf yoksa AXlinux baglanamaz. Kurulum BASARISIZ
+# olmamali ama operatoru acikca uyarmali: sistem calisiyor gibi
+# gorunurken hicbir sey denetlenmiyor olur.
+set -e
+
+if [ -r /sys/kernel/security/lsm ] && ! grep -qw bpf /sys/kernel/security/lsm; then
+    echo "AXlinux: DIKKAT - LSM zincirinde 'bpf' yok."
+    echo "  Politika derlenecek ama hicbir kanca tetiklenmez."
+    echo "  Duzeltmek icin GRUB'a ekleyin:  lsm=apparmor,bpf"
+    echo "  Sonra: sudo update-grub && sudo reboot"
+    echo "  Ayrinti: docs/INSTALL.md"
+    exit 0
+fi
+
+# TMPFILES: /run/axlinux iki servis tarafindan paylasilir ve
+# hicbir servis onu sahiplenmez (bkz. axlinux-tmpfiles.conf).
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/axlinux.conf || true
+
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    systemctl enable axdaemon.service axlog.service || true
+    systemctl restart axdaemon axlog || true
+
+    # Daemonun HAZIR olmasini bekle. eBPF'yi yuklemek ve 5 LSM
+    # kancasini baglamak ~2 saniye suruyor. Kurulum bittikten
+    # hemen sonra "axctl status" calistirilirsa soket henuz
+    # olmadigi icin:
+    #   x axdaemon calismiyor veya socket bulunamadi
+    # gorunuyordu; kullanici calisan bir sistemde calismayan
+    # sistem saniyordu.
+    #
+    # Bekleme basarisiz olursa kurulum YINE basarili sayilir
+    # (axdaemon.log'a yazilir) ama mesaj basilir.
+    i=0
+    while [ $i -lt 30 ]; do
+        if [ -S /run/axlinux/axdaemon.sock ] && \
+           [ -S /run/axlinux/axlog.sock ]; then
+            break
+        fi
+        i=$((i + 1))
+        sleep 1
+    done
+    if [ $i -ge 30 ]; then
+        echo "AXlinux: DIKKAT - servisler 30 saniyede hazir olmadi."
+        echo "  'sudo journalctl -u axdaemon' ile inceleyin."
+    fi
+fi
+
+# Surum bilgisini yaz: hangi surumun kuruldugunu belgelemek icin
+# (paket yoneticisi de yazar, ama kaynak kurulumda olmayabilir)
+echo "1.0.0" > /var/lib/axlinux/version 2>/dev/null || true
+
+exit 0

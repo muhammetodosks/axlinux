@@ -1,137 +1,91 @@
 # AXlinux Yol Haritası
 
-## v0.1 — Temel (MVP)
+Bu belge **gerçekte neyin yapıldığını** gösterir. Önceden sürüm
+numaralarıyla etiketlenmiş ve uygulanmış özellikleri yapılmamış
+işaretliyordu; sürüm 1.0.0 olduğunda bu yanlış izlenim bırakıyordu.
 
-**Hedef**: YAML parser + axctl + eBPF dosya kancası
+## 1.0.0 — Tamamlanan
 
-- [x] YAML politika dili tasarımı
-- [x] axctl CLI (init, policy edit, check, reload, status, logs)
-- [x] axc derleyici (YAML → JSON)
-- [x] axdaemon (Go) — temel daemon
-- [x] axbpf (C) — file_open kancası
-- [x] axlog (Go) — JSON audit log
-- [ ] eBPF map yöneticisi
-- [ ] Temel dokümantasyon
-- [ ] Test senaryoları
+### Çekirdek
 
-**Çıktı**: Kullanıcı yaz, AXlinux dosya erişimini kontrol etsin.
+- [x] YAML politika dili (etiket, joker subject, öncelik)
+- [x] `axctl` CLI: `init`, `status`, `reload`, `mode`, `logs`,
+      `label add|ls|rm`, `learn start|stop|report`,
+      `template ls|apply`, `policy edit|check|simulate`, `version`
+- [x] `axdaemon` (Go): LSM kancaları, eBPF map yönetimi, JSON-RPC
+- [x] `axlog` (Go): kalıcı JSONL audit, günlük sıkıştırma
+- [x] `axbpf` (C): 5 LSM kancası
 
-## v0.2 — Simülatör
+### Doğrulama
 
-**Hedef**: "Bu YAML neyi etkiler?" göster
+- [x] Kapsamlı test paketi (`tests/deep_verify.sh`, 9 bölüm / 99 denetim)
+- [x] Fiziksel makine koruması (test VM dışında çalışmayı reddeder)
+- [x] Python ↔ Go ↔ eBPF sözleşme testleri
+- [x] Belge–CLI denetimi (`tests/test_docs.py`)
+- [x] Üç dağıtımda uçtan uca doğrulama: Ubuntu 24.04.5,
+      Debian 12, Pardus 25.2
 
-- [x] axctl policy simulate
-- [ ] Kural öncelik sıralaması
-- [ ] Çakışma tespiti
-- [ ] Etkilenen işlemler listesi
+### Politika dili
 
-**Çıktı**: Kullanıcı politika yüklemeden önce sonucu görsün.
+- [x] Kural öncelik sıralaması (`priority`)
+- [x] Çakışma tespiti (aynı hedefe farklı etki)
+- [x] Yinelenen kural tespiti
+- [x] Uygulanabilirlik denetimi (uygulanamayan kural reddedilir)
+- [x] `policy check -f` ile aday politika doğrulama
+- [x] `policy simulate` ile etki analizi
 
-## v0.3 — Öğrenme Modu
+### Öğrenme modu
 
-**Hedef**: Sistem izle, 3 gün sonra YAML öner
+- [x] Olay akışından gözlem toplama (`learn_map`)
+- [x] Pattern aggregation (konu + nesne + eylem)
+- [x] Öneri motoru: yapıştırılabilir YAML üretimi
+- [x] Süreli çalışma (`--days`), otomatik kapanma
 
-- [x] axctl learn start
-- [x] axctl learn report
-- [ ] eBPF syscall tracing
-- [ ] Pattern recognition
-- [ ] Öneri motoru (basit ML)
-- [ ] Onay akışı
+### Güvenlik
 
-**Çıktı**: Kullanıcı "öğren" desin, AXlinux politika önerisi sunsun.
+- [x] 29 korumalı süreç (kilitlenme koruması)
+- [x] Uygulanamayan kural uyarı değil **hata** (sessiz etkisizlik yok)
+- [x] Boş politika geçerli → `reload --force-empty` acil kurtarma yolu
+- [x] Kalıcı audit; yazma hatası sayacı ve `audit_healthy`
+- [x] Dağıtım bağımsız kurulum (apt/dnf/pacman/apk/zypper)
+- [x] Çalışma zamanı bağımlılık sözleşmesi (`requirements.txt`)
 
-## v0.4 — Şablonlar
+## Gelecek
 
-**Hedef**: Önceden tanımlı politika kalıpları
+Bu listeye giren hiçbir özellik **yoktur**. Sürüm numarası
+verilmedi: tarih vermek, planlanmayan bir şeyi vaat etmek olurdu.
 
-- [x] axctl template ls
-- [x] axctl template apply
-- [ ] minimal, web-server, desktop, database şablonları
-- [ ] Şablon paylaşımı (git)
-- [ ] Özel şablon oluşturma
+### Yüksek öncelik
 
-**Çıktı**: Kullanıcı "şablon uygulayınca" hızlıca başlasın.
+- [ ] `net.accept` desteği — `lsm/socket_accept` kancası bağlıysa
+- [ ] Silme/oluşturma denetimi — `lsm/inode_unlink_at` kancası
+- [ ] Kullanıcı bazlı kurallar — kuralın öznesi kullanıcı olsun
+- [ ] `sudo` bağlamı — `sudo -u` ile çalışan süreçler ayrıştırılsın
 
-## v0.5 — Topluluk ve İmza
+### Orta öncelik
 
-**Hedef**: Güvenilir politika paylaşımı
+- [ ] Zaman/koşul kuralları — "her gün 09:00-18:00 arası"
+- [ ] Politika imzalama ve doğrulama
+- [ ] Uzak politika kaynakları (`trust`, `policy install`)
+- [ ] Olay tabanlı kurallar — "bu dosya değişirse"
+- [ ] Sıcak yeniden yükleme (daemon yeniden başlatmadan)
 
-- [ ] axctl trust add
-- [ ] axctl policy install
-- [ ] Ed25519 imzalama
-- [ ] İmza doğrulama
-- [ ] Topluluk repo (github.com/axlinux/policies)
+### Düşük öncelik
 
-**Çıktı**: Kullanıcı topluluk politikalarını güvenle kullanabilsin.
+- [ ] Container kapsamı (yalnız bir container'ı denetleme)
+- [ ] Grafik arayüz
+- [ ] Sinyal kancası (`lsm/signal`)
 
-## v1.0 — Container/K8s
+## Bilinçli olarak yapılmayanlar
 
-**Hedef**: Modern altyapı entegrasyonu
+Bunlar eksiklik değil, **karardır**:
 
-- [ ] Kubernetes CRD (AxPolicy)
-- [ ] Docker security-opt
-- [ ] Pod security policy
-- [ ] Containerd hook
-- [ ] Helm chart
-- [ ] Operator
-
-**Çıktı**: K8s cluster'da pod bazlı politika.
-
-## v1.5 — GUI
-
-**Hedef**: Masaüstü yönetim arayüzü
-
-- [ ] Qt/GTK GUI (axctl-gui)
-- [ ] Politika editör (syntax highlighting)
-- [ ] Simülasyon görselleştirme
-- [ ] Log dashboard
-- [ ] Sistem tray ikonu
-
-**Çıktı**: Kullanıcı komut satırı olmadan yönetebilsin.
-
-## v2.0 — AI Destekli
-
-**Hedef**: Yapay zeka ile politika önerisi
-
-- [ ] LLM entegrasyonu (önceden eğitilmiş)
-- [ ] "Bu işlem için politika öner" → LLM
-- [ ] Anormal davranış tespiti
-- [ ] Otomatik politika güncelleme
-- [ ] Doğruluk onay akışı
-
-**Çıktı**: Kullanıcıya akıllı öneriler.
-
-## Süre Tahmini
-
-| Versiyon | Süre | Ekip |
-|----------|------|------|
-| v0.1 | 2 ay | 2 kişi |
-| v0.2 | 1 ay | 2 kişi |
-| v0.3 | 2 ay | 3 kişi |
-| v0.4 | 1 ay | 2 kişi |
-| v0.5 | 1 ay | 2 kişi |
-| v1.0 | 3 ay | 4 kişi |
-| v1.5 | 2 ay | 3 kişi |
-| v2.0 | 3 ay | 4 kişi |
-
-**Toplam**: ~15 ay (v0.1 → v2.0)
-
-## Başarı Kriterleri
-
-### v0.1
-- 100 kullanıcı, 1000 indirme
-- 5 GitHub issue, 2 PR
-- 1 blog yazısı
-
-### v1.0
-- 10K kullanıcı
-- 100 yıldız
-- 10 topluluk politikası
-- 1 dağıtım partneri
-
-### v2.0
-- 100K kullanıcı
-- 1K yıldız
-- 100 topluluk politikası
-- 5 dağıtım partneri
-- 1 kurumsal kullanıcı
+- **İmzasız uzak politika çekme.** İmza doğrulama yarım kalmış bir
+  güvenlik özelliği, hiç olmamasından daha kötüdür. Ya imza
+  doğrulama tam olur ya da uzak politika yükleme hiç yapılmaz.
+- **Sessizce etkisiz kurallar.** Bir kuralın çalışmayacağı kanıtlanabiliyorsa
+  (`bash`'a kural, 8'den derin yol, kancasız aksiyon) politika
+  reddedilir. Kullanıcı bir kuralın yüklendiğini sanıp sistemi
+  korumalı sandığında, uyarı yetmez.
+- **Kilitlenmeye izin vermek.** 29 kurtarma yolu süreci hiçbir kurala
+  tabi değildir. Bu bir ödün değil, kullanılabilirliğin şartıdır.

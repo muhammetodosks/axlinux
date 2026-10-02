@@ -163,16 +163,29 @@ Ayrıntı: [docs/challenges-risks.md](docs/challenges-risks.md)
 
 ## Durum
 
+Sürüm **1.0.0**. Üç dağıtımda gerçek enforcement ile uçtan uca
+doğrulandı; kapsamlı test paketi 99 denetimin tamamını geçiyor.
+
 | Bileşen | Durum | Kanıt |
 |---------|-------|-------|
-| eBPF LSM (5 kanca) | derleniyor, kernel verifier kabul ediyor | `make verify` |
-| axdaemon | derleniyor, soket sunucusu çalışıyor | entegrasyon testleri |
-| axlog | derleniyor | `go vet` |
-| axctl | çalışıyor | birim testleri |
-| Çekirdekte uygulama | `lsm=bpf` gerektirir | `axctl status` açıkça bildirir |
+| eBPF LSM (5 kanca) | Çalışıyor | `bpf_programs_loaded 5/5`, `status.hooks` beşi de `true` |
+| axdaemon | Çalışıyor | `tests/deep_verify.sh` D bölümü (5 kanca, gerçek engelleme) |
+| axlog | Çalışıyor | `audit_healthy: true`, kalıcı JSONL (VM'lerde 6.000+ kayıt) |
+| axctl | Çalışıyor | 142 birim testi + B bölümü (tüm komutlar) |
+| Öğrenme modu | Çalışıyor | gözlem toplama 0 → 192, öneri YAML olarak geçerli |
+| Politika dili | Çalışıyor | I ve J bölümleri: hata yolları + kenar durumlar |
+| Dağıtım | Çalışıyor | tek komut kurulum, 5 paket yöneticisi, idempotent |
 
-**v0.1 kapsamındadır.** Container/K8s, GUI, imzalama ve AI önerisi
-yol haritasındaki sonraki sürümlerdedir. Bkz. [docs/roadmap.md](docs/roadmap.md).
+**Doğrulanan dağıtımlar:** Ubuntu 24.04.5 LTS · Debian 12
+(bookworm) · Pardus 25.2 (yirmibes, resmî arşivden).
+
+Kapsam dışı olanlar (bilinçli kararlar ve eklikler):
+container kapsamı, GUI, imzalı politika dağıtımı, silme/oluşturma
+denetimi, kullanıcı bazlı kurallar. Tam liste ve gerekçeleri
+[docs/challenges-risks.md](docs/challenges-risks.md) ve
+[docs/roadmap.md](docs/roadmap.md).
+
+Kullanıcı belgeleri: [DAGITIM.md](DAGITIM.md).
 
 ## Testler
 

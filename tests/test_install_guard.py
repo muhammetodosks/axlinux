@@ -749,5 +749,168 @@ class TestSuggestionsNotWrapped(unittest.TestCase):
         self.assertEqual(r.returncode, 0, f"learning testleri basarisiz:\n{r.stdout[-800:]}")
 
 
+class TestBuildNeverPollutesUserTree(unittest.TestCase):
+    """Root ile derlemek kullanicinin deposunu BOZAMAZ.
+
+    "sudo make install" ve "sudo bash install.sh" derleme
+    adimlarini root olarak calistirir. Once cikti dosyalari
+    root'a ait kaliyordu ve sonuc:
+
+        rm -rf axlinux
+        rm: cannot remove 'src/go/axdaemon/axdaemon': Permission denied
+
+    Bu sessiz ama pahali: yeni kaynak aktarimi gerceklesmez,
+    testler GUNCEL OLMAYAN kodun sonucunu verir. Ubuntu ve
+    Pardus'ta yasandi.
+
+    Iki ayri giris noktasi var (Makefile ve install.sh); ikisi
+    de duzeltilmesi gerekiyordu.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+
+    def test_makefile_restores_ownership_after_build(self):
+        mk = read(self.ROOT / "Makefile")
+        self.assertIn("stat -c %U .", mk,
+                      "Makefile derleme ciktilarinin sahibini "
+                      "duzeltmiyor; kullanicinin deposu silinemez")
+
+    def test_makefile_chowns_binaries(self):
+        mk = read(self.ROOT / "Makefile")
+        for name in ("axdaemon", "axlog", "axbpf.o"):
+            self.assertIn(name, mk,
+                          f"{name} sahibi duzeltilmiyor")
+        self.assertRegex(
+            mk, r"chown \"?\$\$OWNER\"? \$\(GO_DAEMON\)/axdaemon",
+            "derlenen Go ikilileri kaynak agacinin sahibine "
+            "verilmiyor")
+
+    def test_makefile_locates_go_without_path_help(self):
+        """sudo guvenli PATH'i kullanir; Go orada olmayabilir."""
+        mk = read(self.ROOT / "Makefile")
+        self.assertRegex(
+            mk, r"/usr/local/go/bin/go",
+            "Makefile Go'yu PATH'e guvenerek ariyor; 'sudo make "
+            "install' guvenli PATH'te Go yoksa calismaz")
+        self.assertRegex(mk, r"/usr/lib/go-\*/bin/go",
+                         "dagitim Go yolu da denenmeli")
+
+    def test_install_script_does_the_same(self):
+        s = read(self.ROOT / "install.sh")
+        self.assertIn("stat -c %U .", s)
+
+    def test_install_target_fixes_build_dir(self):
+        """install.sh tek yol degil; Makefile de yapmali."""
+        mk = read(self.ROOT / "Makefile")
+        install_idx = mk.index("\ninstall: all")
+        block = mk[install_idx:install_idx + 2000]
+        self.assertIn("chown", block,
+                      "Makefile 'install' hedefi .build sahibini "
+                      "duzeltmiyor")
+
+
+class TestDebPackage(unittest.TestCase):
+    """.deb paketi gercekten kurulabilir ve calisabilir olmali.
+
+    Kaynak + install.sh tek dagitim yolu degildi: kullanici
+    "kuruldu mu" diye soramaz, paket yoneticisi guncellemez,
+    geri yuklemez.
+    """
+
+    ROOT = Path(__file__).resolve().parent.parent
+
+    def test_packaging_files_exist(self):
+        for f in ("packaging/debian/control.bin", "packaging/debian/postinst",
+                  "packaging/debian/prerm", "packaging/debian/postrm",
+                  "packaging/axctl"):
+            self.assertTrue((self.ROOT / f).exists(), f"{f} yok")
+
+    def test_package_target_exists(self):
+        mk = read(self.ROOT / "Makefile")
+        self.assertRegex(mk, r"(?m)^package: all")
+        self.assertIn("dpkg-deb --root-owner-group --build", mk)
+
+    def test_python_package_uses_subdirectory(self):
+        """Paket, "make install" ile AYNI duzeni kullanmali.
+
+        Once paket Python dosyalarini DUZ kopyaliyordu
+        (/usr/lib/axlinux/cli.py) ama kod "axctl.cli" bekliyor.
+        Kurulumda eski surum ice aliniyordu:
+            axctl version -> "No such command 'version'"
+        Yalnizca gercek dpkg -i ile yakalandi.
+        """
+        mk = read(self.ROOT / "Makefile")
+        self.assertIn("$(STAGE)/usr/lib/axlinux/axctl", mk,
+                      "paket Python paketini axctl/ alt dizinine "
+                      "koymali")
+        # Arguman sirasi: $(PY_DIR)/axctl/*.py  $(STAGE)/.../axctl/
+        self.assertRegex(
+            mk,
+            r"\$\(PY_DIR\)/axctl/\*\.py\s+\$\(STAGE\)"
+            r"/usr/lib/axlinux/axctl/",
+            "paket axctl/*.py -> axctl/ altina koymali")
+
+    def test_axctl_wrapper_sets_program_name(self):
+        """python -c modunda sys.argv[0] = "-c" olur.
+
+        Yardim ciktisi "Usage: -c ..." olarak gorunuyordu.
+        """
+        w = read(self.ROOT / "packaging" / "axctl")
+        self.assertIn('sys.argv[0] = "axctl"', w)
+        self.assertIn("/usr/lib/axlinux", w)
+        self.assertIn('"$@"', w, "CLI argumanlari iletilmeli")
+
+    def test_installed_size_computed_after_staging(self):
+        """Installed-Size staging TUM bitmeden hesaplanmamali."""
+        mk = read(self.ROOT / "Makefile")
+        i = mk.index("\npackage: all")
+        block = mk[i:i + 6000]
+        size_at = block.index("Installed-Size")
+        build_at = block.index("dpkg-deb --root-owner-group --build")
+        staging_end = block.index("usr/share/doc")
+        self.assertLess(
+            staging_end, size_at,
+            "Installed-Size, dosyalar yerlestikten SONRA "
+            "hesaplanmali")
+        self.assertLess(size_at, build_at)
+
+    def test_size_is_guarded_against_empty_value(self):
+        """Bos Installed-Size gecerse dpkg-deb paketi REDDEDER."""
+        mk = read(self.ROOT / "Makefile")
+        self.assertRegex(
+            mk, r'grep -q "\^Installed-Size: \[0-9\]"',
+            "Installed-Size bos kalmamali; aksi halde paket uretilmez")
+
+    def test_postinst_waits_for_daemon(self):
+        """postinst daemon hazir olmadan bitmemeli.
+
+        eBPF yukleme + 5 kanca baglama ~2 saniye suruyor.
+        Kurulumdan hemen sonra "axctl status" soketi bulamayip
+        "calismiyor" diyordu; sistem calisirken calismiyor
+        gorunuyordu.
+        """
+        s = read(self.ROOT / "packaging" / "debian" / "postinst")
+        self.assertIn("axdaemon.sock", s)
+        self.assertRegex(s, r"while \[ \$i -lt \d+ \]", 
+                         "postinst soketin hazir olmasini beklemeli")
+
+    def test_postinst_warns_about_missing_lsm(self):
+        s = read(self.ROOT / "packaging" / "debian" / "postinst")
+        self.assertIn("/sys/kernel/security/lsm", s,
+                      "lsm=bpf yoksa operator uyarilmali")
+        self.assertIn("lsm=apparmor,bpf", s,
+                      "duzeltme yolu soylenmeli")
+
+    def test_postrm_keeps_user_data(self):
+        """Politika ve audit KULLANICI VERISIDIR; silinmemeli."""
+        s = read(self.ROOT / "packaging" / "debian" / "postrm")
+        for line in ("rm -rf /var/log/axlinux",
+                     "rm -rf /root/.axlinux"):
+            self.assertNotIn(line, s,
+                             f"postrm '{line}' calistiriyor; audit ve "
+                             f"politika kullanici verisidir, kaldirmada "
+                             f"silinmemeli")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

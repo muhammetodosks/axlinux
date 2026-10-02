@@ -1,0 +1,22 @@
+Source: axlinux
+Section: admin
+Priority: optional
+Maintainer: AXlinux <dev@axlinux.local>
+Build-Depends: debhelper-compat (= 13), clang, llvm, libbpf-dev, zlib1g-dev, golang-go, python3
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: axlinux
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, python3 (>= 3.9), python3-click, python3-rich, python3-yaml
+Recommends: bpftool
+Suggests: netcat-openbsd
+Description: Mandatory access control with a YAML policy language
+ AXlinux attaches eBPF programs to the Linux LSM chain and enforces a
+ policy that YOU write. You describe who may read which path, connect
+ to which port, or execute which binary; AXlinux applies it live with
+ no reboot.
+ .
+ The policy is plain YAML, validated before it is applied, and audited
+ to a persistent JSONL log. A learning mode watches normal activity and
+ proposes a starting policy.

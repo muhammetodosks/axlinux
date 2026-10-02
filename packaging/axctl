@@ -1,0 +1,14 @@
+#!/bin/sh
+# axctl giris noktasi.
+#
+# Python paketi /usr/lib/axlinux altinda kurulur ve kaynak agaciyla
+# birlikte tasinabilmesi icin sys.path'e elle eklenir.
+#
+# Bu dosya once Makefile icinde printf ile uretiliyordu. Tirnak
+# katmanlari (sh -> printf -> python -c) ic ice gecigi icin
+# Python tek tirnaklari kayboluyordu ve CLI soyle cokuyordu:
+#   SyntaxError: invalid syntax
+#   sys.path.insert(0, /usr/lib/axlinux)
+# Gercek bir dosya olarak dagitmak ic tice tirnak kacisi yok.
+exec /usr/bin/python3 -c 'import sys; sys.path.insert(0, "/usr/lib/axlinux");
+from axctl.cli import main; sys.argv[0] = "axctl"; sys.exit(main())' "$@"

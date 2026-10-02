@@ -55,7 +55,7 @@ kurallar uygulanır.
 
 **Çözüm**:
 - Kernel < 5.15'te graceful fallback: "AXlinux sadece audit modunda çalışıyor"
-- Dağıtım bazlı ön kontrol: `axctl check-kernel`
+- Dağıtım bazlı ön kontrol: `bash install.sh` 2. adımı (Ortam denetimi) ve `axctl status`
 - Ubuntu 22.04+, Fedora 35+, Debian 12+ desteklenir
 
 **Risk**: Eski distro'larda çalışmaz.
@@ -208,7 +208,7 @@ karşılaştırılır (`internal/maps/contract_test.go`,
 
 **Çözüm**:
 - Politika dosyası hash'i (her reload'de kontrol)
-- İmza doğrulama (v0.5+)
+- İmza doğrulama (gelecek)
 - Read-only politika dosyası (opsiyonel)
 
 **Risk**: Kullanıcı kendi politikasını değiştirip yeniden yükleyebilir (ama bu zaten kendi sorumluluğunda).
@@ -248,19 +248,26 @@ karşılaştırılır (`internal/maps/contract_test.go`,
 
 **Risk**: Dağıtım bazlı farklılıklar.
 
-## Sınırlamalar (v0.1)
+## Sınırlamalar (1.0.0)
 
-| Özellik | v0.1 | Not |
-|---------|------|-----|
-| Dosya kancası | ✓ | file_open, inode_permission |
-| exec kancası | ✓ | bprm_check_security |
-| ağ kancası | ✓ | socket_connect, socket_bind |
-| signal kancası | ✗ | v0.2 |
-| user bazlı kural | ✗ | v1.0 |
-| zaman kuralı | ✗ | v2.0 |
-| container | ✗ | v1.0 |
-| GUI | ✗ | v1.5 |
-| AI öneri | ✗ | v2.0 |
+Bu tablo **1.0.0'da gerçekte neyin çalıştığını** listeler. Önceden
+sürüm numarasıyla etiketlenmişti ve sürüm 1.0.0 olduğunda yanlış
+izlenim bırakıyordu: tablo "user bazlı kural ✗ 1.0" derken biz
+zaten 1.0.0'dayız.
+
+| Özellik | Durum | Not |
+|---------|-------|-----|
+| Dosya kancası | ✓ | `file_open`, `inode_permission` |
+| exec kancası | ✓ | `bprm_check_security` |
+| ağ kancası | ✓ | `socket_connect`, `socket_bind` |
+| signal kancası | ✗ | yok, LSM'de karşılığı bağlı değil |
+| `net.accept` | ✗ | `socket_accept` kancası bağlı değil |
+| `file.delete` / `file.create` | ✗ | silme/oluşturma kancası yok |
+| user bazlı kural | ✗ | kural **süreç** adına konuşur, kullanıcıya değil |
+| zaman/koşul kuralı | ✗ | politika dili koşul içermiyor |
+| container kapsamı | ✗ | kapsam sistem geneli |
+| Grafik arayüz | ✗ | CLI ve YAML; GUI yok |
+| İmzalı politika dağıtımı | ✗ | tek politika kaynağı: kendi dosyan |
 
 ## Kabul Edilebilir Riskler
 

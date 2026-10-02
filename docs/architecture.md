@@ -133,7 +133,7 @@ YAML'ı iç politika formatına çevirir:
 1. **Parse**: YAML → Python dict
 2. **Validate**: Schema doğrulaması, çakışma tespiti
 3. **Compile**: Python dict → JSON (iç politika formatı)
-4. **Sign**: İsteğe bağlı olarak politika imzalar (v0.5+)
+4. **Sign**: İsteğe bağlı olarak politika imzalar (gelecek)
 
 ### axdaemon (Go)
 
@@ -186,7 +186,7 @@ Anında geçiş: `axctl reload --mode=enforcing`
 2. **Simulate her zaman ücretsiz**: `axctl policy check` ve `simulate` her zaman çalışır, politika yüklenmeden önce.
 3. **Audit her zaman açık**: En azından permissive modda bile log tutulur.
 4. **Kullanıcı her zaman çıkabilir**: `axctl reload --mode=disabled` her zaman çalışır.
-5. **Politika imzalama (v0.5+)**: Topluluk politikaları imzalanarak güvenilirlik sağlanır.
+5. **Politika imzalama (gelecek)**: Topluluk politikaları imzalanarak güvenilirlik sağlanacak.
 
 ## SELinux vs AXlinux
 

@@ -229,7 +229,11 @@ kubectl apply -f axpolicy.yaml
 # → Pod'a AXlinux politikası uygulanır
 ```
 
-## Senaryo 10: Topluluk Politikası (v0.5)
+## Senaryo 10: Topluluk Politikası (GELECEK — henüz yok)
+
+> **Bu senaryo bir tasarım hedefidir; aşağıdaki komutlar
+> çalışmaz.** Uzak politika güvenliği henüz uygulanmadı.
+> Bugün kendi `~/.axlinux/policy.yaml` dosyanı yaz.
 
 ```bash
 # Güvenilir kaynak ekle

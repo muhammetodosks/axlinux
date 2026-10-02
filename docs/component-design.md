@@ -156,7 +156,7 @@ axc simulate policy.yaml → simulation_result
 2. **Validate**: Schema, çakışma, güvenlik kontrolü
 3. **Normalize**: Etiketleri aç, öncelik sırasına koy
 4. **Compile**: Python dict → JSON (iç politika formatı)
-5. **Sign** (v0.5+): İsteğe bağlı imza
+5. **Sign** (gelecek): İsteğe bağlı imza
 
 ### İç Politika Formatı
 
@@ -305,11 +305,10 @@ int BPF_PROG(file_open_kanca, struct file *file)
 
 ---
 
-## 6. Şablon Yöneticisi (v0.4+)
+## 6. Şablon Yöneticisi
 
 ```
 axctl template ls
-axctl template show minimal
 axctl template apply minimal
 ```
 
@@ -322,7 +321,7 @@ axctl template apply minimal
 
 ---
 
-## 7. Topluluk ve İmza (v0.5+)
+## 7. Topluluk ve İmza (GELECEK ÖZELLİK — henüz yok)
 
 ```
 axctl trust add https://github.com/user/axpolicy
