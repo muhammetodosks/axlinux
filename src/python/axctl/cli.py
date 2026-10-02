@@ -8,7 +8,7 @@ import click
 
 from axctl import __version__
 from axctl.compiler import compile_policy
-from axctl.config import get_editor, load_config
+from axctl.config import load_config
 from axctl.daemon_client import (
     get_logs,
     get_status,
@@ -33,7 +33,6 @@ from axctl.paths import ensure_layout, get_axlinux_home, get_policy_path
 from axctl.policy import (
     backup_policy,
     get_policy_stats,
-    list_backups,
     load_policy,
     save_policy,
 )
@@ -155,7 +154,7 @@ def _policy_check(file_path: str | None = None):
     """
     try:
         policy = load_policy(file_path)
-        errors = validate_policy(policy)
+        validate_policy(policy)  # hata halinde PolicyError raise eder
 
         print_success("YAML syntax geçerli")
         print_success("Schema doğrulaması başarılı")
@@ -192,7 +191,8 @@ def _policy_check(file_path: str | None = None):
         print_info("Politika geçerli. 'axctl reload' ile uygula.")
 
     except PolicyError as e:
-        print_error(str(e))
+        # summary listeyi ICERMEZ; hatalar bir kez listelenir
+        print_error(e.summary)
         if e.errors:
             for err in e.errors:
                 print_error(f"  - {err}")
@@ -293,7 +293,8 @@ def reload(mode, force_empty):
         print_success(f"Yukleme tamam. Mod: {effective}")
 
     except PolicyError as e:
-        print_error(str(e))
+        # summary listeyi ICERMEZ; hatalar bir kez listelenir
+        print_error(e.summary)
         if e.errors:
             for err in e.errors:
                 print_error(f"  - {err}")
@@ -695,14 +696,19 @@ def label_rm(name):
 def mode(mode):
     """Modu değiştirir."""
     try:
+        # Daemon gercekten hangi moda gectigini donuyor
+        # {"status": "ok", "mode": "..."}. once bunu okumuyorduk
+        # ve ISTEMEDIGIMIZ modu yaziyorduk; cevap ile istenen
+        # ayrilirsa kullanici yanlis bilgi aliyordu.
         result = set_mode(mode)
-        print_success(f"Mod değiştirildi: {mode}")
+        effective = result.get("mode", mode)
+        print_success(f"Mod değiştirildi: {effective}")
 
-        if mode == "enforcing":
+        if effective == "enforcing":
             print_warning("İhlal edilen eylemler engellenecek ve loglanacak.")
-        elif mode == "permissive":
+        elif effective == "permissive":
             print_info("İhlal edilen eylemler sadece loglanacak.")
-        elif mode == "disabled":
+        elif effective == "disabled":
             print_warning("Tüm kısıtlamalar kaldırıldı.")
 
     except DaemonError as e:

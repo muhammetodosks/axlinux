@@ -58,15 +58,3 @@ def save_config(config: dict) -> None:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
 
 
-def get_editor() -> str:
-    """Kullanılacak editörü belirler.
-
-    Sıra: --editor bayrağı, $VISUAL, $EDITOR, yapılandırma, nano
-    """
-    import os
-    for env in ("VISUAL", "EDITOR"):
-        v = os.environ.get(env)
-        if v:
-            return v
-    cfg = load_config()
-    return cfg.get("editor") or "nano"

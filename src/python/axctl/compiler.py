@@ -1,7 +1,6 @@
 """Politika derleyici - YAML → iç politika formatı."""
 
 import os
-import warnings
 
 from axctl.exceptions import PolicyError
 from axctl.validator import VALID_ACTIONS, validate_policy, _expand_subject

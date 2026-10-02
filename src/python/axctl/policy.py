@@ -8,7 +8,7 @@ import yaml
 
 from axctl.config import load_config
 from axctl.exceptions import PolicyError
-from axctl.paths import get_audit_dir, get_backup_dir, get_policy_path
+from axctl.paths import get_backup_dir, get_policy_path
 
 
 def load_policy(path: str | Path | None = None) -> dict:

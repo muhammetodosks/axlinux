@@ -103,10 +103,8 @@ def _send_request(method: str, params: dict | None = None,
         err = response["error"]
         if isinstance(err, dict):
             msg = err.get("message") or str(err)
-            code = err.get("code")
         else:
             msg = str(err)
-            code = None
         raise DaemonAppError(msg) from None
 
     result = response.get("result") if isinstance(response, dict) else None

@@ -28,12 +28,21 @@ class PolicyError(AxctlError):
     Detaylı hata listesi hem ``.errors`` alanında hem de mesaj
     metninde bulunur; böylece ``str(err)`` doğrudan kullanılabilir
     ve ayrıca ``.errors`` üzerinden programatik işlenebilir.
+
+    Ancak CLI bunu iki kez basiyordu: ``str(err)`` zaten listeyi
+    iceriyor, sonra ``e.errors`` ayrica basilıyordu:
+        x Politika dogrulama basarisiz: 3 hata
+          - version: 1 olmali, 99 verildi
+          ...
+        x   - version: 1 olmali, 99 verildi     <-- ikinci kez
+    ``summary`` listeYI ICERMEZ; CLI listeYI TEK kez basar.
     """
 
     exit_code = 2
 
     def __init__(self, message: str, errors: list | None = None):
         self.errors = list(errors or [])
+        self.summary = message
         if self.errors:
             joined = "\n".join(f"  - {e}" for e in self.errors)
             super().__init__(f"{message}\n{joined}")

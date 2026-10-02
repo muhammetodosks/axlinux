@@ -3,7 +3,6 @@
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.text import Text
 
 
 console = Console()
@@ -335,13 +334,3 @@ def _format_log_time(ts) -> str:
     if sec < 3600:
         return f"boot+{sec // 60}m{sec % 60}s"
     return f"boot+{sec // 3600}h{(sec % 3600) // 60}m"
-
-
-def print_validation_result(errors: list) -> None:
-    """Doğrulama sonucunu yazdırır."""
-    if not errors:
-        print_success("Politika geçerli")
-        return
-
-    for error in errors:
-        print_error(error)
