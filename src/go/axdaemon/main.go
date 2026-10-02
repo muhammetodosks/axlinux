@@ -3,8 +3,8 @@
 package main
 
 import (
-	"errors"
 	"context"
+	"errors"
 	"flag"
 	"log/slog"
 	"os"
@@ -24,7 +24,7 @@ import (
 )
 
 // Version is the daemon version. Keep in sync with axctl's __version__.
-const Version = "0.1.0"
+const Version = "1.0.0"
 
 func main() {
 	var (
@@ -140,7 +140,7 @@ func main() {
 			case lsmMgr.AttachedCount() == 0:
 				// Hicbiri baglanmadi: buyuk ihtimalle zincir
 				// sorunu ya da kernel destegi yok.
-				logger.Warn("LSM kancalari baglanmadi - " +
+				logger.Warn("LSM kancalari baglanmadi - "+
 					"bpf LSM zincirde olmali - politika UYGULANMIYOR",
 					"toplam", lsmMgr.HookCount(),
 					"detay", lsmenv.Summary())

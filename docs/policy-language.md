@@ -96,7 +96,7 @@ rules:
 | `subject` | Evet | Kim? (label veya tek işlem adı) |
 | `object` | Hayır | Ne? (dosya, dizin, işlem) |
 | `action` | Evet | Ne yapıyor? |
-| `effect` | Evet | `allow` veya `deney` |
+| `effect` | Evet | `allow` veya `deny` |
 | `port` | Hayır | Port numarası (net.bind için) |
 
 ## Eylemler

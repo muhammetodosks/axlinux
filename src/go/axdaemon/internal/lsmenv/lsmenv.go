@@ -19,10 +19,10 @@ import (
 const lsmListPath = "/sys/kernel/security/lsm"
 
 var (
-	once     sync.Once
+	once      sync.Once
 	available bool
-	chain    []string
-	detail   string
+	chain     []string
+	detail    string
 )
 
 // Active returns the kernel's active LSM chain, e.g.

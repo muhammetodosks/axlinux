@@ -142,6 +142,17 @@ Etiket ekler.
 axctl label add LABEL PROCESS
 ```
 
+### label rm
+
+Etiketi siler. Politika dosyasını elle düzenlemeden bir etiketi
+kaldırmanın yolu.
+
+```bash
+axctl label rm AD
+```
+
+Var olmayan etikette hata verir; "silindi" deyip sessizce geçmez.
+
 ### mode
 
 Modu değiştirir.
@@ -164,38 +175,6 @@ axctl template ls
 
 ```bash
 axctl template apply NAME
-```
-
-### trust add
-
-Güvenilir kaynak ekler.
-
-```bash
-axctl trust add URL
-```
-
-### policy install
-
-Topluluk politikası yükler.
-
-```bash
-axctl policy install NAME
-```
-
-### policy verify
-
-Politika imzasını doğrular.
-
-```bash
-axctl policy verify NAME
-```
-
-### policy use
-
-Politikayı aktif eder.
-
-```bash
-axctl policy use NAME
 ```
 
 ### version
@@ -238,3 +217,28 @@ mode: enforcing
 auto_reload: false
 backup_count: 10
 ```
+
+---
+
+## Henüz uygulanmamış komutlar
+
+Aşağıdakiler **çalıştırılabilir değildir**. Bu belge önceden bunları
+normal komutlar gibi listeliyordu; kullanıcı komutu yazıp
+"No such command" alıyordu. Artık burada durumu açık.
+
+| Komut | Durum | Not |
+|-------|-------|------|
+| `axctl trust add URL` | Yok | Uzak politika kaynağı güvenilirliği (imza anahtarı yönetimi). `docs/roadmap.md` |
+| `axctl policy install NAME` | Yok | Topluluktan politika indirme |
+| `axctl policy verify NAME` | Yok | Politika imza doğrulaması |
+| `axctl policy use NAME` | Yok | İndirilen politikayı etkinleştirme |
+
+Bu dört komut uzak kod çalıştırma ve imza doğrulama işlevi
+gerektirir. Yarım uygulanmış bir güvenlik özelliği (imzasız politika
+çekme) **mevcut olan sürümden daha kötüdür**, bu yüzden bilerek
+uygulanmadı. Şu an tek politika kaynağı vardır: kendi
+`~/.axlinux/policy.yaml` dosyan.
+
+CLI referansındaki her komutun gerçekten var olduğu otomatik olarak
+denetlenir (`tests/test_docs.py`). Bir komut buraya eklendiğinde
+CLI'de de olmak zorundadır.

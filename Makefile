@@ -113,7 +113,7 @@ python:
 # daha once .PHONY listesinde bile yoktu ve hicbir hedefe bagli
 # degildi; yani koruma kontrolleri normal calistirmada hicbir
 # zaman calismiyordu.
-test: test-go test-static test-protection test-silent test-python
+test: fmt-check test-go test-static test-protection test-silent test-python
 
 test-go:
 	@echo "== Go testleri =="
@@ -145,10 +145,22 @@ test-silent:
 # test_protection.py ve test_contracts_static.py main() fonksiyonu
 # tasiyan betiklerdir; pytest onlari test olarak saymaz (0 test
 # toplanir) ve OZEL HEDEFLERDE calistirilirlar.
+# Test dosyalari OTOMATIK toplanir. Once dosya adlari elle
+# yaziliyordu; tests/test_version.py eklenince listede unutuldu ve
+# "make test" 5 test eksik calisti. Yeni dosya ekleyen kisi
+# listeyi gormedigi icin sessizce kapsam daraliyordu.
+#
+# unittest.TestCase iceren dosyalar: test_*.py, ancak
+# test_protection.py ve test_contracts_static.py main() tasiyan
+# betiklerdir (pytest onlari 0 test olarak toplar) ve OZEL
+# HEDEFLERDE calistirilirlar. Bu yuzden onlar disarida birakilir.
+PYTEST_FILES = $(filter-out tests/test_protection.py \
+                   tests/test_contracts_static.py, \
+                   $(wildcard tests/test_*.py))
+
 test-python:
 	@echo "== Python testleri =="
-	@$(PYTHON) -m pytest tests/test_axctl.py tests/test_paths.py \
-		tests/test_silent_failure.py tests/test_install_guard.py -q \
+	@$(PYTHON) -m pytest $(PYTEST_FILES) -q \
 		|| $(PYTHON) -m unittest discover -s tests -p 'test_*.py' -v
 
 # Gercek daemon + gercek enforcement. Unit test'te CALISMAZ:
@@ -158,6 +170,16 @@ test-integration:
 	@$(PYTHON) tests/integration.py
 
 # --- Lint ---
+# gofmt denetimi CI'a da eklenebilsin diye ayri hedef.
+# Once 13 dosya bicimsizdi ve kimse fark etmedi; bicim tutarliligi
+# bir teslim kriteridir, tavsiye degil.
+fmt-check:
+	@out=$$(cd src/go/axdaemon && gofmt -l .); \
+	if [ -n "$$out" ]; then \
+		echo "HATA: gofmt'a uymayan dosyalar:"; echo "$$out"; exit 1; \
+	fi
+	@echo "gofmt: tum dosyalar temiz"
+
 lint:
 	@cd $(GO_DAEMON) && $(GO) vet ./...
 	@cd $(GO_LOG)    && $(GO) vet ./...

@@ -1,9 +1,9 @@
 package learning
 
 import (
-	"time"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestStartStopLifecycle covers the basic state machine. This package

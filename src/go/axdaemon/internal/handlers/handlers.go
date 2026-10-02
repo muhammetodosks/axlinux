@@ -256,11 +256,11 @@ func (h *Handler) handleGetStatus(req protocol.Request) protocol.Response {
 		enforcing := lsmSt.EnforcementPossible()
 		notice := lsmSt.EnforcementNotice()
 
-		result["ebpf_loaded"]  = lsmSt.IsLoaded()
+		result["ebpf_loaded"] = lsmSt.IsLoaded()
 		result["lsm_hooks_active"] = lsmSt.AttachedCount()
-		result["lsm_hooks_total"]  = lsmSt.HookCount()
+		result["lsm_hooks_total"] = lsmSt.HookCount()
 		result["bpf_programs_loaded"] = lsmSt.AttachedCount()
-		result["bpf_programs_total"]  = lsmSt.HookCount()
+		result["bpf_programs_total"] = lsmSt.HookCount()
 		result["hooks"] = lsmSt.Status()
 
 		// enforcement_active is the field that matters: it is false
@@ -278,28 +278,28 @@ func (h *Handler) handleGetStatus(req protocol.Request) protocol.Response {
 			result["hooks_missing"] = missing
 		}
 	} else {
-		result["ebpf_loaded"]         = false
-		result["lsm_hooks_active"]    = 0
-		result["lsm_hooks_total"]     = 0
+		result["ebpf_loaded"] = false
+		result["lsm_hooks_active"] = 0
+		result["lsm_hooks_total"] = 0
 		result["bpf_programs_loaded"] = 0
-		result["bpf_programs_total"]  = 0
-		result["enforcement_active"]  = false
-		result["enforcement_notice"]  =
+		result["bpf_programs_total"] = 0
+		result["enforcement_active"] = false
+		result["enforcement_notice"] =
 			"ebpf yuklenemedi; politika uygulanmiyor"
 	}
 	if h.maps != nil {
 		allowCount, denyCount := h.maps.Count()
 		result["map_allow_entries"] = allowCount
-		result["map_deny_entries"]  = denyCount
+		result["map_deny_entries"] = denyCount
 	} else {
 		result["map_allow_entries"] = 0
-		result["map_deny_entries"]  = 0
+		result["map_deny_entries"] = 0
 	}
 
 	if auditMgr != nil {
 		denied, allowed := auditMgr.Stats()
-		result["audit_log_count"]     = auditMgr.Count()
-		result["audit_denied_count"]  = denied
+		result["audit_log_count"] = auditMgr.Count()
+		result["audit_denied_count"] = denied
 		result["audit_allowed_count"] = allowed
 		// audit_healthy, audit_log_count == 0 ile karistirilamaz.
 		// Sayi sifirken iki durum mumkundur: hicbir olay olmadi
@@ -318,15 +318,15 @@ func (h *Handler) handleGetStatus(req protocol.Request) protocol.Response {
 			result["audit_send_failures"] = failed
 		}
 	} else {
-		result["audit_log_count"]     = 0
-		result["audit_denied_count"]  = 0
+		result["audit_log_count"] = 0
+		result["audit_denied_count"] = 0
 		result["audit_allowed_count"] = 0
-		result["audit_healthy"]       = false
+		result["audit_healthy"] = false
 		result["audit_notice"] = "perf buffer acilmadi; audit kaydi alinmiyor"
 	}
 
 	if h.learning != nil {
-		result["learning_active"]      = h.learning.IsActive()
+		result["learning_active"] = h.learning.IsActive()
 		result["learning_observations"] = h.learning.ObservationCount()
 	}
 
@@ -847,16 +847,16 @@ func (h *Handler) handleLearnReport(req protocol.Request) protocol.Response {
 	}
 
 	result := map[string]interface{}{
-		"generated_at":   report.GeneratedAt.Format(time.RFC3339),
-		"duration":       report.Duration,
-		"active":         active,
-		"message":        msg,
-		"pattern_count":  len(report.Patterns),
-		"total_count":    h.learning.ObservationCount(),
-		"patterns":       report.Patterns,
-		"observations":   observations,
-		"suggestions":    report.YAML,
-		"yaml":           report.YAML,
+		"generated_at":  report.GeneratedAt.Format(time.RFC3339),
+		"duration":      report.Duration,
+		"active":        active,
+		"message":       msg,
+		"pattern_count": len(report.Patterns),
+		"total_count":   h.learning.ObservationCount(),
+		"patterns":      report.Patterns,
+		"observations":  observations,
+		"suggestions":   report.YAML,
+		"yaml":          report.YAML,
 	}
 	return protocol.NewResponse(req.ID, result)
 }

@@ -1,10 +1,10 @@
 package audit
 
 import (
-	"os"
 	"bufio"
 	"encoding/json"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"

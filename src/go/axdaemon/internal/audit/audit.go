@@ -31,6 +31,7 @@ const (
 // so the layout is locked by TestEventLayoutMatchesC.
 //
 // C layout:
+//
 //	__u64 timestamp; __u32 pid; char comm[16];
 //	char path[8][32];
 //	__u32 action, effect, decision, rule_id, hook_type;
@@ -76,6 +77,7 @@ const EventSize = 8 + 4 + 16 + 256 + 5*4
 type EventSender interface {
 	Send(event Event) error
 }
+
 // Manager reads from the eBPF perf buffer and dispatches events.
 // Observer is notified once for every event the daemon parses, at the
 // moment the event is produced.

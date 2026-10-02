@@ -34,10 +34,10 @@ type Rule struct {
 
 // Policy is the full compiled policy document.
 type Policy struct {
-	Version int              `json:"version"`
-	Mode   string           `json:"mode"`
-	Labels map[string][]string `json:"labels"`
-	Rules  []Rule           `json:"rules"`
+	Version int                 `json:"version"`
+	Mode    string              `json:"mode"`
+	Labels  map[string][]string `json:"labels"`
+	Rules   []Rule              `json:"rules"`
 }
 
 // Snapshot is an immutable view of the loaded policy.

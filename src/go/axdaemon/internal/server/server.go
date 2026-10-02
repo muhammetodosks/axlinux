@@ -123,10 +123,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 
 	reader := bufio.NewReader(conn)
 	for {
-	// Istemci normal sekilde kapattiginda ReadBytes io.EOF doner.
-	// Bu bir hata degil; ayirt edilmezse her komut sonrasi
-	// "baglanti koptu" uyarisi logu kirletir ve gercek hatalari
-	// gormeyi zorlastirir.
+		// Istemci normal sekilde kapattiginda ReadBytes io.EOF doner.
+		// Bu bir hata degil; ayirt edilmezse her komut sonrasi
+		// "baglanti koptu" uyarisi logu kirletir ve gercek hatalari
+		// gormeyi zorlastirir.
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
 			if err != io.EOF {
@@ -172,5 +172,3 @@ func (s *Server) writeResponse(conn net.Conn, resp protocol.Response) error {
 	}
 	return nil
 }
-
-

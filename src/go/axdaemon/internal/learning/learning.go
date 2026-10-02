@@ -24,25 +24,25 @@ type Observation struct {
 
 // Pattern is an aggregated set of observations.
 type Pattern struct {
-	Subject  string `yaml:"subject"`
-	Object   string `yaml:"object"`
-	Action   string `yaml:"action"`
-	Count    int    `yaml:"count"`
+	Subject string `yaml:"subject"`
+	Object  string `yaml:"object"`
+	Action  string `yaml:"action"`
+	Count   int    `yaml:"count"`
 }
 
 // Report is the final learning output.
 type Report struct {
 	GeneratedAt time.Time `yaml:"generated_at"`
 	Duration    string    `yaml:"duration"`
-	Patterns   []Pattern `yaml:"patterns"`
+	Patterns    []Pattern `yaml:"patterns"`
 	YAML        string    `yaml:"yaml"`
 }
 
 // Manager controls the learning lifecycle.
 type Manager struct {
-	mu          sync.Mutex
-	active      bool
-	startedAt   time.Time
+	mu           sync.Mutex
+	active       bool
+	startedAt    time.Time
 	observations map[string]*Observation
 }
 
@@ -187,7 +187,8 @@ func (m *Manager) ObservationCount() int {
 // nedenini anlamaz.
 //
 // YAML double-quoted scalar'da gereken kacisler:
-//   \  "  ve satir sonu. Kontrol karakterleri de \xNN ile.
+//
+//	\  "  ve satir sonu. Kontrol karakterleri de \xNN ile.
 func yamlQuote(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')

@@ -42,7 +42,10 @@ func TestValidateRuleRejectsProtectedProcesses(t *testing.T) {
 // while buying no lockout protection: a protected shell still gives
 // them a way back.
 func TestValidateRuleAcceptsInterpreterRules(t *testing.T) {
-	cases := []struct{ comm, path, action string; port int }{
+	cases := []struct {
+		comm, path, action string
+		port               int
+	}{
 		{"python3", "/etc/shadow", "file.read", 0},
 		{"node", "", "net.connect", 443},
 		{"perl", "/etc/passwd", "file.read", 0},
@@ -76,7 +79,10 @@ func TestValidateRuleRejectsUnrepresentablePaths(t *testing.T) {
 // TestValidateRuleAcceptsNormalRules is the other direction: ordinary
 // rules must pass, or the guard would have broken the product.
 func TestValidateRuleAcceptsNormalRules(t *testing.T) {
-	ok := []struct{ comm, path, action string; port int }{
+	ok := []struct {
+		comm, path, action string
+		port               int
+	}{
 		{"firefox", "/etc/shadow", "file.read", 0},
 		{"nginx", "/var/www", "file.read", 0},
 		{"python3", "", "process.exec", 0},

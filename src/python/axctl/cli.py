@@ -98,6 +98,19 @@ def init(force):
     print_info("Hazır. 'axctl policy edit' ile politikanı yaz.")
 
 
+@cli.command("version")
+def version_cmd():
+    """Sürüm bilgisini gösterir.
+
+    `--version` bayragi zaten vardi ama dokumanda `axctl version`
+    diye yaziyordu ve o komut YOKTU: kullanici komutu calistirip
+    "No such command" aliyordu. Ikisi de calisir.
+    """
+    from axctl import __version__
+
+    console.print(f"axctl {__version__}")
+
+
 @cli.command("policy")
 @click.argument("subcommand", type=click.Choice(["edit", "check", "simulate"]))
 @click.option("--editor", help="Editör seçimi")

@@ -1,4 +1,4 @@
-# AXlinux 0.1.0 — Dağıtım Belgesi
+# AXlinux 1.0.0 — Dağıtım Belgesi
 
 **Sen YAML yaz, AXlinux uygulasın.**
 
@@ -9,7 +9,7 @@ Kural yazarsın, uygularsın. Kural yazmazsan sistem serbest kalır.
 
 | | |
 |---|---|
-| Sürüm | 0.1.0 |
+| Sürüm | **1.0.0** |
 | Sürücü modülü | Linux LSM + eBPF (CO-RE) |
 | Dağıtım | `axdaemon` (Go), `axlog` (Go), `axctl` (Python 3) |
 | Doğrulanmış | Ubuntu 24.04.5, Debian 12 (bookworm), **Pardus 25.2 (yirmibes)** |
@@ -418,15 +418,19 @@ geri yüklendiğinde 125 test geçiyor).
 
 ---
 
-## Destek ve geri bildirim
+## Canlı sisteme alırken
 
-Bu bir **deneysel** projedir (0.1.0). Canlı sistemde kullanmadan önce:
+Sürüm 1.0.0; üç dağıtımda uçtan uca doğrulandı. Yine de ilk kez
+kuruyorsan sırayla git:
 
-1. `permissive` modda başla ve bir süre gözlemle.
-2. `/var/log/axlinux/` kayıtlarının gerçekten dolduğunu doğrula.
-3. Acil kurtarma komutunu **bir kez test et** — kullanmadan önce
-   çalıştığını bilmen gerekir.
-4. Sistemde geri dönüşü olan bir ortamda dene.
+1. `permissive` modda başla ve bir süre gözlemle:
+   `sudo axctl reload --mode permissive`
+2. `/var/log/axlinux/` kayıtlarının gerçekten dolduğunu doğrula
+   (`axctl logs`). Kayıt yoksa sistem düşündüğün gibi denetlemiyor.
+3. **Acil kurtarma komutunu bir kez test et:**
+   `sudo axctl reload --force-empty --mode disabled`
+   Kullanmadan önce çalıştığını bilmen gerekir.
+4. Modu `enforcing` yap ve ilk gün audit kayıtlarını oku.
 
 Politika hatası ile karşılaşırsan önce:
 

@@ -10,9 +10,9 @@ import (
 type Mode string
 
 const (
-	ModeEnforcing Mode = "enforcing"
+	ModeEnforcing  Mode = "enforcing"
 	ModePermissive Mode = "permissive"
-	ModeDisabled  Mode = "disabled"
+	ModeDisabled   Mode = "disabled"
 )
 
 // Manager holds the current enforcement mode with atomic access.

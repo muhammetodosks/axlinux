@@ -407,7 +407,7 @@ var UnimplementedActions = map[string]string{
 	"file.delete": "AXlinux'ta silme kanacasi yok " +
 		"(lsm/inode_unlink_at bagli degil)",
 	"file.create": "AXlinux'ta dosya olusturma kanacasi yok",
-	"net.accept":  "AXlinux'ta kabul edilen baglanti kanacasi yok " +
+	"net.accept": "AXlinux'ta kabul edilen baglanti kanacasi yok " +
 		"(lsm/socket_accept bagli degil)",
 }
 

@@ -98,15 +98,15 @@ func TestActionConstantsMatch(t *testing.T) {
 	c := parseDefines(t)
 
 	pairs := map[string]uint32{
-		"file.read":     ActionFileRead,
-		"file.write":    ActionFileWrite,
-		"file.execute":  ActionFileExec,
-		"file.delete":   ActionFileDelete,
-		"file.create":   ActionFileCreate,
-		"net.connect":   ActionNetConnect,
-		"net.bind":      ActionNetBind,
-		"net.accept":    ActionNetAccept,
-		"process.exec":  ActionProcessExec,
+		"file.read":    ActionFileRead,
+		"file.write":   ActionFileWrite,
+		"file.execute": ActionFileExec,
+		"file.delete":  ActionFileDelete,
+		"file.create":  ActionFileCreate,
+		"net.connect":  ActionNetConnect,
+		"net.bind":     ActionNetBind,
+		"net.accept":   ActionNetAccept,
+		"process.exec": ActionProcessExec,
 	}
 
 	for action, goVal := range pairs {
@@ -286,7 +286,10 @@ func TestProtectedListCoversShell(t *testing.T) {
 // The empty-path case is now distinguished from the
 // unrepresentable-path case instead of being conflated with it.
 func TestProcessOnlyRulesAreAccepted(t *testing.T) {
-	cases := []struct{ comm, path, action string; port int }{
+	cases := []struct {
+		comm, path, action string
+		port               int
+	}{
 		{"nginx", "", "process.exec", 0},
 		{"dd", "", "file.read", 0},
 		{"dd", "", "file.write", 0},
@@ -384,7 +387,7 @@ func TestStructLayoutsMatch(t *testing.T) {
 // is ever denied.
 func TestKeyPathRoundTrip(t *testing.T) {
 	cases := []struct {
-		path  string
+		path   string
 		blocks [PathDepth]string
 	}{
 		{"/etc/hostname", [PathDepth]string{
@@ -504,5 +507,216 @@ func TestUnknownActionRejected(t *testing.T) {
 	}
 	if n := actionToUint("net.exfiltrate"); n != 0 {
 		t.Errorf("bilinmeyen aksiyon 0 donmeli, %d dondu", n)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Python <-> Go sozlesmesi
+//
+// Yukaridaki testler Go ile axbpf.h arasindaki sozlesmeyi koruyor.
+// Python tarafi (axctl) ayni sayisal eslemeyi KENDI bir sozlesme
+// olarak tasir: formatter.py audit kodundaki sayiyi eylem adina
+// cevirir, validator.py hangi eylemlerin yazilabilecegini belirler.
+//
+// Uc taraf su an tutarli, ama HICBIR TEST bunu zorunlu kilmiyor.
+// Go tarafinda bir aksiyon sabiti degistiginde veya eklendiginde
+// Python sessizce eski kalir. Sonuc en kotusu: audit kaydi dogru
+// olayda YANLIS eylem adi gosterir ("file.read" yerine
+// "file.delete"). Operator hangi eylemin engellendigini okuyamaz;
+// bu guvenlik aracinda en tehlikeli sessiz hatadir.
+//
+// Bu test uc tarafi tek noktada karsilastirir ve ayrilma
+// ANINDA test hatasina donusur.
+// ---------------------------------------------------------------------------
+
+// repoFile locates a file in the source tree, walking up from the
+// test's working directory.
+func repoFile(t *testing.T, rel string) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		candidates := []string{
+			filepath.Join(dir, rel),
+			filepath.Join(dir, "..", "..", "..", "..", rel),
+			filepath.Join(dir, "..", "..", "..", rel),
+		}
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				return c
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	t.Fatalf("dosya bulunamadi: %s", rel)
+	return ""
+}
+
+// pythonActionNames reads the numeric -> name mapping out of
+// axctl/formatter.py.
+func pythonActionNames(t *testing.T) map[int]string {
+	t.Helper()
+	data, err := os.ReadFile(repoFile(t,
+		"src/python/axctl/formatter.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(
+		`(\d+):\s*"([a-z]+\.[a-z]+)"`)
+	out := make(map[int]string)
+	for _, m := range re.FindAllStringSubmatch(string(data), -1) {
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			t.Fatalf("aksiyon sayisi cozulemedi %q: %v", m[1], err)
+		}
+		out[n] = m[2]
+	}
+	if len(out) == 0 {
+		t.Fatal("formatter.py icinde sayisal esleme bulunamadi")
+	}
+	return out
+}
+
+// pythonValidActions reads VALID_ACTIONS out of axctl/validator.py.
+func pythonValidActions(t *testing.T) map[string]bool {
+	t.Helper()
+	data, err := os.ReadFile(repoFile(t,
+		"src/python/axctl/validator.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(
+		`(?s)VALID_ACTIONS = \{(.*?)\}`).FindSubmatch(data)
+	if m == nil {
+		t.Fatal("validator.py icinde VALID_ACTIONS bulunamadi")
+	}
+	out := make(map[string]bool)
+	for _, q := range regexp.MustCompile(`"([a-z]+\.[a-z]+)"`).
+		FindAllStringSubmatch(string(m[1]), -1) {
+		out[q[1]] = true
+	}
+	if len(out) == 0 {
+		t.Fatal("VALID_ACTIONS bos")
+	}
+	return out
+}
+
+// goActionNames is the daemon's own view, derived from the constants
+// so the test cannot drift from them.
+func goActionNames() map[int]string {
+	return map[int]string{
+		1: "file.read",
+		2: "file.write",
+		3: "file.execute",
+		4: "file.delete",
+		5: "file.create",
+		6: "net.connect",
+		7: "net.bind",
+		8: "net.accept",
+		9: "process.exec",
+	}
+}
+
+// TestPythonActionNumbersMatchGo stops an audit record from being
+// labelled with the wrong action.
+func TestPythonActionNumbersMatchGo(t *testing.T) {
+	py := pythonActionNames(t)
+	goNames := goActionNames()
+
+	for num, goName := range goNames {
+		pyName, ok := py[num]
+		if !ok {
+			t.Errorf("formatter.py'de %d numarali eylem yok (Go: %q); "+
+				"audit kaydi bu kodda 'action(%d)' olarak gorunur",
+				num, goName, num)
+			continue
+		}
+		if pyName != goName {
+			t.Errorf("%d numarali eylem ayrilmis: Go=%q Python=%q. "+
+				"Audit kayitlari yanlis eylem adiyle gosterilir",
+				num, goName, pyName)
+		}
+	}
+	for num := range py {
+		if _, ok := goNames[num]; !ok {
+			t.Errorf("formatter.py'de %d var ama Go'da yok; "+
+				"bu kod Go tarafindan uretilemez", num)
+		}
+	}
+}
+
+// TestPythonValidActionsMatchUnimplemented keeps the CLI and the daemon
+// agreeing on what is enforceable.
+//
+// VALID_ACTIONS must be exactly the actions with a hook. If Python
+// accepted an action the daemon rejects, the user gets past
+// "axctl policy check" only to hit an error at load time. If Python
+// rejected an action that works, the feature is unreachable.
+func TestPythonValidActionsMatchUnimplemented(t *testing.T) {
+	valid := pythonValidActions(t)
+
+	// Go'nun destekledigi = tum eylemler eksi uygulanamayanlar.
+	supported := make(map[string]bool)
+	for _, a := range goActionNames() {
+		supported[a] = true
+	}
+	for a := range UnimplementedActions {
+		delete(supported, a)
+	}
+
+	for action := range supported {
+		if !valid[action] {
+			t.Errorf("Go %q aksiyonunu destekliyor ama Python "+
+				"VALID_ACTIONS'ta yok; CLI bu ozelligi erisilemez "+
+				"birakir", action)
+		}
+	}
+	for action := range valid {
+		if !supported[action] {
+			t.Errorf("Python %q aksiyonunu kabul ediyor ama Go "+
+				"tarafinda kanca yok; kullanici policy check'ten "+
+				"gecer ve yükleme anında reddedilir", action)
+		}
+	}
+}
+
+// TestPythonUnimplementedListMatchesGo keeps the human-readable reason
+// in the compiler aligned with the daemon's rejection set.
+func TestPythonUnimplementedListMatchesGo(t *testing.T) {
+	data, err := os.ReadFile(repoFile(t,
+		"src/python/axctl/compiler.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(
+		`(?s)UNIMPLEMENTED_ACTIONS = \{(.*?)\n\}`).FindSubmatch(data)
+	if m == nil {
+		t.Fatal("compiler.py icinde UNIMPLEMENTED_ACTIONS bulunamadi")
+	}
+	pyUnimpl := make(map[string]bool)
+	for _, q := range regexp.MustCompile(`"([a-z]+\.[a-z]+)":`).
+		FindAllStringSubmatch(string(m[1]), -1) {
+		pyUnimpl[q[1]] = true
+	}
+
+	for action := range UnimplementedActions {
+		if !pyUnimpl[action] {
+			t.Errorf("%q Go'da reddediliyor ama compiler.py "+
+				"UNIMPLEMENTED_ACTIONS'ta yok; kullanici uyari "+
+				"yerine sessizce etkisiz kural yazdirir", action)
+		}
+	}
+	for action := range pyUnimpl {
+		if _, ok := UnimplementedActions[action]; !ok {
+			t.Errorf("%q compiler.py'da uygulanamaz diye isaretli "+
+				"ama Go kabul ediyor; ozellik gereksiz yere "+
+				"engelleniyor", action)
+		}
 	}
 }
