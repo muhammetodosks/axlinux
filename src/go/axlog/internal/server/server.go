@@ -139,5 +139,3 @@ func (s *Server) handleConnection(conn net.Conn) {
 		}
 	}
 }
-
-

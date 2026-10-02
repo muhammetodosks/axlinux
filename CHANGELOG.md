@@ -1,5 +1,123 @@
 # Changelog
 
+## 1.0.0 - 2026-10-02
+
+AXlinux 1.0.0. Bu surum "deneysel" etiketini kaldirir: paket
+kurulabilir, guncellenebilir ve geri yuklenebilir bir dagitim
+haline gelir.
+
+Semantik surumleme: `MAJOR.MINOR.PATCH`. Surum tek kaynaktan
+okunur (`axctl version`), Python (`__init__.py`), paket
+(`pyproject.toml`) ve Go (`main.go`) arasindaki uyumsuzluk
+test ile yakalanir.
+
+### TESLIM: gercek paketleme
+
+Kaynak + `install.sh` tek dagitim yoluydu. Bu gercek bir dagitim
+degildi: kullanici "kuruldu mu" diye soramaz, paket yoneticisi
+guncellemez, geri yuklemez. Simdi `.deb` paketi uretiliyor:
+
+```bash
+make package     # -> axlinux_1.0.0_amd64.deb
+sudo dpkg -i axlinux_1.0.0_amd64.deb
+```
+
+- Derlenmis ikililer pakete gomulur; hedefte clang/Go GEREKMEZ
+- `control.bin`, `postinst`, `prerm`, `postrm` ile dogru yasam
+  dongusu: kurulumda servisleri acar, kaldirmada kapatir
+- Ornek politikalar `/etc/axlinux`, belgeler `/usr/share/doc`
+- Politika ve audit pakete GIRMEZ, kaldirmada SILINMEZ
+- `make install` ile ayni dizin duzeni ve ayni sonuc
+
+### Bu turda paketlemede bulunan ve duzeltilen hatalar
+
+Yalnizca gercek `dpkg -i` ile ortaya cikan hatalar; hicbiri
+`make package` ciktisinda gorunmuyordu.
+
+**CLI sarmalayicisi hic calismiyordu.** `Makefile` icinde `printf`
+ile uretiliyordu; `sh -> printf -> python -c` tirnak katmanlarinda
+tek tirnaklar kayboluyordu:
+
+```
+$ axctl version
+  File "<string>", line 1
+    sys.path.insert(0, /usr/lib/axlinux)
+SyntaxError: invalid syntax
+```
+
+Artik `packaging/axctl` gercek bir dosya.
+
+**Paket eski surumu calistiriyordu.** Python dosyalari DUZ
+kopyalaniyordu (`/usr/lib/axlinux/cli.py`) ama kod `axctl.cli`
+bekliyor; bu yuzden eski kurulumun alt dizini ice aliniyordu:
+
+```
+$ axctl version
+  Error: No such command 'version'.
+```
+
+Artik `make install` ile ayni duzen: `/usr/lib/axlinux/axctl/`.
+
+**Yardim ciktisi yanlitti.** `python -c` modunda `sys.argv[0]`
+`axctl` degil `-c` idi; `Usage: -c [OPTIONS]` yaziyordu.
+
+**postinst daemon hazir olmadan bitiyordu.** eBPF yukleme ve 5 LSM
+kancasini baglama ~2 saniye suruyor. Kurulumdan hemen sonra
+`axctl status` calistirilirsa:
+
+```
+x axdaemon calismiyor veya socket bulunamadi
+```
+
+Sistem calisirken calismiyor gorunuyordu. postinst artik soketleri
+bekliyor.
+
+**Installed-Size bos kaliyordu.** make her recipe satirini AYRI bir
+shell'de calistirdigi icin `$SIZE` bir sonraki satira tasinmiyordu;
+sonuc `Installed-Size: ` (deger yok) oluyordu. Bos degerle paket
+`duplicate value for Installed-Size` ile reddedilir. Artik staging
+TUM bitince hesaplaniyor ve bos kalirsa paket uretilmez.
+
+**Kaldirmada `__pycache__` kaliyordu.** Python'un calisma aninda
+urettigi dosyalar paket dosyasi degil, dpkg izlemiyor; `dpkg -r`
+sonrasi `/usr/lib/axlinux/axctl/__pycache__` artik duruyordu.
+postrm temizliyor.
+
+### Dogrulama: paketten kurulu sistem, uc dagitim
+
+Kaynak agaci degil, `.deb` paketi kurulup dogrulandi:
+
+| Dagitim | dpkg -i | axctl version | bpf | kanca | audit | deep_verify |
+|---------|---------|---------------|-----|-------|-------|-------------|
+| Ubuntu 24.04.5 | basarili | axctl 1.0.0 | 5/5 | 5/5 | saglikli | 100/0/0 |
+| Debian 12 | basarili | axctl 1.0.0 | 5/5 | 5/5 | saglikli | 100/0/0 |
+| Pardus 25.2 (yirmibes) | basarili | axctl 1.0.0 | 5/5 | 5/5 | saglikli | 100/0/0 |
+
+Pardus resmi arsivden kuruldu: `bilgemdepo.pardus.org.tr/pardus`
+(Origin: Pardus, imzali), `base-files 13.8+pardus25.2.1` ->
+`Pardus GNU/Linux 25 (yirmibes)`.
+
+Kaldirma dogrulamasi (Ubuntu 24.04.5):
+
+| Kontrol | Sonuc |
+|---------|-------|
+| `dpkg -r` sonrasi `/usr/lib/axlinux` | yok (temiz) |
+| `dpkg -r` sonrasi audit logu | KORUNDU |
+| `dpkg -r` sonrasi `~/.axlinux` | KORUNDU |
+| yeniden kurulum | 1.0.0, axdaemon active, 100/0/0 |
+
+### Testler
+
+- Python: 154 test + 20 alt test
+- Go: 9 paket
+- `tests/deep_verify.sh`: 10 bolum / 100 denetim (0.1.0'da 99)
+
+### Notlar
+
+Politika imzalama ve trust yonetimi bilincli olarak UYGULANMADI.
+Yarim imzali politika guvenlik acigi yaratir; sistem su an
+imzasiz politika kabul ediyor ve bunu belgelerde acikca yaziyor.
+
 ## 0.1.0 - 2026-09-29
 
 Ilk gercek dogrulama: bloklu yol cozumleyici, kalici audit servisi ve
@@ -184,7 +302,7 @@ veya yanlis calismis her seyi sabitler:
 - GRUB degistirilmeden once yedek alinir
 - recovery girdisine lsm= yazilmaz (boot kirarsa kurtarma yolu acik)
 
-## Dagitimlar arasi test (Devam - tamamlanmadi)
+## 0.1.2 - Dagitimlar arasi test (tamamlanmadi, sonra cozuldu)
 
 Pardus 25.2 ve Debian 12 uzerinde kurulum denendi. Ubuntu'da calisan
 install.sh'in baska dagitimlarda kirildigi yerler bulundu ve duzeltildi:
@@ -208,25 +326,27 @@ install.sh'in baska dagitimlarda kirildigi yerler bulundu ve duzeltildi:
 bes LSM kanca, kalici audit, modlar, kilitlenme korumasi, hata
 yollari, politika dili kenar durumlari.
 
-### ACIK KALAN ISLER
+### ACIK KALAN ISLER (1.0.0'da COZULDU)
 
-- `axctl status` Debian 12'de hata veriyor; nedeni henuz
-  tespit edilmedi. Kapsamli test 40/95 geciyor.
-- Pardus'un TAM paket deposu kurulamadi: kurulum ISO'su yalnizca
-  Debian 13 tabanini tasiyor (`dists/yirmibes-deb/main` = Debian),
-  gercek Pardus paketleri `contrib` altinda ve ISO'da bos.
-  Bu yuzden Pardus 25.2 UZERINDE tam dogrulama YAPILAMADI.
+- `axctl status` Debian 12'de hata veriyordu -> cozuldu, 100/0/0.
+- Pardus'un TAM paket deposu kurulamiyordu (ISO `dists/yirmibes-deb/main`
+  = Debian, gercek Pardus paketleri `contrib` altinda ve ISO'da bos)
+  -> resmi depodan (`bilgemdepo.pardus.org.tr`) paket alarak cozuldu;
+  Pardus 25.2 UZERINDE tam dogrulama YAPILDI.
 ## Dogrulama: Ubuntu 24.04 + Debian 12 + GERCEx Pardus 25.2
 
 Uc dagitimda ayni kapsamli test paketi (`tests/deep_verify.sh`,
-9 bolum / 99 denetim) YESIL. Ana makinede AXlinux hic
+10 bolum / 100 denetim) YESIL. Ana makinede AXlinux hic
 calistirilmadi; her sey sanal makinede yapildi.
 
 | Dagitim | Yerel+Go test | Kapsamli test | bpf | audit |
 |---------|---------------|---------------|-----|-------|
 | Ubuntu 24.04.5 | 125 gecen | 99/0/0 | 5/5 | saglikli |
+(kaynak kurulumla; paket dogrulamasi 1.0.0 bolumunde)
 | Debian 12 (bookworm) | 125 gecen | 99/0/0 | 5/5 | saglikli |
+(kaynak kurulumla; paket dogrulamasi 1.0.0 bolumunde)
 | Pardus 25.2 (yirmibes) | 125 gecen | 99/0/0 | 5/5 | saglikli |
+(kaynak kurulumla; paket dogrulamasi 1.0.0 bolumunde)
 
 Pardus, resmi arsivden kuruldu: bilgemdepo.pardus.org.tr/pardus
 (Origin: Pardus, imzali). base-files 13.8+pardus25.2.1 ->

@@ -22,12 +22,12 @@ const (
 
 // Writer appends audit events to JSONL files with rotation.
 type Writer struct {
-	mu         sync.Mutex
-	dir        string
-	file       *os.File
-	fileSize   int64
-	fileDate   string
-	compress   bool
+	mu       sync.Mutex
+	dir      string
+	file     *os.File
+	fileSize int64
+	fileDate string
+	compress bool
 }
 
 // NewWriter creates a writer that stores logs in the given directory.

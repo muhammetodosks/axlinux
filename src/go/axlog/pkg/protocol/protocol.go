@@ -29,10 +29,10 @@ type AuditEvent struct {
 
 // Filter holds query parameters for reading audit events.
 type Filter struct {
-	Action   string
-	Effect   string
-	Subject  string
-	Since    time.Time
-	Limit    int
-	Tail     bool
+	Action  string
+	Effect  string
+	Subject string
+	Since   time.Time
+	Limit   int
+	Tail    bool
 }

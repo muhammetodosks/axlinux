@@ -720,3 +720,105 @@ func TestPythonUnimplementedListMatchesGo(t *testing.T) {
 		}
 	}
 }
+
+// bpfActionNames parses src/bpf/axbpf.h, the kernel-side source of truth.
+//
+// The BPF header, the Go daemon and the Python CLI each carry their own
+// copy of the action numbering. TestPythonActionNumbersMatchGo only
+// compares Python against Go, so the header was free to drift: moving
+// ACTION_NET_ACCEPT from 8 to 99 in axbpf.h left every test green while
+// the kernel labelled events with a number no userspace component knew
+// about. This test closes that third gap.
+func bpfActionNames(t *testing.T) map[int]string {
+	t.Helper()
+	data, err := os.ReadFile(repoFile(t, "src/bpf/axbpf.h"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ACTION_FILE_READ 1  ->  "file.read"
+	re := regexp.MustCompile(
+		`(?m)^#define\s+ACTION_([A-Z_]+)\s+([0-9]+)`)
+	names := map[int]string{}
+	for _, m := range re.FindAllStringSubmatch(string(data), -1) {
+		num, err := strconv.Atoi(m[2])
+		if err != nil {
+			t.Fatalf("axbpf.h: %q sayiya cevrilemedi: %v", m[2], err)
+		}
+		names[num] = actionFromDefine(m[1])
+	}
+	if len(names) == 0 {
+		t.Fatal("axbpf.h icinde ACTION_ tanimi bulunamadi; " +
+			"sozlesme denetimi calismiyor")
+	}
+	return names
+}
+
+// actionFromDefine maps ACTION_FILE_READ -> file.read,
+// ACTION_PROCESS_EXEC -> process.exec.
+func actionFromDefine(def string) string {
+	switch def {
+	case "FILE_READ":
+		return "file.read"
+	case "FILE_WRITE":
+		return "file.write"
+	case "FILE_EXEC":
+		return "file.execute"
+	case "FILE_DELETE":
+		return "file.delete"
+	case "FILE_CREATE":
+		return "file.create"
+	case "NET_CONNECT":
+		return "net.connect"
+	case "NET_BIND":
+		return "net.bind"
+	case "NET_ACCEPT":
+		return "net.accept"
+	case "PROCESS_EXEC":
+		return "process.exec"
+	}
+	return def
+}
+
+// TestBpfHeaderActionNumbersMatchGo checks the kernel-side constants.
+func TestBpfHeaderActionNumbersMatchGo(t *testing.T) {
+	bpf := bpfActionNames(t)
+	goNames := goActionNames()
+
+	for num, bpfName := range bpf {
+		goName, ok := goNames[num]
+		if !ok {
+			t.Errorf("axbpf.h: %d numarali eylem var (%q) ama Go'da "+
+				"yok; kernel bunu uretebilir, userspace okuyamaz",
+				num, bpfName)
+			continue
+		}
+		if bpfName != goName {
+			t.Errorf("axbpf.h ile Go ayrilmis: %d -> bpf=%q go=%q. "+
+				"Kernel audit kaydini Go'nun tanimadigi bir eylem "+
+				"adiyle yazar", num, bpfName, goName)
+		}
+	}
+	for num := range goNames {
+		if _, ok := bpf[num]; !ok {
+			t.Errorf("Go'da %d var ama axbpf.h'de yok; Go bunu "+
+				"okuyor, kernel uretemiyor", num)
+		}
+	}
+}
+
+// TestBpfHeaderActionNumbersMatchPython checks the kernel against the CLI.
+func TestBpfHeaderActionNumbersMatchPython(t *testing.T) {
+	bpf := bpfActionNames(t)
+	py := pythonActionNames(t)
+	for num, bpfName := range bpf {
+		pyName, ok := py[num]
+		if !ok {
+			t.Errorf("axbpf.h: %d (%q) formatter.py'de yok", num, bpfName)
+			continue
+		}
+		if pyName != bpfName {
+			t.Errorf("axbpf.h ile Python ayrilmis: %d -> bpf=%q py=%q",
+				num, bpfName, pyName)
+		}
+	}
+}

@@ -74,6 +74,69 @@ class TestVersionConsistency(unittest.TestCase):
                              f"DAGITIM.md '{word}' diyor; 1.0.0 kurulmus "
                              f"bir surum icin yaniltici")
 
+    def test_changelog_has_current_version(self):
+        """CHANGELOG guncel surumu icermeli.
+
+        Surum 1.0.0 oldu ama CHANGELOG.md en ustte 0.1.0 ile
+        basliyordu; kullanici ne degistigini okuyamiyordu.
+        Degisiklik gunlugu teslimin parcasidir.
+        """
+        declared = self._versions()["src/python/axctl/__init__.py"]
+        log = read("CHANGELOG.md")
+        # En ust surum basligi guncel olmali (yeni surum en ustte)
+        m = re.search(r"(?m)^##\s+v?([\d.]+)", log)
+        self.assertIsNotNone(m, "CHANGELOG.md surum basligi yok")
+        self.assertEqual(
+            m.group(1), declared,
+            "CHANGELOG.md'nin en ust surumu guncel degil; degisiklik "
+            "gunlugu guncel surumu icermeli")
+
+    def test_changelog_newest_version_is_not_below_declared(self):
+        """Eski surumun altinda kalmis "acik kalan isler" iddialari
+        yanilticidir."""
+        declared = self._versions()["src/python/axctl/__init__.py"]
+        log = read("CHANGELOG.md")
+        for m in re.finditer(r"(?m)^##\s+v?([\d.]+)", log):
+            self.assertLessEqual(
+                parse_version(m.group(1)), parse_version(declared),
+                f"CHANGELOG.md'de {declared} surumunden YUKSEK "
+                f"surumlu bolum var: {m.group(1)}")
+
+    def test_changelog_documents_package(self):
+        """1.0.0'in ana teslimi paketleme; gunlugde olmali."""
+        log = read("CHANGELOG.md")
+        self.assertIn("make package", log,
+                      "CHANGELOG.md paketleme komutunu icermeli")
+        self.assertIn("dpkg -i", log,
+                      "CHANGELOG.md kurulum komutunu icermeli")
+        self.assertIn("100/0/0", log,
+                      "CHANGELOG.md dogrulama sonucunu icermeli")
+
+    def test_no_stale_claims(self):
+        """Cozulmus isler "acik kalan" olarak durmamali.
+
+        CHANGELOG "Pardus 25.2 UZERINDE tam dogrulama YAPILAMADI"
+        diyordu; gercek Pardus'ta 100/0/0 alindi.
+        """
+        log = read("CHANGELOG.md").upper()
+        # Bu cumleler cozuldu; guncel bolum haric gorunmemeli
+        for stale in ("YAPILAMADI",):
+            for line in log.splitlines():
+                if stale in line and "1.0.0" not in line:
+                    # 0.1.x tarihsel bolumlerinde olabilir, ama
+                    # "COZULDU" isareti olmali
+                    idx = log.find(line)
+                    ctx = log[max(0, idx - 400):idx + 400]
+                    self.assertTrue(
+                        "COZULDU" in ctx or "COZULDU" in line,
+                        f"CHANGELOG.md bayat iddia iceriyor: {line.strip()[:60]}")
+
+
+
+def parse_version(v):
+    """'1.2.3' -> (1, 2, 3) karsilastirma icin."""
+    return tuple(int(x) for x in v.split("."))
+
 
 if __name__ == "__main__":
     unittest.main()

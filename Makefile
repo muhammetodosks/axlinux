@@ -280,7 +280,14 @@ package: all
 # Once 13 dosya bicimsizdi ve kimse fark etmedi; bicim tutarliligi
 # bir teslim kriteridir, tavsiye degil.
 fmt-check:
-	@out=$$(cd src/go/axdaemon && gofmt -l .); \
+	@# IKI modul var: axdaemon VE axlog. Once yalnizca axdaemon
+	@# kontrol ediliyordu; axlog'daki bicim ihlalleri sessizce
+	@# geciyordu (4 dosya). Iki modulun toplami kontrol ediliyor.
+	@# Her modul icin AYRI alt kabuk: tek kabukta ikinci
+	@# "cd $(GO_LOG)" goreli yoldan calisiyor ve ilk cd'den
+	@# sonra hedef bulunamiyor ("No such file or directory").
+	@out=$$( (cd $(GO_DAEMON) && gofmt -l .) ; \
+	        (cd $(GO_LOG)    && gofmt -l .) ); \
 	if [ -n "$$out" ]; then \
 		echo "HATA: gofmt'a uymayan dosyalar:"; echo "$$out"; exit 1; \
 	fi
