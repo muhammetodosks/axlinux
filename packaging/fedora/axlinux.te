@@ -264,6 +264,24 @@ allow axlinux_daemon_t self:process { fork sigchld sigkill signull };
 # Yani kullanici "audit calisiyor" goruyordu ama HICBIR KAYIT
 # DISA YAZILMIYORDU. Kurulum "audit soketi yok" deyip basarisiz
 # OLMUYORDU cunku soket DILECE vardi.
+# SOKETLERIN GERCEK TIPI axlinux_var_run_t'DIR.
+#
+# /run/axlinux(/.*)? fcontext kurali AYNI tipli tum cocuklari
+# kapsar; soket de dahil:
+#   ls -Z /run/axlinux/axlog.sock
+#     system_u:object_r:axlinux_var_run_t:s0
+#
+# SELinux connectto iznini KARSINININ soket tipine gore dener.
+# Ilk denemede kurali "axlinux_log_t:unix_stream_socket" icin
+# yazdik ve calismadi; gercek tip axlinux_var_run_t:
+#   audit_notice: axlog'a baglanilamadi:
+#     dial unix /run/axlinux/axlog.sock: connect: permission denied
+#   audit_send_failures: her olayda artiyor
+#   /var/log/axlinux/audit-*.jsonl -> 0 bayt
+#
+# Yani enforcement karar veriyor, KANIT KAYDEDILMIYORDU.
+allow axlinux_daemon_t axlinux_var_run_t:unix_stream_socket connectto;
+# Dosya dogru etiketlenirse (gelecekte) bu da gecerli olur.
 allow axlinux_daemon_t axlinux_log_t:unix_stream_socket connectto;
 
 ########################################

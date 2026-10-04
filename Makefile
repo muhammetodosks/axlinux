@@ -368,9 +368,18 @@ install: all
 	@install -d $(LIBDIR)/axctl
 	@install -m 0644 $(PY_DIR)/axctl/*.py  $(LIBDIR)/axctl/
 	@install -m 0644 $(PY_DIR)/requirements.txt $(PY_DIR)/pyproject.toml $(LIBDIR)/axctl/
-	@printf '#!/usr/bin/env python3\nimport sys, os\nsys.path.insert(0, "%s")\nfrom axctl.cli import main\nsys.exit(main())\n' \
-		"$(LIBDIR)" > $(BINDIR)/axctl
-	@chmod 0755 $(BINDIR)/axctl
+	@# axctl: TEK dogruluk kaynagi packaging/axctl.
+	@#
+	@# Burada ikinci bir sarmalayici uretiliyordu ve iki yol
+	@# ayriydi:
+	@#   RPM          packaging/axctl  (sh + python3 -c)
+	@#   make install  printf ile uretilen (python betigi)
+	@#
+	@# Sonuc: "hangi sarmalayici kurulu?" sorusunun cevabi
+	@# kurulum yoluna bagliydi. Ayrica python3 -c yonteminde
+	@# sys.argv[0] = "-c" oldugu icin click "Usage: -c [OPTIONS]"
+	@# yaziyordu.
+	@install -m 0755 packaging/axctl $(BINDIR)/axctl
 	@install -d $(DESTDIR)/usr/share/doc/axlinux/docs
 	@install -m 0644 docs/*.md              $(DESTDIR)/usr/share/doc/axlinux/docs/ 2>/dev/null || true
 	@install -d $(SYSCONF)
