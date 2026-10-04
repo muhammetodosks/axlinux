@@ -45,22 +45,59 @@ class TestDocNumbers(unittest.TestCase):
     def test_declared_counts_are_not_ahead_of_reality(self):
         """Belge gercekten COK test saymiyor olmali.
 
-        Belge 900 test dese "bayat" sayilamaz ama YANLIS olur;
+        Belge 900 test dese "bayat" sayilmaz ama YANLIS olur;
         bu yuzden asagi sinir koyulur.
+
+        Sayim pytest ciktisindan OKUNMAZDI. Once
+        `python3 -m pytest --collect-only` cagriliyordu; Fedora'da
+        bu PATLADI:
+
+            /usr/bin/python3: No module named pytest
+            AssertionError: pytest test sayimini vermedi
+
+        Sebep: `make test` unittest kullanir
+        ("Ran 175 tests"), pytest degil. Ubuntu'da pytest
+        tesadufen kurulu oldugu icin test gecuyordu; Fedora'da
+        kurulu degil. Yani test, calistigi kosula bagliydi.
+
+        Artik sayim AST ile yapiliyor: test sayisi pytest surumune
+        ve kurulu olup olmamaya bagli degil.
         """
-        # pytest -q --collect-only ciktisi "N tests collected"
-        out = subprocess.run(
-            ["python3", "-m", "pytest", str(R / "tests"), "-q",
-             "--collect-only"],
-            capture_output=True, text=True, cwd=str(R)).stdout
-        m = re.search(r"(\d+) tests? collected", out)
-        self.assertIsNotNone(m, "pytest test sayimini vermedi")
-        real = int(m.group(1))
+        real = self._count_tests()
+        self.assertGreater(real, 100,
+                           f"test sayimi anormal: {real}")
         for doc in CURRENT_DOCS:
             for claim in re.findall(r"(\d+) test\b", self.read(doc)):
                 self.assertLessEqual(
                     int(claim), real,
                     f"{doc} {claim} test diyor ama gercekte {real} var")
+
+    def _count_tests(self):
+        """Test sayisini AST ile sayar (runner bagimsiz).
+
+        unittest'ta calisan testler: TestCase siniflarinda
+        test_ ile baslayan metotlar, ayrica pytest fonksiyonlari.
+        """
+        import ast
+        n = 0
+        for f in sorted((R / "tests").glob("test_*.py")):
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef):
+                    n += sum(1 for b in node.body
+                             if isinstance(b, (ast.FunctionDef,
+                                               ast.AsyncFunctionDef))
+                             and b.name.startswith("test"))
+                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.name.startswith("test_"):
+                        n += 1
+        return n
+
+    def test_test_count_is_stable(self):
+        """AST sayimi gercekten testleri sayiyor mu."""
+        real = self._count_tests()
+        self.assertGreater(real, 100,
+                           "AST tabanli sayim testleri gormuyor")
 
     def test_distribution_doc_claims_match_measured_result(self):
         """DAGITIM.md her dagitim icin 100/0/0 iddia ediyor.

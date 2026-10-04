@@ -1,0 +1,16 @@
+# AXlinux dosya baglamlari.
+#
+# rpm kurulumundan SONRA restorecon calistirilir; bu olmadan
+# dosyalar var olan bir baglama ile kalir ve SELinux erisimi
+# reddeder.
+
+# Arayuz ve ornek politikalar
+/etc/axlinux(/.*)?			gen_context(system_u:object_r:axlinux_etc_t,s0)
+
+# Derlenmis eBPF nesnesi - ayri bir baglam, cunku yalnizca
+# daemon okumali
+/usr/lib/axlinux/axbpf\.o		gen_context(system_u:object_r:axlinux_axbpf_t,s0)
+
+# Servisler
+/usr/lib/systemd/system/axdaemon\.service	gen_context(system_u:object_r:systemd_unit_file_t,s0)
+/usr/lib/systemd/system/axlog\.service		gen_context(system_u:object_r:systemd_unit_file_t,s0)

@@ -1,0 +1,19 @@
+########################################
+## <summary>
+## AXlinux politikasina erisim arayuzu.
+## </summary>
+
+########################################
+## <desc>
+## Politika modulunu sisteme kurar (semodule -i).
+## Diger moduller bu arayuzu kullanarak AXlinux alanina
+## erisim isteyebilir.
+## </desc>
+## <param name="domain">erisim isteyen alan</param>
+interface(`axlinux_read_axbpf',`
+	gen_require(`
+		type axlinux_axbpf_t;
+	')
+
+	allow $1 axlinux_axbpf_t:file { getattr open read };
+')

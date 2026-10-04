@@ -1,0 +1,237 @@
+policy_module(axlinux, 1.0.0)
+
+########################################
+#
+# Declarations
+#
+# NOT: Bu modul Fedora'nin bekledigi policy_module() bicimini
+# kullanir (/usr/share/selinux/devel/example.te).
+#
+# OLMADAN ne olur:
+#   ps -eZ | grep axdaemon
+#     system_u:system_r:unconfined_service_t:s0  axdaemon
+# unconfined_service_t sistemi hic kisitlamaz. Fedora'nin
+# SERTLASTIRILMIS profilinde (CIS benchmark; unconfined modulu
+# devre disi) bu alan kullanilamaz ve axdaemon CALISMAZ.
+# Bu modul daemon'u ayri bir alana (axlinux_daemon_t) tasir ve
+# bpf() yetkisini yalnizca o alana verir.
+#
+# Root kullanici bile init_t alaninda BPF cagiramaz; yetki
+# yetenek (capability) degil ALAN (domain) meselesidir.
+
+# Daemonun kendi dosya tipleri
+#
+# ONEMLI: makrolar (logging_log_file, files_pid_file,
+# files_config_file) tipin ONCEDEN bildirilmesini ister.
+# "unknown type axlinux_var_log_t" hatasi buradan geliyordu.
+# init_daemon_domain() IKI arguman alir:
+#     init_daemon_domain(domain, exec_tip)
+# Once tek argumanla cagrildi:
+#     init_daemon_domain(axlinux_daemon_t)
+# ve soyle bir hata verdi:
+#     syntax error at token ';'
+# ($2 bos kaliyor ve gen_require blogu bozuluyor).
+# Ikinci arguman OZEL CEKIRDEK yurutucusudur; modul onu
+# bildirmez. Tip ayrica bildirilmelidir.
+type axlinux_daemon_t;
+type axlinux_daemon_exec_t;
+type axlinux_log_t;
+type axlinux_log_exec_t;
+
+type axlinux_var_lib_t;
+type axlinux_var_log_t;
+type axlinux_var_run_t;
+type axlinux_etc_t;
+type axlinux_axbpf_t;
+
+########################################
+#
+# Policy
+#
+
+# --- Harici turler ---
+#
+# Modulun kullandigi ama KENDISI bildirmediigi turler
+# gen_require ile isaretlenmeli. Yoksa checkmodule
+# "unknown type kernel_t" diyor ve modul derlenmiyor.
+#
+# DIKKAT: bu blok m4 ile islenir; ICINE '#' YORUMU
+# YAZILAMAZ ("unrecognized character at token").
+# Acipalamalar buraya degil, disariya.
+#
+# security_t: /sys/kernel/security/* (lsm listesi dahil).
+#   ls -Zd /sys/kernel/security/lsm ->
+#     system_u:object_r:security_t:s0
+# securityfs_t DIYE BIR TIP YOK bu sistemde.
+#
+# bpf_t: /sys/fs/bpf'nin GERCEK tipi.
+#   Dogrulama: ls -Zd /sys/fs/bpf ->
+#     system_u:object_r:bpf_t:s0
+# Once sysfs_bpf_t kullanildi; seinfo ile VAR gorunuyor
+# ama Fedora'nin moduler politikasinda modullere acik degil
+# ve modul kurulamiyordu:
+#   Failed to resolve typeattributeset at cil:17
+#   (typeattributeset cil_gen_require sysfs_bpf_t)
+gen_require(`
+	type kernel_t;
+	type port_t;
+	type node_t;
+	type bpf_t;
+	type security_t;
+')
+
+
+# --- Dosya baglamlari ---
+#
+# Refpolicy makrolari DEYIM DEGILDIR; noktali virgul KULLANILMAZ.
+# "init_daemon_domain(axlinux_daemon_t);" -> "syntax error at
+# token ';'". Ornek: /usr/share/selinux/devel/example.te
+logging_log_file(axlinux_var_log_t)
+files_pid_file(axlinux_var_run_t)
+files_config_file(axlinux_etc_t)
+
+# systemd tarafindan baslatilan servisler icin init_system_domain.
+#
+# init_daemon_domain() YETERSIZ: initrc_domain'den gecis kurar
+# (eski init betikleri icin). systemd ise init_t uzerinden
+# baslatir ve gecis olmadigi icin axdaemon init_t'de kaldi:
+#
+#   ps -eZ | grep axdaemon
+#     system_u:system_r:init_t:s0
+#
+# Sonuc: politika AXlinux'e bpf() izni VERDI ama daemon o
+# alanda degildi, ve /usr/lib/axlinux/axbpf.o artik
+# axlinux_axbpf_t etiketli oldugu icin okunamadi:
+#
+#   ebpf collection spec yuklenemedi:
+#     open /usr/lib/axlinux/axbpf.o: permission denied
+#
+# Yani SELinux korumasi calisirken enforcement KIRILDI. Dogru
+# cozum alan gecisini kurmak.
+init_system_domain(axlinux_daemon_t, axlinux_daemon_exec_t)
+init_system_domain(axlinux_log_t, axlinux_log_exec_t)
+
+# init_system_domain() exec tiplerini otomatik olarak file_type
+# NITELIGIYLE isaretlemiyor. Bu olmadan semanage fcontext
+# reddediyor:
+#   ValueError: Type axlinux_log_exec_t is invalid,
+#               must be a file or device type
+# ve dosya etiketlenmedigi icin alan gecisi calismiyor.
+files_type(axlinux_daemon_exec_t)
+files_type(axlinux_log_exec_t)
+
+# axbpf.o bir VERI dosyasidir (calistirilabilir degil) ama
+# file_contexts'ta kullanilacaksa file_type NITELIGI tasimali.
+# Bu olmadan modul kurulamiyor:
+#   Failed to resolve typeattributeset statement at cil:17
+#   ValueError: Type axlinux_axbpf_t is invalid, must be a file
+#               or device type
+# semanage fcontext bu hatayi veriyor cunku tip hic dosya tipi
+# degil.
+files_type(axlinux_axbpf_t)
+
+# var_lib de dosya tipi olmali. Yoksa semanage reddediyor:
+#   ValueError: Type axlinux_var_lib_t is invalid,
+#               must be a file or device type
+files_type(axlinux_var_lib_t)
+
+# --- Beyin kancalari (BPF LSM) ---
+#
+# bpf() syscall'unun SELinux izni capability2 SINIFINDA ve
+# "bpf" izniyle verilir. Once "kernel_t:system bpf" yazilmis;
+# boyle bir IZIN YOK:
+#     permission bpf is not defined for class system
+# Gerekli izinler sistemin gercek politikasindan okundu
+# (sesearch -A -s init_t -c capability2):
+#     capability2 { audit_read block_suspend bpf checkpoint_restore
+#                   epolwakeup perfmon syslog wake_alarm }
+# Yani bpf ve perfmon capability2'de.
+#
+# memlock de YOK (eski politikalarda vardi).
+# CAP_SYS_ADMIN capability sinifinda.
+allow axlinux_daemon_t self:capability2 { bpf perfmon };
+allow axlinux_daemon_t self:capability { sys_admin sys_resource net_admin };
+
+# --- EN ONEMLI KURAL ---
+#
+# bpf() syscall'u SELinux tarafinda IKI AYRI YERDEN denetlenir:
+#
+#   1) capability2 bpf  -> yetenek kontrolu
+#   2) self:bpf SINIFI  -> islem kontrolu
+#
+# Sadece capability2 verilmisken:
+#   ebpf collection olusturulamadi: map deny_map:
+#     map create: permission denied
+#
+# Politika sinifi:
+#   class bpf { map_create map_read map_write prog_load prog_run }
+#
+# 5 kancayi baglamak icin bu sinifin IZINLERI SART. 5/5 kanca
+# olmadan enforcement YOK.
+allow axlinux_daemon_t self:bpf { map_create map_read map_write prog_load prog_run };
+
+# LSM zincirini okuyabilmeli. Bu olmadan daemon "bpf LSM YOK"
+# diye enforcement'i kapatir ve sessizce RPC'ye duser.
+allow axlinux_daemon_t security_t:file { getattr open read };
+allow axlinux_daemon_t security_t:dir { getattr open read search };
+
+# Kernel'e modul istegi / modprobe (BPF LSM zincirinde
+# gerekmiyor ama systemd birimine gore tutulur)
+allow axlinux_daemon_t kernel_t:system { module_request };
+
+# bpffs (bpf_t) uzerinde harita olusturma/guncelleme.
+# Politika buraya yaziyor: /sys/fs/bpf/axlinux/...
+allow axlinux_daemon_t bpf_t:dir { add_name remove_name write getattr search open read };
+allow axlinux_daemon_t bpf_t:file { create open read write getattr setattr unlink };
+allow axlinux_daemon_t bpf_t:lnk_file { create read getattr };
+
+# audit perf buffer. Gercek izinler: cpu kernel open read
+# tracepoint write (create/getattr YOK).
+allow axlinux_daemon_t self:perf_event { open read write cpu kernel tracepoint };
+
+# --- axlog (audit yazici) ---
+# axlog audit kayitlarini diske yazar; enforcement KISITLAMAZ.
+allow axlinux_log_t self:capability { sys_admin };
+allow axlinux_log_t axlinux_var_log_t:dir { add_name remove_name getattr open read search write };
+allow axlinux_log_t axlinux_var_log_t:file { create open read write getattr setattr append unlink };
+allow axlinux_log_t axlinux_var_lib_t:dir { getattr open read search };
+allow axlinux_log_t axlinux_var_lib_t:file { getattr open read };
+allow axlinux_log_t axlinux_var_run_t:dir { getattr open read search write add_name remove_name };
+
+# --- Ag ---
+# socket_bind / socket_connect kancalari icin
+allow axlinux_daemon_t self:tcp_socket { create bind connect listen accept getattr getopt setopt read write shutdown };
+allow axlinux_daemon_t self:udp_socket { create bind connect getattr getopt setopt read write };
+allow axlinux_daemon_t self:unix_stream_socket { create bind connect listen accept getattr getopt setopt read write };
+allow axlinux_daemon_t self:unix_dgram_socket { create bind connect getattr getopt setopt read write };
+allow axlinux_daemon_t port_t:tcp_socket name_bind;
+allow axlinux_daemon_t node_t:tcp_socket node_bind;
+
+# --- Dosya sistemi ---
+# Politika dosyalarini okuma, audit/ebpf haritalari yazma
+files_read_etc_files(axlinux_daemon_t)
+files_manage_var_lib_dirs(axlinux_daemon_t)
+files_manage_var_lib_files(axlinux_daemon_t)
+manage_files_pattern(axlinux_daemon_t, axlinux_var_lib_t, axlinux_var_lib_t)
+manage_files_pattern(axlinux_daemon_t, axlinux_var_run_t, axlinux_var_run_t)
+
+# Soket izinleri ACIKCA verilir. manage_files_pattern() unix
+# soket dosyalarina (sock_file) create/bind IZNI VERMIYOR:
+#
+#   sunucu hatasi: socket dinleme hatasi:
+#     listen unix /run/axlinux/axdaemon.sock: bind: permission denied
+#
+# axdaemon kontrol/veri soketini, axlog audit soketini acar.
+# sock_file sinifinin izinleri: create getattr open write append
+# read setattr link unlink rename ioctl lock map.
+# bind/connect/listen/accept YOKTUR; onlar unix_stream_socket
+# NESNESINE aittir (yukarida self:unix_stream_socket izni var).
+allow axlinux_daemon_t axlinux_var_run_t:sock_file { create getattr open write append read setattr link unlink rename ioctl lock map };
+allow axlinux_log_t axlinux_var_run_t:sock_file { create getattr open write append read setattr link unlink rename ioctl lock map };
+manage_files_pattern(axlinux_daemon_t, axlinux_etc_t, axlinux_etc_t)
+
+# /usr/lib/axlinux/axbpf.o: yalnizca daemon okur
+allow axlinux_daemon_t axlinux_axbpf_t:file { getattr open read };
+allow axlinux_daemon_t axlinux_axbpf_t:dir { getattr open read search };
+
+allow axlinux_daemon_t self:process { fork sigchld sigkill signull };

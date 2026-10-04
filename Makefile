@@ -210,6 +210,38 @@ PKGARCH  := amd64
 STAGE    := $(CURDIR)/.pkg
 PKGFILE  := $(CURDIR)/../$(PKGNAME)_$(VERSION)_$(PKGARCH).deb
 
+# --- RPM (Fedora / RHEL / openSUSE) ---
+SELINUX_DIR = packaging/fedora
+
+rpm: all
+	@echo "== RPM: SELinux modulu =="
+	@$(MAKE) -C $(SELINUX_DIR) 2>/dev/null \
+	    || { echo "HATA: SELinux modulu derlenemedi."; \
+	         echo "  selinux-policy-devel kurulu degil mi?"; exit 1; }
+	@echo "== RPM: paket =="
+	@rm -rf .rpmbuild
+	@mkdir -p .rpmbuild/SOURCES
+	@# Kaynak arsivi: uretim dosyalarini da icermeli (spec
+	@# icinde make build cagriliyor)
+	@tar --exclude='.git' --exclude='__pycache__' \
+	    --exclude='.build' --exclude='.rpmbuild' \
+	    --exclude='*.pyc' --exclude='.rpm' \
+	    -czf .rpmbuild/SOURCES/axlinux-$(VERSION).tar.gz 	    --transform 's,^,axlinux-$(VERSION)/,' .
+	@rpmbuild --define "_topdir $(CURDIR)/.rpmbuild" \
+	    --define "_sourcedir $(CURDIR)/.rpmbuild/SOURCES" \
+	    --define "_build_id_links none" \
+	    -bb $(SELINUX_DIR)/axlinux.spec 2>&1 | tail -20
+	@RPM=$$(ls -t $(CURDIR)/.rpmbuild/RPMS/*/axlinux-*.rpm 2>/dev/null | head -1); \
+	 if [ -z "$$RPM" ]; then echo "HATA: RPM uretilemedi"; exit 1; fi; \
+	 cp "$$RPM" $(CURDIR)/../axlinux-$(VERSION)-1.x86_64.rpm; \
+	 echo "  uretildi: $(CURDIR)/../axlinux-$(VERSION)-1.x86_64.rpm"; \
+	 rpm -qip "$$RPM" | sed 's/^/  /'
+
+rpm-install: rpm
+	@echo "  kurulum: sudo dnf install -y ../axlinux-$(VERSION)-1.x86_64.rpm"
+
+.PHONY: rpm rpm-install
+
 package: all
 	@echo "== Paketleme: $(PKGNAME) $(VERSION) =="
 	@rm -rf $(STAGE)

@@ -17,10 +17,26 @@ ConditionPathIsMountPoint=/sys/fs/bpf
 
 [Service]
 Type=simple
-# ExecStartPre [Service] bolumunde olmak ZORUNDA. [Unit] altinda
-# yazilirsa systemd "Unknown key name 'ExecStartPre'" diye sessizce
-# YOK SAYAR; kontrol hicbir zaman calismaz.
-ExecStartPre=/bin/sh -c 'test -d /sys/fs/bpf || { echo "HATA: /sys/fs/bpf bagli degil; BPF LSM calismaz." >&2; exit 1; }'
+# ExecStartPre KABUKLA YAZILMAZ.
+#
+# systemd, ExecStartPre islemini servisin AYNI SELinux alaninda
+# calistirir. Fedora'da AXlinux kendi alaninda calisir
+# (axlinux_daemon_t) ve bu alan /bin/sh calistirmaya izin
+# VERMEZ. Onceki surumde:
+#
+#   ExecStartPre=/bin/sh -c 'test -d /sys/fs/bpf || ...'
+#
+# Fedora SELinux enforcing'de servis HIC ACILAMADI:
+#   Failed to execute /bin/sh: Operation not permitted
+#   Failed at step EXEC spawning /bin/sh: Operation not permitted
+#   Main process exited, code=exited, status=203/EXEC
+#
+# Ayni kontrol systemd seviyesinde YAPILIR; systemd bu kosulu
+# servisin disinda degerlendirir, hicbir alana girmez:
+#   ConditionPathIsMountPoint=/sys/fs/bpf   ([Unit] bolumunde)
+#
+# Ayrica daemon kendi icinde de dogrular ve "politika UYGULANAMAZ"
+# diye acikca uyarir; kullanici bos kurulum gormez.
 ExecStart=/usr/local/bin/axdaemon --socket /run/axlinux/axdaemon.sock
 Restart=on-failure
 RestartSec=3

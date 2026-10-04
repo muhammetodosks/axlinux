@@ -218,7 +218,7 @@ summary() {
     hr
 }
 
-TOTAL=10
+TOTAL=11
 # sudo ile yeniden calistirildiginda banner iki kez basilmasin.
 if [ "${AXLINUX_RESPAWNED:-0}" != "1" ]; then
     banner "$APP $VERSION - Tek Komut Kurulumu"
@@ -563,7 +563,63 @@ done
 mkdir -p "$LOGDIR" "$STATEDIR" "$RUNDIR"
 chmod 0750 "$LOGDIR" 2>/dev/null
 
-# ------------------------------------------------------------------ 7 servisler
+# ------------------------------------------------------------------ 7 selinux
+# SELinux KAPALI sistemlerde tamamen atlanir (Debian/Ubuntu/Pardus).
+# Fedora'da ZORUNLUDUR: SELinux enforcing ile gelir ve AXlinux
+# kendi alaninda (axlinux_daemon_t) calismalidir. Alan disinda
+# (unconfined_service_t) calisiyorsa SELinux onu kisitlamaz ve
+# Fedora'nin sertlastirilmis profilinde AXlinux calismaz.
+#
+# Bu adim olmadan once tespit edilen gercek hata:
+#   ps -eZ | grep axdaemon
+#     system_u:system_r:unconfined_service_t:s0
+# Yani "calisiyor" gorunuyordu ama SELinux korumasi YOKTU.
+begin "SELinux"
+if ! command -v getenforce >/dev/null 2>&1; then
+    ok_step "SELinux sistemde yok, atlandi"
+else
+    _se="$(getenforce 2>/dev/null || echo Bilinmiyor)"
+    ok_step "SELinux: $_se"
+    _sxs="$SRC/packaging/fedora"
+    _sxr="/usr/local/share/axlinux/selinux-setup.sh"
+
+    # Politika modulunu derle (yalniz SELinux olan sistemde)
+    if [ ! -f /usr/share/selinux/packages/axlinux.pp ]; then
+        if [ -f "$_sxs/Makefile" ] && [ -f /usr/share/selinux/devel/Makefile ]; then
+            if make -C "$_sxs" >/dev/null 2>&1 && [ -f "$_sxs/axlinux.pp" ]; then
+                install -d /usr/share/selinux/packages
+                install -m 0644 "$_sxs/axlinux.pp" /usr/share/selinux/packages/
+                ok "SELinux modulu derlendi"
+            else
+                warn_step "SELinux modulu derlenemedi (selinux-policy-devel eksik olabilir)"
+            fi
+        else
+            warn_step "SELinux gelistirme dosyalari yok; modul kurulamadi"
+        fi
+    fi
+
+    # SELinux drop-in: NoNewPrivileges kendi alana gecisini
+    # engelliyordu (status=203/EXEC). Gerekce 10-selinux.conf.
+    if [ -d "$_sxs/axdaemon.service.d" ]; then
+        for _s in axdaemon axlog; do
+            install -d "/usr/lib/systemd/system/$_s.service.d"
+            install -m 0644 "$_sxs/$_s.service.d/10-selinux.conf" \
+                "/usr/lib/systemd/system/$_s.service.d/"
+        done
+        ok "SELinux systemd drop-in kuruldu"
+    fi
+
+    # Politika + dosya baglamlari (rpm %post ile ayni betik)
+    install -d "$(dirname "$_sxr")"
+    install -m 0755 "$_sxs/selinux-setup.sh" "$_sxr"
+    if "$_sxr"; then
+        ok "SELinux alani ve dosya baglamlari hazir"
+    else
+        err "SELinux kurulumu basarisiz; enforcement etkisiz"
+    fi
+fi
+
+# ------------------------------------------------------------------ 8 servisler
 begin "Servisler"
 if ! has systemctl; then
     warn_step "systemctl yok, servis baslatilamadi"
