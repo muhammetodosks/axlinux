@@ -48,7 +48,7 @@ int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 	if (ax_protected(key->comm))
 		return 0;
 
-	val = ax_lookup(key);
+	val = ax_lookup_wild(key);
 	int denied = val && val->effect == EFFECT_DENY;
 
 	event->pid = bpf_get_current_pid_tgid() >> 32;

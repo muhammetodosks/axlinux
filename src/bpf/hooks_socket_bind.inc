@@ -50,7 +50,7 @@ int BPF_PROG(ax_socket_bind, struct socket *sock,
 			ax_set_port(key->path[0], hport);
 	}
 
-	val = ax_lookup(key);
+	val = ax_lookup_wild(key);
 	int denied = val && val->effect == EFFECT_DENY;
 
 	event->pid = bpf_get_current_pid_tgid() >> 32;

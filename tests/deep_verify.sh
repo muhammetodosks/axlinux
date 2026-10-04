@@ -707,7 +707,42 @@ rules:
     action: file.read
     effect: deny
 YAML
-    rc_is "joker subject" 0 axctl policy check -f /tmp/ax-star.yaml
+      # Joker subject yalnizca DERLENMEYI degil GERCEKTEN
+      # UYGULANMASINI da dogrulamalidir.
+      #
+      # Once sadece "policy check" rc=0 kontrol ediliyordu. Oysa
+      # joker + object kombinasyonu HICBIR SEYI UYGULAMIYORDU:
+      #   - kural haritaya yaziliyordu (deny_map kayit: 1)
+      #   - policy check gecidi
+      #   - reload "basarili" diyordu
+      #   - ama dosya OKUNUYORDU
+      #
+      # Sebep: Go tarafi joker kurali comm="*" olarak yaziyor,
+      # BPF tarafi anahtari gercek surec adiyle ("curl")
+      # dolduruyor. Tam eslesme hicbir zaman bulunamadi ve
+      # sonuc SESSIZCE gecildi.
+      #
+      # Duzeltme: ax_lookup_wild() - tam eslesme bulunamazsa
+      # comm="*" ile bir kez daha aranir.
+      rc_is "joker subject derleniyor" 0 \
+          axctl policy check -f /tmp/ax-star.yaml
+      apply_policy /tmp/ax-star.yaml
+      sleep 1
+      if [ "$(curl -s file:///etc/ax-secret >/dev/null 2>&1; echo $?)" != "0" ]; then
+          ok "joker subject GERCEKTEN uygulandi (curl)"
+      else
+          fail "joker subject uygulanmadi (curl); haritada var ama etkisiz"
+      fi
+      if [ "$(cat /etc/ax-secret >/dev/null 2>&1; echo $?)" != "0" ]; then
+          ok "joker subject GERCEKTEN uygulandi (cat)"
+      else
+          fail "joker subject uygulanmadi (cat)"
+      fi
+      if cat /etc/hostname >/dev/null 2>&1; then
+          ok "joker diger dosyalari etkilemiyor"
+      else
+          fail "joker kurali beklenmeyen sekilde genis kapsamli"
+      fi
     # surec bazli (yolsuz) kural
     cat >/tmp/ax-proc.yaml <<'YAML'
 version: 1

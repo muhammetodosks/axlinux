@@ -540,6 +540,64 @@ static __always_inline struct policy_value *ax_lookup(struct policy_key *key)
 	return NULL;
 }
 
+/* subject: "*" (JOKER) DESTEGI.
+ *
+ * Go tarafi joker kurali haritaya comm = "*" olarak yazar.
+ * BPF tarafi ise anahtari gercek surec adiyle doldurur
+ * ("curl", "cat", "python3"). Bu yuzden joker kural HICBIR
+ * ZAMAN eslesmiyordu:
+ *
+ *   subject: "*"  object: /etc/ax-secret  action: file.read
+ *     -> kural haritada var (deny_map kayit: 1)
+ *     -> "policy check" gecer
+ *     -> reload "basarili" der
+ *     -> ama dosya OKUNUR
+ *
+ * Politika dilinin en kotu turu: kullanici kuralini yazdigini
+ * sanir, sistem sessizce hicbir sey yapmaz.
+ *
+ * Cozum: tam eslesme bulunamazsa ayni yol/eylem, comm = "*"
+ * ile bir kez daha aranir.
+ *
+ * Joker, tam eslesmeden SONRA bakilir. Boylece belirli bir
+ * kural ("curl") jokeri gecersiz kilabilir.
+ *
+ * Anahtar 1. yuvaya (key_scratch slot 1) yazilir; slot 0
+ * (cagiranin kullandigi) BOZULMEZ. Ayni yuvayi yazmak
+ * sonraki kancalarin yolunu bozardi.
+ */
+static __always_inline struct policy_value *
+ax_lookup_wild(struct policy_key *key)
+{
+	struct policy_value *val;
+	struct policy_key *wkey;
+	int i;
+	int is_star;
+
+	val = ax_lookup(key);
+	if (val)
+		return val;
+
+	/* comm zaten tam "*" ise tekrar aramak anlamsiz */
+	is_star = (key->comm[0] == '*' && key->comm[1] == '\0');
+	if (is_star)
+		return NULL;
+
+	wkey = ax_key(1);
+	if (!wkey)
+		return NULL;
+
+	__builtin_memcpy(wkey, key, sizeof(*wkey));
+
+#pragma unroll
+	for (i = 0; i < TASK_COMM_LEN; i++)
+		wkey->comm[i] = '\0';
+	wkey->comm[0] = '*';
+
+	val = ax_lookup(wkey);
+	return val;
+}
+
 /* Iki anahtarli DENY aramasi. Iki ayri ax_lookup cagrisi
  * verifier'da instruction patlamasina yol actigi icin tek
  * fonksiyonda birlestirilir; ayni kancada ucten fazla
