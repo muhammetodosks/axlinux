@@ -87,7 +87,39 @@ for p in "$PREFIX/lib/axlinux" /etc/axlinux /var/lib/axlinux \
 done
 echo "  baglamlar uygulandi"
 
-# 4) LSM zinciri uyarisi (hata degil; operatora bilgi)
+# 4) bpffs dizinini KUR.
+#
+# Haritalar /sys/fs/bpf/axlinux altina pinlenir. Dizini daemon
+# kendisi olusturmayi deniyor ve basarisiz oluyor:
+#
+#   msg="pin dizini olusturulamadi" dir=/sys/fs/bpf/axlinux
+#     error="mkdir /sys/fs/bpf/axlinux: permission denied"
+#
+# Bu SELinux degildi: permissive modda da olmuyor. Daemon root
+# (Uid: 0) ve gerekli yeteneklere sahip, ama systemd'in
+# seccomp filtresi (Seccomp: 2, 3 filtre) mkdir'i engelliyor.
+#
+# Neden ONEMLI: harita pinlenmezse reload YENI harita uretir;
+# takili BPF programlari ESKI haritaya bakmaya devam eder ve
+# yeniden yuklenen politika HIZLA UYGULANMAZ. Yani "reload
+# basarili" denir ama politika etkisiz kalir.
+#
+# Cozum: dizini kurulum betigi (kisitlanmis alan DISINDAN)
+# olusturur. Bu standart yaklasimdir: bpffs dizinini arac
+# kurulumu yaratir, daemon yalnizca pinler.
+if [ -d /sys/fs/bpf ]; then
+    if ! mkdir -p /sys/fs/bpf/axlinux 2>/dev/null; then
+        echo "  HATA: /sys/fs/bpf/axlinux olusturulamadi." >&2
+        echo "  Politika reload sonrasi UYGULANMAZ." >&2
+        exit 1
+    fi
+    chmod 0700 /sys/fs/bpf/axlinux
+    restorecon /sys/fs/bpf/axlinux 2>/dev/null || true
+    chcon -t bpf_t /sys/fs/bpf/axlinux 2>/dev/null || true
+    echo "  bpffs dizini hazir: /sys/fs/bpf/axlinux"
+fi
+
+# 5) LSM zinciri uyarisi (hata degil; operatora bilgi)
 if [ -r /sys/kernel/security/lsm ]; then
     case ",$(cat /sys/kernel/security/lsm)," in
         *,bpf,*) : ;;

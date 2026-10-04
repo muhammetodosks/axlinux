@@ -293,6 +293,28 @@ static __always_inline int ax_fill_path(struct path *p, struct policy_key *key)
 		/* kok dentry Go tarafinda bloga yazilmaz; sayma */
 		if (!up || up == cur)
 			break;
+
+		/* Alt birim koku yola girmez (bilesen 2. gecis).
+		 * Gecis 1 yalnizca toplam uzunlugu olcer; yazma
+		 * yapmadigi icin burada atlarsak iki gecis farkli
+		 * sonuc verir ve MAX_PATH_LEN kontrolu yanlis
+		 * hesaplanir. */
+		{
+			struct dentry *upp = BPF_CORE_READ(up, d_parent);
+			struct inode *in_cur, *in_up;
+			__u32 self_ino, up_ino;
+
+			if (upp == up) {
+				in_cur = BPF_CORE_READ(cur, d_inode);
+				in_up  = BPF_CORE_READ(up, d_inode);
+				self_ino = in_cur ?
+					BPF_CORE_READ(in_cur, i_ino) : 0;
+				up_ino = in_up ?
+					BPF_CORE_READ(in_up, i_ino) : 0;
+				if (self_ino && self_ino == up_ino)
+					break;
+			}
+		}
 		total += len + 1;
 		cur = up;
 	}
@@ -322,6 +344,64 @@ static __always_inline int ax_fill_path(struct path *p, struct policy_key *key)
 		 * icin burada da yazmak sart. */
 		if (!up || up == cur)
 			break;
+
+		/* --- ALT BIRIM KOKU (btrfs) ---
+		 *
+		 * Fedora 33'den beri varsayilan dosya sistemi btrfs ve
+		 * kok bir ALT BIRIM olarak baglanir. Bu durumda
+		 * dentry zincirine GORUNMEYEN bir bilesen girer:
+		 *
+		 *   [7] ax-secret
+		 *   [6] etc
+		 *   [5] root      <-- alt birim koku, yolda DEGIL
+		 *   [4] /          <-- dosya sistemi koku
+		 *
+		 * Oluşturulan yol "/root/etc/ax-secret" olur ama
+		 * politikadaki yol "/etc/ax-secret"dir. Anahtarlar
+		 * UYUSMAZ ve kural HICBIR SEYI UYGULAMAZ:
+		 *
+		 *   subject: cat
+		 *   object: /etc/ax-secret
+		 *   action: file.read
+		 *   effect: deny
+		 *
+		 * -> deny_map kayit: 1, policy check gecer, reload
+		 *    "basarili" der, dosya OKUNUR.
+		 *
+		 * AYIRT EDICI (olculmus veri):
+		 *   slot  ad          i_no  d_parent==self
+		 *   [5]   root        256   hayir
+		 *   [4]   /           256   evet
+		 *
+		 * Alt birim koku ile dosya sistemi koku AYNI inode
+		 * numarasina sahiptir (btrfs'te 256) ve alt birim
+		 * kogunun ebeveyni dosya sistemi kokudur. Normal bir
+		 * dizinin (/etc) inode'u farklidir (2).
+		 *
+		 * Kural: ebeveyni dosya sistemi koku olan VE inode'u
+		 * ebeveyniyle ayni olan dentry bilesen degildir.
+		 */
+		{
+			struct dentry *upp = BPF_CORE_READ(up, d_parent);
+			struct inode *in_cur, *in_up;
+			__u32 self_ino, up_ino;
+
+			if (upp == up) {
+				/* up dosya sistemi koku.
+				 * NOT: BPF_CORE_READ(...)->alan YAZIMI
+				 * gecersizdir; pointer ayri degiskende
+				 * okunmali, sonra alan CO-RE ile
+				 * okunur. */
+				in_cur = BPF_CORE_READ(cur, d_inode);
+				in_up  = BPF_CORE_READ(up, d_inode);
+				self_ino = in_cur ?
+					BPF_CORE_READ(in_cur, i_ino) : 0;
+				up_ino = in_up ?
+					BPF_CORE_READ(in_up, i_ino) : 0;
+				if (self_ino && self_ino == up_ino)
+					break;   /* alt birim koku: yazma */
+			}
+		}
 
 		__builtin_memset(key->path[b], 0, AX_PATH_SLOT);
 		key->path[b][0] = '/';

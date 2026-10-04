@@ -59,6 +59,8 @@ type axlinux_axbpf_t;
 # YAZILAMAZ ("unrecognized character at token").
 # Acipalamalar buraya degil, disariya.
 #
+# default_t: politika disi dosyalar (unconfined kullanicinin
+#   olusturdugu dosyalar). getattr icin gerekli.
 # security_t: /sys/kernel/security/* (lsm listesi dahil).
 #   ls -Zd /sys/kernel/security/lsm ->
 #     system_u:object_r:security_t:s0
@@ -78,6 +80,7 @@ gen_require(`
 	type node_t;
 	type bpf_t;
 	type security_t;
+	type default_t;
 ')
 
 
@@ -235,3 +238,62 @@ allow axlinux_daemon_t axlinux_axbpf_t:file { getattr open read };
 allow axlinux_daemon_t axlinux_axbpf_t:dir { getattr open read search };
 
 allow axlinux_daemon_t self:process { fork sigchld sigkill signull };
+
+########################################
+#
+# axdaemon -> axlog konusmasi
+#
+# SELinux unix soketleri IKI ayri kontrol eder:
+#   1) self:unix_stream_socket connect   -> kendi soketine baglanma
+#   2) PEER:unix_stream_socket connectto -> KARSINININ soketine
+#      baglanma
+# (1) verilmis ama (2) UNUTULMUSTU. Sonuc:
+#
+#   avc:  denied  { connectto } for  comm="axdaemon"
+#     scontext=system_u:system_r:axlinux_daemon_t:s0
+#     tcontext=system_u:system_r:axlinux_log_t:s0
+#     tclass=unix_stream_socket
+#
+# 4097 kez reddedildi. SONUCLARI (hepsi sessizdi):
+#   - audit kayitlari axlog'a ULASTIRILMIYORDU
+#   - /var/log/axlinux/audit-*.jsonl BOS kalirdi (0 bayt)
+#   - "axctl logs" yine de kayit gosteriyordu (axdaemon
+#     bellekteki sayaclari kullanir) ama kalici dosya BOS
+#   - audit_healthy: false
+#
+# Yani kullanici "audit calisiyor" goruyordu ama HICBIR KAYIT
+# DISA YAZILMIYORDU. Kurulum "audit soketi yok" deyip basarisiz
+# OLMUYORDU cunku soket DILECE vardi.
+allow axlinux_daemon_t axlinux_log_t:unix_stream_socket connectto;
+
+########################################
+#
+# Yol cozumleme icin getattr
+#
+# Politika yol bazli kurallari degerlendirmek icin dosyanin inode
+# bilgisi okunmalidir (getattr). Politika disi dosyalar default_t
+# ile etiketlenir (unconfined kullanicinin olusturdugu dosyalar):
+#
+#   avc:  denied  { getattr } for  path="/a/ax-t2"
+#     tcontext=unconfined_u:object_r:default_t:s0
+#
+# getattr yalnizca OKUNAN metadata'dir; guvenlik acigi degildir.
+# Vermezsek daemon surekli AVC uretir ve asil ihlallerin
+# bulundugu logun ici sasir.
+allow axlinux_daemon_t default_t:file { getattr };
+allow axlinux_log_t default_t:file { getattr };
+
+########################################
+#
+# bpffs dizini olusturma
+#
+# Haritalar /sys/fs/bpf/axlinux altina pinlenir. Dizin daha
+# yoksa daemon kendisi olusturur:
+#
+#   mkdir /sys/fs/bpf/axlinux: permission denied
+#
+# Bu sessizce basarisiz olursa harita pinlenmez; reload yeni
+# harita uretirken takili BPF programlari ESKI haritaya bakmaya
+# devam eder ve yeniden yuklenen politika HIZLA UYGULANMAZ.
+allow axlinux_daemon_t bpf_t:dir { add_name remove_name write getattr open read search };
+allow axlinux_daemon_t bpf_t:file { create open read write getattr setattr unlink };

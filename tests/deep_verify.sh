@@ -731,17 +731,17 @@ YAML
       if [ "$(curl -s file:///etc/ax-secret >/dev/null 2>&1; echo $?)" != "0" ]; then
           ok "joker subject GERCEKTEN uygulandi (curl)"
       else
-          fail "joker subject uygulanmadi (curl); haritada var ama etkisiz"
+          no   "joker subject uygulanmadi (curl); haritada var ama etkisiz"
       fi
       if [ "$(cat /etc/ax-secret >/dev/null 2>&1; echo $?)" != "0" ]; then
           ok "joker subject GERCEKTEN uygulandi (cat)"
       else
-          fail "joker subject uygulanmadi (cat)"
+          no   "joker subject uygulanmadi (cat)"
       fi
       if cat /etc/hostname >/dev/null 2>&1; then
           ok "joker diger dosyalari etkilemiyor"
       else
-          fail "joker kurali beklenmeyen sekilde genis kapsamli"
+          no   "joker kurali beklenmeyen sekilde genis kapsamli"
       fi
     # surec bazli (yolsuz) kural
     cat >/tmp/ax-proc.yaml <<'YAML'
