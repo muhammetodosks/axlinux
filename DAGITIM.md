@@ -95,9 +95,9 @@ düşürmez — paketler tek tek kurulur, olmayanlar atlanır ve raporlanır.
 
 | Yol | İçerik |
 |---|---|
-| `/usr/local/bin/axctl` | CLI girişi |
-| `/usr/local/bin/axdaemon` | LSM uygulayıcı (Go) |
-| `/usr/local/bin/axlog` | Audit yazıcı (Go) |
+| `/usr/bin/axctl` | CLI girişi |
+| `/usr/bin/axdaemon` | LSM uygulayıcı (Go) |
+| `/usr/bin/axlog` | Audit yazıcı (Go) |
 | `/usr/lib/axlinux/` | `axbpf.o` ve Python paketi |
 | `/etc/axlinux/` | Örnek politikalar |
 | `/etc/systemd/system/` | `axdaemon.service`, `axlog.service` |
@@ -123,8 +123,13 @@ ayri konuyu dogurur:
 | `/etc/...` | `/etc/...` | calisir |
 | `/var/...`, `/home/...` | `/var/...`, `/home/...` | calisir |
 | `/root/...` | `/root/...` | calisir |
-| `/tmp/...` | `/tmp/...` | **calismaz** (ayri mount) |
+  | `/tmp/...`, `/dev/shm/...`, `/run/...` | `/tmp/...` | calisir (mount noktasi haritasi) |
 
+Kok dosya sistemi btrfs alt birimi: gorunmez `root` bileseni
+`mount_artifact_map` ile atilir. Ayri mount'lar (`/tmp` tmpfs):
+gorunmez mount noktasi oneki `mount_point_map` ile geri eklenir.
+Ikisi de `tests/deep_verify.sh` icinde gercek deny kurallariyla
+dogrulanir (`ayri mount yolu [tmpfs /tmp] uygulandi`).
 `/tmp` bir tmpfs mount oldugu icin mount noktasinin adi dentry
 zincirinde gorunmez. Bu yapisal bir sinirdir, bir hata degildir.
 Yol kurallari kullanirken mutlak yolun **kok dosya sisteminde**

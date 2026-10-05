@@ -19,7 +19,7 @@ fi
 say "axdaemon baslatiliyor"
 sudo pkill -f 'axd.*axdaemon' 2>/dev/null
 sudo mkdir -p /run/axlinux /sys/fs/bpf/axlinux
-sudo setsid /usr/local/bin/axdaemon --socket /run/axlinux/axdaemon.sock \
+sudo setsid /usr/bin/axdaemon --socket /run/axlinux/axdaemon.sock \
     > /tmp/axd-verify.log 2>&1 < /dev/null &
 for i in $(seq 1 40); do
     [[ -S /run/axlinux/axdaemon.sock ]] && break

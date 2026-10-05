@@ -82,6 +82,7 @@ gen_require(`
 	type bpf_t;
 	type security_t;
 	type default_t;
+	type sysctl_net_t;
 ')
 
 # --- bpffs yazma izni (harita pinleme) ---
@@ -101,6 +102,23 @@ allow axlinux_daemon_t bpf_t:dir { add_name create write search getattr setattr 
 allow axlinux_daemon_t bpf_t:file { create write read open unlink lock getattr setattr };
 allow axlinux_daemon_t bpf_t:lnk_file { create read unlink };
 allow axlinux_daemon_t bpf_t:sock_file { create write read unlink getattr };
+
+# FILESYSTEM SINIFI IZNİ GEREKLI.
+#
+# Harita pinleme sirasinda belgelenen red:
+#   avc:  denied  { getattr } for  pid=... comm="axdaemon"
+#         name="/" dev="bpf" scontext=system_u:system_r:axlinux_daemon_t:s0
+#         tcontext=system_u:object_r:bpf_t:s0 tclass=filesystem
+#
+# bpffs bir MOUNT noktasidir; sadece dizin/dosya izinleri yeterli
+# degildir, dosya sistemi sinifinda getattr (ve baglanti) gerekir.
+# Bu izin olmadan bpf_obj_pin() EPERM donuyor ve haritalar hicbir
+# zaman pinlenmiyor.
+allow axlinux_daemon_t bpf_t:filesystem { getattr associate };
+
+# /proc/net okumasi: ag kancalari yerel adresi buradan ogrenir.
+# Red: denied { search } ... tcontext=sysctl_net_t tclass=dir
+allow axlinux_daemon_t sysctl_net_t:dir { search getattr open read };
 
 # capability2 { bpf perfmon } zaten asagida veriliyor; bpf ve perfmon
 # `capability2` sinifinin izinleridir, `capability` degil.

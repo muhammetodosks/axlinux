@@ -99,7 +99,7 @@ fi
 # "pytest tests/" demek sessizce 0 test kosup gecerdi.
 
 # ------------------------------------------------------------------ 4
-# ONCE KURULUM. verify_all.sh /usr/local/bin/axdaemon calistirir;
+# ONCE KURULUM. verify_all.sh /usr/bin/axdaemon calistirir;
 # kurulum yapilmadan once test ESKI ikiliyi dogrular ve yeni
 # kodun calistigini kanitlamaz. Bu sira once ters birti:
 # test (4) kurulumdan (5) once geliyordu.
@@ -173,10 +173,10 @@ fi
 # sanardi. Burada hem nesnenin varligi hem de surum tutarliligi
 # kontrol edilir.
 say "5b) kurulan artefakt dogrulamasi"
-if [[ -x /usr/local/bin/axdaemon ]]; then
+if [[ -x /usr/bin/axdaemon ]]; then
     ok "axdaemon kuruldu"
 else
-    step_fail "/usr/local/bin/axdaemon yok"
+    step_fail "/usr/bin/axdaemon yok"
 fi
 if [[ -r /usr/lib/axlinux/axbpf.o ]]; then
     ok "axbpf.o kuruldu ($(stat -c%s /usr/lib/axlinux/axbpf.o) bayt)"
@@ -186,10 +186,10 @@ fi
 # axlog binary'si ve servisi kurulmus mu? Eksikse audit kayitlari
 # sessizce kaybolur: daemon baglanmayi dener, hata alir, sayac
 # artar ama operator bunu kontrol edene kadar iz bos kalir.
-if [[ -x /usr/local/bin/axlog ]]; then
+if [[ -x /usr/bin/axlog ]]; then
     ok "axlog kuruldu"
 else
-    step_fail "/usr/local/bin/axlog yok; audit kayitlari yazilmayacak"
+    step_fail "/usr/bin/axlog yok; audit kayitlari yazilmayacak"
 fi
 if [[ -r /lib/systemd/system/axlog.service ]]; then
     ok "axlog.service kuruldu"

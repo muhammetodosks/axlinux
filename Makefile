@@ -7,7 +7,10 @@
 #   make install  -> sistem dizinlerine kur
 
 SHELL     := /bin/bash
-PREFIX    ?= /usr/local
+# Kanonik on ek /usr. RPM, .deb ve kaynak kurulumu AYNI yollari
+# kullanmali; aksi halde systemd birimleri yanlis yolu gosterir
+# ve servis 203/EXEC ile olur.
+PREFIX    ?= /usr
 DESTDIR   ?=
 BINDIR    := $(DESTDIR)$(PREFIX)/bin
 LIBDIR    := $(DESTDIR)/usr/lib/axlinux
@@ -255,9 +258,9 @@ package: all
 	@install -m 0755 packaging/debian/prerm     $(STAGE)/DEBIAN/prerm
 	@install -m 0755 packaging/debian/postrm    $(STAGE)/DEBIAN/postrm
 	@# Uygulama
-	@install -d $(STAGE)/usr/local/bin $(STAGE)/usr/lib/axlinux
-	@install -m 0755 $(GO_DAEMON)/axdaemon $(STAGE)/usr/local/bin/axdaemon
-	@install -m 0755 $(GO_LOG)/axlog       $(STAGE)/usr/local/bin/axlog
+	@install -d $(STAGE)/usr/bin $(STAGE)/usr/lib/axlinux
+	@install -m 0755 $(GO_DAEMON)/axdaemon $(STAGE)/usr/bin/axdaemon
+	@install -m 0755 $(GO_LOG)/axlog       $(STAGE)/usr/bin/axlog
 	@install -m 0755 $(BPF_DIR)/axbpf.o    $(STAGE)/usr/lib/axlinux/axbpf.o
 	@# Python paketi AXCTL/ ALT DIZININE kurulur; "make install"
 	@# ile ayni duzen. Once duz kuruluyordu (/usr/lib/axlinux/cli.py)
@@ -270,7 +273,7 @@ package: all
 	@install -m 0644 $(PY_DIR)/requirements.txt $(STAGE)/usr/lib/axlinux/axctl/
 	@install -m 0644 $(PY_DIR)/pyproject.toml $(STAGE)/usr/lib/axlinux/axctl/
 	@# CLI giris noktasi: paket dizininden yukler
-	@install -m 0755 packaging/axctl $(STAGE)/usr/local/bin/axctl
+	@install -m 0755 packaging/axctl $(STAGE)/usr/bin/axctl
 	@# Servisler ve tmpfiles
 	@install -d $(STAGE)/lib/systemd/system $(STAGE)/usr/lib/tmpfiles.d
 	@install -m 0644 packaging/axdaemon.service \

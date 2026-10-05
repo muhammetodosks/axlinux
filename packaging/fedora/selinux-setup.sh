@@ -11,7 +11,19 @@
 set -e
 
 MODULE=axlinux
-PREFIX=/usr/local
+# On ek artik KANONIK /usr. Ikililer /usr/bin altina kuruluyor
+# (bkz. Makefile PREFIX). Burada /usr/local kalirsa:
+#
+#   - file_context kaydi /usr/local/bin/axdaemon'a yazilir,
+#   - gercek ikili /usr/bin/axdaemon bin_t etiketinde kalir,
+#   - init_system_domain() gecisi olusmaz,
+#   - daemon unconfined_service_t'de calisir.
+#
+# Yani SELinux alan izni tanimli olur ama DAEMON O ALANDA
+# CALISMAZ: koruma sahte, bpf() unconfined'ten gelir.
+# RPM ile kurulumda sessizce ortaya cikti; elle kurulumda
+# /usr/local/bin gercekten var oldugu icin gorunmuyordu.
+PREFIX="${PREFIX:-/usr}"
 UNITDIR=/usr/lib/systemd/system
 FC="$PREFIX/axlinux-selinux-fcontexts"
 
@@ -108,6 +120,14 @@ set_fcontext axlinux_etc_t       '/etc/axlinux(/.*)?'
 set_fcontext axlinux_var_lib_t   '/var/lib/axlinux(/.*)?'
 set_fcontext axlinux_var_log_t   '/var/log/axlinux(/.*)?'
 set_fcontext axlinux_var_run_t   '/run/axlinux(/.*)?'
+# Once eski on eke ait kayitlari temizle. semanage fcontext
+# kayitlari kalicidir; on ek /usr/local -> /usr degisse bile
+# eski kayit durur ve hicbir dosyaya isabet etmez.
+for stale in /usr/local/bin/axdaemon /usr/local/bin/axlog \
+             /usr/local/bin/axctl \
+             "/usr/local/lib/axlinux/axbpf\\.o"; do
+    semanage fcontext -d "$stale" >/dev/null 2>&1 || true
+done
 set_fcontext axlinux_daemon_exec_t "$PREFIX/bin/axdaemon"
 set_fcontext axlinux_log_exec_t    "$PREFIX/bin/axlog"
 set_fcontext axlinux_cli_exec_t    "$PREFIX/bin/axctl"

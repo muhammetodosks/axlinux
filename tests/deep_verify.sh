@@ -218,7 +218,7 @@ if sect A "Ortam ve saglik"; then
     else
         no "LSM kancalari: ${a:-?}/${t:-?}"
     fi
-    for f in /usr/local/bin/axdaemon /usr/local/bin/axlog /usr/local/bin/axctl \
+    for f in /usr/bin/axdaemon /usr/bin/axlog /usr/bin/axctl \
              /usr/lib/axlinux/axbpf.o; do
         [ -e "$f" ] && ok "kurulu: $f" || no "kurulu: $f"
     done
@@ -1057,67 +1057,68 @@ fi
 
 # --- Dosya sistemi caprazlari ve MOUNT SINIRI ---
 #
-# ONEMLI: yol bazli kurallar AYNI dosya sistemi icinde calisir.
-# Ayri bir MOUNT olan dosya sistemlerinde mount noktasinin adi
-# dentry zincirinde GORUNMEZ. bpftrace ile olculdu:
+# Ayri mount noktalari: ENFORCEMENT GERCEKTEN UYGULANMALI.
 #
-#   btrfs  /etc/ax-t9   zincir: ax-t9 -> etc -> root -> /
-#   tmpfs  /tmp/ax-t9   zincir: ax-t9 -> /            (/tmp YOK!)
+# Burada once "yapisal sinir" var deniyordu ve test ATLANIYORDU.
+# Sinir kaldirildi: axdaemon mountinfo'dan superblock cihazini
+# (mountinfo'nun 3. alani "MAJ:MIN") okuyup mount_point_map'e
+# yaziyor; BPF mount kokune ulastiginda bu oneki yolun ALTINA
+# ekliyor.
 #
-# Yani /tmp/ax-t9 icin kernel bize "/ax-t9" verir; politika ise
-# "/tmp/ax-t9" yazar. Anahtarlar kesismez.
+# Kanit (Fedora 44, SELinux enforcing):
+#   cat /tmp/ax-f      -> Operation not permitted
+#   cat /dev/shm/ax-f  -> Operation not permitted
+#   cat /run/ax-f      -> Operation not permitted
+#   cat /etc/ax-f      -> Operation not permitted  (regresyon)
+#   cat /etc/hostname  -> serbest                   (kural disi)
 #
-# NEDEN: /tmp ayri bir mount oldugu icin dentry->d_parent zinciri
-# mount KOKUNU gosterir; mount noktasinin adi ("tmp") zincirde
-# bulunmaz. Bu, dentry tabanli cozumlemenin YAPISAL siniridir;
-# btrfs alt birim kozunden FARKLIDIR (btrfs'te "/etc" calisiyor,
-# alt birim koku atlanarak).
-#
-# Bu bir bolum "gecer" demez; sinirin VAR oldugunu ve ROOT dosya
-# sisteminde calistigini kayda gecer.
-KS_ROOT_OK=0
+# Test mount sayisindan bagimsiz: /tmp yoksa /dev/shm ya da /run
+# denenmeli, hicbiri yoksa ATLANIR.
 KS_MOUNT=0
-for d in /etc /var /home /root; do
+KS_MOUNT_OK=0
+for d in /tmp /dev/shm /run; do
     [ -d "$d" ] || continue
     DST="$(stat -f -c %T "$d" 2>/dev/null)"
-    T="$d/ax-fs-$$"
+    # Onek yalniz mount KOKU "/" ise gerekir. Alt birim
+    # mount'larinda (root=/var gibi) kok adi zaten gorunur.
+    MROOT="$(awk -v p="$d" '$5==p {print $4; exit}' /proc/self/mountinfo 2>/dev/null)"
+    [ -n "$MROOT" ] || continue
+    [ "$MROOT" = "/" ] || continue
+
+    T="$d/ax-mount-$$"
     sudo sh -c "echo G > $T" 2>/dev/null || continue
     sudo chmod 666 "$T" 2>/dev/null
-    cat >/tmp/ax-fs-test.yaml <<YAML
+    KS_MOUNT=$((KS_MOUNT + 1))
+
+    cat >/tmp/ax-mount-test.yaml <<YAML
 version: 1
 mode: enforcing
 rules:
-  - id: fs1
-    name: "root fs caprazi"
+  - id: m1
+    name: "mount noktasi caprazi"
     subject: cat
     object: $T
     action: file.read
     effect: deny
 YAML
-    apply_policy /tmp/ax-fs-test.yaml
+    apply_policy /tmp/ax-mount-test.yaml
     sleep 1
     if sudo cat "$T" >/dev/null 2>&1; then
-        no "yol kurali [$DST $d] uygulanmadi"
+        no "ayri mount yolu [$DST $d] uygulanmadi (mount oneki kayboluyor)"
     else
-        ok "yol kurali [$DST $d] uygulandi"
-        KS_ROOT_OK=$((KS_ROOT_OK + 1))
+        ok "ayri mount yolu [$DST $d] uygulandi"
+        KS_MOUNT_OK=$((KS_MOUNT_OK + 1))
     fi
     sudo rm -f "$T" 2>/dev/null
 done
-[ "$KS_ROOT_OK" -ge 2 ] && ok "root dosya sisteminde yol kurallari calisiyor ($KS_ROOT_OK konum)" \
-    || no "root dosya sisteminde yol kurallari calismiyor ($KS_ROOT_OK konum)"
 
-# Ayri mount'lar: sinir OLUSTUGUNU kaydet, gecmis olarak de ONLAMA.
-# (Once bu test "uygulanmadi" deyip basarisiz sayiliyordu; oysa
-#  bu bir hatadan degil, belgelenmis bir yapisal sinirdir.)
-for d in /tmp /dev/shm; do
-    [ -d "$d" ] || continue
-    DST="$(stat -f -c %T "$d" 2>/dev/null)"
-    case "$DST" in tmpfs) ;; *) continue ;; esac
-    KS_MOUNT=$((KS_MOUNT + 1))
-done
-[ "$KS_MOUNT" -gt 0 ] && ok "ayri mount sayisi: $KS_MOUNT (yol kurallari mount noktasi adini gormez)" \
-    || skip "ayri mount yok"
+if [ "$KS_MOUNT" -eq 0 ]; then
+    skip "ayri mount (root=/) yok; mount noktasi testi calismadi"
+elif [ "$KS_MOUNT_OK" -eq "$KS_MOUNT" ]; then
+    ok "ayri mount yol kurallari uygulandi ($KS_MOUNT_OK/$KS_MOUNT konum)"
+else
+    no "ayri mount yol kurallari eksik ($KS_MOUNT_OK/$KS_MOUNT konum)"
+fi
 
 # --- Yerlesim (merged-usr) ---
 # Debian/Pardus: /bin -> /usr/bin. Politika "/bin/ls" yazarsa
@@ -1933,7 +1934,7 @@ sudo rm -f /etc/ax-secret "$LOGDIR/audit-1999-01-01.jsonl" 2>/dev/null
 begin "P) Paketleme, kurulum ve kaldirma"
 
 # --- Kurulu dosyalar ---
-for f in /usr/local/bin/axctl /usr/local/bin/axdaemon /usr/local/bin/axlog \
+for f in /usr/bin/axctl /usr/bin/axdaemon /usr/bin/axlog \
          /usr/lib/axlinux/axbpf.o /usr/lib/axlinux/axctl/cli.py \
          /usr/lib/systemd/system/axdaemon.service \
          /usr/lib/tmpfiles.d/axlinux.conf; do
@@ -1957,8 +1958,18 @@ fi
 # Once iki sarmalayici vardi: RPM sh+python3 -c, make install
 # printf ile uretilen python betigi. python3 -c yonteminde
 # sys.argv[0] = "-c" oldugu icin click "Usage: -c" yaziyordu.
-head -1 /usr/local/bin/axctl 2>/dev/null | grep -q '^#!/usr/bin/env python3' \
-    && ok "axctl python betigi (tek kaynak)" || no "axctl shebang beklenenden farkli"
+# rpm'nin brp-mangle-shebangs betigi shebang satiri mutlak yola
+# CEVIRIR: "env python3" -> "/usr/bin/python3". Bu Fedora'da
+# ZORUNLU bir brp'dir; kurulu ikilide env formu KALAMAZ. Bu
+# yuzden iki bicim de kabul edilir. Kaynak dosyanin (packaging/
+# axctl) env formunu kullandigi test_install_guard.py'de
+# denetlenir.
+if head -1 /usr/bin/axctl 2>/dev/null | grep -qE \
+   '^#!/usr/bin/(env )?python3'; then
+    ok "axctl python betigi (tek kaynak)"
+else
+    no "axctl shebang beklenenden farkli"
+fi
 # Yalnizca CALISTIRILAN satirlar taranir. Modul doktrani eski
 # bicimin ANLATIMINI icerir ("python3 -c '...'"); bu bir kalinti
 # degildir. Gercek kalinti `#!/bin/sh` + `python3 -c` olurdu.
@@ -1966,11 +1977,11 @@ awk 'BEGIN{code=0}
      /^import |^from /{code=1}
      code==1 && /^[[:space:]]*#/ {next}
      code==1 && /python3? -c/ {print NR": "$0; bad=1}
-     END{exit bad?1:0}' /usr/local/bin/axctl >/tmp/axctl-cli.txt 2>&1 \
+     END{exit bad?1:0}' /usr/bin/axctl >/tmp/axctl-cli.txt 2>&1 \
     && ok "axctl python3 -c kullanmiyor (argv[0] dogru)" \
     || { no "axctl python3 -c kullaniyor; 'Usage: -c' gorunecek"
          sed 's/^/    /' /tmp/axctl-cli.txt; }
-grep -q '/usr/lib/axlinux' /usr/local/bin/axctl \
+grep -q '/usr/lib/axlinux' /usr/bin/axctl \
     && ok "axctl sys.path dogru" || no "axctl sys.path yanlis"
 axctl version >/dev/null 2>&1 && ok "axctl version calisiyor" || no "axctl version calismadi"
 axctl --help 2>&1 | grep -q 'Usage: axctl' \
@@ -1982,7 +1993,18 @@ DP="$(dpkg-query -W -f='${Version}' axlinux 2>/dev/null || echo yok)"
 RPMV="$(rpm -q axlinux 2>/dev/null || echo yok)"
 ok "axctl surumu: $SV"
 ok "paket surumu: $DP / $RPMV"
-case "$SV" in 1.0.0) ok "surum 1.0.0" ;; *) no "surum beklenenden farkli: $SV" ;; esac
+# Beklenen surum koda GOMULU bir sabit degil; kaynaktan okunur.
+# (Eskiden "1.0.0" sabiti vardi ve 1.1.0'a gecildiginde test
+# sessizce yanlis basliyordu.)
+EXPECT_V="$(sed -n 's/^__version__ *= *"\([^"]*\)".*/\1/p' \
+    /usr/lib/axlinux/axctl/__init__.py 2>/dev/null | head -1)"
+[ -z "$EXPECT_V" ] && EXPECT_V="$(sed -n 's/^Version *= *"\([^"]*\)".*/\1/p' \
+    /home/ax/axlinux/src/go/axdaemon/main.go 2>/dev/null | head -1)"
+if [ -n "$EXPECT_V" ] && [ "$SV" = "$EXPECT_V" ]; then
+    ok "surum kaynakla uyumlu: $SV"
+else
+    no "surum beklenenden farkli: $SV (beklenen: ${EXPECT_V:-?})"
+fi
 
 # --- Birim dosyalari ---
 # bpffs kosulu YALNIZCA axdaemon'da gereklidir (eBPF yukler).

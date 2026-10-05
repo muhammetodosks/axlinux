@@ -111,6 +111,19 @@ func main() {
 					"names", names)
 			}
 
+			// Mount NOKTASI oneki. /tmp gibi ayri mount'lar
+			// icinde dentry yurusu mount adini GORMEZ:
+			// "tmp" bir dizin girdisi degil, bir mount
+			// baglantisidir. Bu harita olmadan /tmp kurallari
+			// sessizce tutmaz (reload yine "basarili" der).
+			if mps, err := mapsMgr.PopulateMountPoints(); err != nil {
+				logger.Warn("mount noktalari okunamadi; /tmp gibi "+
+					"ayri mount'larin yol kurallari uygulanmayabilir",
+					"error", err)
+			} else if len(mps) > 0 {
+				logger.Info("mount noktasi onekleri", "count", len(mps))
+			}
+
 			if err := mapsMgr.SetLearning(false); err != nil {
 				logger.Warn("ogrenme bayragi sifirlanamadi",
 					"error", err)

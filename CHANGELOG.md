@@ -67,17 +67,27 @@ Bu surum sessiz kalan bir dizi gercek hatayi kalici olarak duzeltir.
   gosterir.
 - Kilitlenme korumasi 31 surec (eski metin 29 diyordu).
 
-### Bilinen sinir
+### Cozulmus sinirlar
 
-- **Ayrilmis mount noktalari yol kurallarina girmez.** `/tmp` gibi
-  bir dosya sisteminin mount noktasinin adi dentry zincirinde
-  gorunmez; kernel `/ax-dosya` verir, politika `/tmp/ax-dosya`
-  yazar. Yapisal bir sinirdir, `docs/policy-language.md` icinde
-  belgelenmistir.
-- **Harita pinleme (map pinning) calismiyor.** `bpf_obj_pin`
-  EPERM donuyor; yetkiler ve SELinux izinleri yerinde. Pinleme
-  opsiyoneldir: daemon her baslatmada haritalari kendisi olusturur
-  ve enforcement tam calisir.
+- **Ayrilmis mount noktalari artik yol kurallarina giriyor.**
+  `/tmp` mount noktasinin adi dentry zincirinde gorunmez; kernel
+  `/ax-dosya` verir, politika `/tmp/ax-dosya` yazar. Cozum:
+  `mount_point_map`. Daemon mountinfo'dan superblock cihazini
+  (3. alan `MAJ:MIN`) okuyup haritaya yazar; BPF mount kokune
+  ulastiginda oneki yolun altina ekler. Dogrulama (Fedora 44):
+  `/tmp`, `/dev/shm`, `/run`, `/run/user/1000` uzerinde deny
+  kurallari uygulandi, kural disi yol serbest kaldi.
+- **Harita pinleme calisiyor.** `bpf_obj_pin` EPERM donuyordu.
+  Kok neden SELinux: modul `bpf_t:filesystem getattr/associate`
+  izni vermiyordu. `/sys/fs/bpf/axlinux/` altinda `allow_map`,
+  `deny_map` ve `mode_map` kalici olarak pinleniyor.
+
+### Kalan sinirlar
+
+- **Mount ad alani basina calisir.** `mount_point_map` superblock
+  cihazina gore anahtarlanir (inode mountinfo'da yoktur ve
+  `stat()` SELinux tarafindan reddedilir). Ayni superblocku iki
+  ayri yola baglamak tek kaydi paylasir; pratikte bu olusmaz.
 
 ## 1.0.0 - 2026-10-02
 

@@ -37,7 +37,7 @@ Type=simple
 #
 # Ayrica daemon kendi icinde de dogrular ve "politika UYGULANAMAZ"
 # diye acikca uyarir; kullanici bos kurulum gormez.
-ExecStart=/usr/local/bin/axdaemon --socket /run/axlinux/axdaemon.sock
+ExecStart=/usr/bin/axdaemon --socket /run/axlinux/axdaemon.sock
 Restart=on-failure
 RestartSec=3
 
@@ -71,7 +71,10 @@ ProtectSystem=strict
 # /var/lib/axlinux ve /var/log/axlinux StateDirectory/LogsDirectory
 # ile systemd tarafindan olusturulur.
 ReadWritePaths=/sys/fs/bpf /var/lib/axlinux /var/log/axlinux /run/axlinux
-PrivateTmp=yes
+# PrivateTmp YOK: ayri bir tmpfs mount olan /tmp'i kernel /proc
+# mountinfo'dan gozleyerek yeniden kuruyoruz. Ozel /tmp ile harita
+# yanlisliklari "/tmp" kurallarini sessizce etkisiz birakir.
+# Gerekce: packaging/fedora/axdaemon.service.d/10-selinux.conf
 RestrictSUIDSGID=yes
 
 [Install]

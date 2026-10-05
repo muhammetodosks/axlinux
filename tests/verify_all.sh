@@ -116,7 +116,7 @@ say "1) daemon baslatiliyor"
 sudo pkill -9 axdaemon 2>/dev/null; sleep 1
 sudo rm -rf /sys/fs/bpf/axlinux 2>/dev/null
 sudo mkdir -p /sys/fs/bpf/axlinux /run/axlinux
-sudo setsid /usr/local/bin/axdaemon --socket "$SOCK" > /tmp/axd-verify.log 2>&1 < /dev/null &
+sudo setsid /usr/bin/axdaemon --socket "$SOCK" > /tmp/axd-verify.log 2>&1 < /dev/null &
 for _ in $(seq 1 40); do [ -S "$SOCK" ] && break; sleep 0.25; done
 [ -S "$SOCK" ] || { bad "socket acilmadi"; tail -5 /tmp/axd-verify.log; exit 1; }
 ok "socket acildi"

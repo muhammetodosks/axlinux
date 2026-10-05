@@ -322,34 +322,59 @@ rules:
 4. **Kullanıcı bazlı kural yok.** (v1.0'da eklenebilir)
 5. **Dinamik politika yok.** Her değişiklik için `axctl reload` gerekir.
 
-## Yol kurallari ve mount siniri
+## Yol kurallari ve mount noktalari
 
-Yol bazli kurallar (`object:`) **aynı dosya sistemi içinde** çalışır.
-Ayrı bir mount olan dosya sistemlerinde mount noktasının adı dentry
-zincirinde görünmez.
+Yol bazli kurallar (`object:`) **ayri mount'larin icinde de**
+calisir. Iki ayri durum vardir ve ikisi de cozulmustur.
 
-bpftrace ile ölçülen davranış:
+bpftrace ile olculen ham davranis:
 
 | Konum | Dosya sistemi | Görünen dentry zinciri |
 |---|---|---|
 | `/etc/ax-dosya` | btrfs (kök) | `ax-dosya → etc → root(subvolume) → /` |
 | `/tmp/ax-dosya` | tmpfs | `ax-dosya → /` — **`tmp` görünmez** |
 
-Yani `/tmp` üzerinde `object: /tmp/ax-dosya` yazan bir kural için
-kernel `/ax-dosya` yolunu çözer; politika `/tmp/ax-dosya` yazar.
-Anahtarlar kesişmez ve kural uygulanmaz.
+### 1. btrfs alt birim kökü (gorunmez bilesen)
 
-**Bu bir hata değil, yapısal bir sınırdır.** `object:` alanında
-kök dosya sistemine ait mutlak yollar kullanın.
+Fedora 33'den beri kok bir alt birim olarak baglanir ve dentry
+zincirine `root` adli gorunmez bir bilesen girer. Politika
+`/etc/ax-dosya` yazar, kernel `/root/etc/ax-dosya` gorur.
 
-İki ayrı konu karıştırılmamalı:
+Cozum: `mount_artifact_map`. Daemon mountinfo'da `root=/root`
+gordugu icin bu adi haritaya yazar; BPF mount kokune denk gelen
+bileseni atar. `/etc`, `/var`, `/home`, `/root` kurallari calisir.
 
-- **btrfs alt birim kökü** (`/etc` çalışır): Fedora 33'den beri kök
-  bir alt birim olarak bağlanır ve dentry zincirine `root` adlı
-  görünmez bir bileşen girer. Bu **düzeltildi**; btrfs kökünde
-  yol kuralları çalışır.
-- **Ayrı mount** (`/tmp` çalışmaz): mount noktasının adı hiç
-  oluşmaz. Bu düzeltilemez; kapsam dışıdır.
+### 2. Ayrı mount (gorunmez ONEK)
 
+`/tmp` bir tmpfs mount oldugu icin mount noktasinin adi (`tmp`) bir
+dizin girdisi DEGILDIR; bir mount baglantisidir. Bu yuzden dentry
+zincirinde hic bulunmaz ve onek kaybolur.
+
+Cozum: `mount_point_map`. Daemon mountinfo'nun 3. alanindaki
+(`MAJ:MIN`) superblock cihazini okuyup haritaya yazar; BPF mount
+kokune ulastiginda bu haritayi arar ve oneki yolun **altina** ekler.
+
+Anahtar neden yalniz superblock cihazidir:
+
+- Inode mountinfo'da bulunmaz.
+- `stat()` SELinux tarafindan reddedilir; 12 mount noktasi EACCES
+  aliyordu (`/run/user/1000`, `/sys/fs/cgroup`, `/dev/pts`, ...).
+  Bu yuzden `stat()`a bagimli bir cozum 12 mount'i sessizce
+  birakirdi.
+- Tum tmpfs kokleri inode 1'dir; ayirt edici yalniz `s_dev`'dir.
+
+Dogrulama (Fedora 44, SELinux enforcing, RPM kurulumu):
+
+```
+cat /tmp/ax-dosya       -> Operation not permitted
+cat /dev/shm/ax-dosya   -> Operation not permitted
+cat /run/ax-dosya       -> Operation not permitted
+cat /run/user/1000/x    -> Operation not permitted
+cat /etc/hostname       -> serbest   (kural disi)
+```
+
+Kalan sinir: harita superblock cihazina anahtarlanir, bu yuzden ayni
+superblocku iki ayri yola baglamak (orn. ayni tmpfs'i `/tmp` ve
+`/var/tmp`'ye baglamak) tek kaydi paylasir. Pratikte bu olusmaz.
 `axctl policy check` bu ayrımı doğrulamaz — kural geçerli sayılır,
 çünkü sözdizimi doğrudur. Uygulama ölçülerek anlaşılır.

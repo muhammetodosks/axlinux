@@ -3,7 +3,6 @@ package maps
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -41,9 +40,9 @@ import (
 // the dentry view is identical for "root" (invisible) and "var"
 // (visible).
 func mountArtifact() ([]string, error) {
-	f, err := os.Open("/proc/self/mountinfo")
+	f, err := openMountInfo()
 	if err != nil {
-		return nil, fmt.Errorf("mountinfo acilamadi: %w", err)
+		return nil, err
 	}
 	defer f.Close()
 

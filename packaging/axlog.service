@@ -15,7 +15,7 @@ After=network.target systemd-tmpfiles-setup.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/axlog --socket /run/axlinux/axlog.sock --log-dir /var/log/axlinux
+ExecStart=/usr/bin/axlog --socket /run/axlinux/axlog.sock --log-dir /var/log/axlinux
 Restart=on-failure
 RestartSec=3
 

@@ -28,7 +28,7 @@ set -uo pipefail
 APP="AXlinux"
 VERSION="0.1.0"
 REPO_URL="${AXLINUX_REPO:-}"
-BINDIR="/usr/local/bin"
+BINDIR="/usr/bin"
 LIBDIR="/usr/lib/axlinux"
 OBJDIR="/usr/lib/axlinux"
 LOGDIR="/var/log/axlinux"

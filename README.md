@@ -13,8 +13,11 @@ enforcement aktif, 716 dogrulama kontrolu geciyor.
 Fedora'ya ozgu iki davranis bilinmelidir:
 
 - Kok dosya sistemi btrfs alt birimidir; `/etc`, `/var`, `/home`,
-  `/root` yol kurallari calisir. `/tmp` gibi **ayri mount** noktalari
-  yol cozumlemesinde gorunmez (yapisal sinir, `docs/policy-language.md`).
+  `/root` yol kurallari calisir. `/tmp`, `/dev/shm`, `/run`,
+  `/run/user/N` gibi **ayri mount** noktalari da calisir: daemon
+  mountinfo'dan superblock cihazini okuyup `mount_point_map`'e
+  yazar, BPF mount kokune ulastiginda oneki yolun altina ekler
+  (`docs/policy-language.md`).
 - `process.exec` / `file.execute` kurallari **sembolik baglarin
   hedefine** uygulanir: `/usr/bin/python3` bir bag ise kural
   `python3.14` icin yazilir. Bu guvenlik icin zorunludur.
@@ -210,7 +213,7 @@ Kullanıcı belgeleri: [DAGITIM.md](DAGITIM.md).
 make test           # Go + Python
 make test-contract  # Go↔C sabit senkronizasyonu
 make verify         # ELF bölüm doğrulaması
-sudo python3 tests/integration.py --daemon /usr/local/bin/axdaemon
+sudo python3 tests/integration.py --daemon /usr/bin/axdaemon
 ```
 
 **`test-contract` neden önemli:** Go ile C arasındaki sabitler

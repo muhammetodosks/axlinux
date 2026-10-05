@@ -164,6 +164,76 @@ struct {
   	__type(value, __u8);
   } mount_artifact_map SEC(".maps");
 
+/* MOUNT NOKTASI ONEKI.
+ *
+ * mount_artifact_map "gorunmez" bir bileseni YOLDAN SILER
+ * (btrfs alt birim koku "root" gibi). Bu harita ise tam
+ * tersini yapar: dentry yurusunde HIC GORUNMEYEN bir oneki
+ * yola EKLER.
+ *
+ * Sorun: /tmp Fedora'da AYRI bir mount'tur (tmpfs):
+ *
+ *   /proc/self/mountinfo: root=/ mountpoint=/tmp
+ *   /tmp/ax-pintest  ->  dentry zinciri: ax-pintest -> "/"
+ *
+ * "tmp" bir dizin girdisi DEGILDIR; bir mount baglantisidir.
+ * Bu yuzden dentry yurusu "/ax-pintest" uretir, "/tmp" oneki
+ * KAYBOLUR ve policy "/tmp/..." kurallari sessizce tutmaz.
+ *
+ * Kanit:
+ *   cat /etc/ax-pintest2  -> Operation not permitted  (dogru)
+ *   cat /tmp/ax-pintest   -> OK, icerik sizdi          (HATA)
+ *
+ * Cozum: axdaemon mountinfo'da root=="/" ve mountpoint!="/"
+ * olan her mount icin (dev, ino) -> mountpoint yaziyor.
+ * BPF mount kokune ulastiginda bu anahtari arar ve oneki
+ * yolun ALTINA ekler.
+ *
+ * Anahtar (dev, ino) OLMAK ZORUNDA: tum tmpfs kokleri
+ * inode 1'dir (/tmp=1, /dev/shm=1, /run=1). Ayri superblock
+ * ayri st_dev verir, bu yuzden cift benzersizdir.
+ */
+#define AX_MP_MAX 4
+
+struct ax_mp_key {
+  /* Yalnizca superblock cihazi.
+   *
+   * once (dev, ino) kullaniliyordu. Inode mountinfo'da YOKTUR ve
+   * istat() SELinux tarafindan reddediliyor:
+   *
+   *   stat /sys/fs/cgroup: permission denied
+   *   stat /run/user/1000: permission denied
+   *   (12 mount noktasi, hepsi EACCES)
+   *
+   * Yani inode ancak ya istat yetkisi vererek ya da yaklasik bir
+   * varsayimla elde edilebilirdi; ikisi de yanlislik kaynagi.
+   *
+   * mountinfo'nun 3. alani zaten superblock cihazidir
+   * ("0:39"), ve kernelde i_sb->s_dev ile ayni degerdir. Tek
+   * degere gore anahtarlamak istat yetkisi gerektirmez.
+   *
+   * Belirsizlik: ayni superblocku iki ayri yola baglamak
+   * (orn. ayni tmpfs'i /tmp ve /var/tmp'ye baglamak) tek
+   * kaydi paylasir. Boyle bir baglanti pratikte yoktur ve
+   * sonuc, hicbir kaydin olmamasindan cok daha iyidir. */
+  __u64 dev;
+};
+
+struct ax_mp_val {
+  /* "/tmp" -> slot[0]="/tmp", n=1 */
+  char slot[AX_MP_MAX][AX_PATH_SLOT];
+  __u32 n;
+  /* onceki bloklarin toplam bayt sayisi (her bilesen len+1) */
+  __u32 bytes;
+};
+
+struct {
+  __uint(type, BPF_MAP_TYPE_HASH);
+  __uint(max_entries, 64);
+  __type(key, struct ax_mp_key);
+  __type(value, struct ax_mp_val);
+} mount_point_map SEC(".maps");
+
 /* Audit perf buffer */
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -317,6 +387,83 @@ static __always_inline int ax_mount_artifact(const char *name)
 	return v != 0;
 }
 
+/* Dentry yurusunden gelen bilesenleri path bloklarina yazar.
+ *
+ * base, yolun EN YUKSEK blogu (dosyanin kendi adinin oturdugu
+ * blok). Derleme zamani sabiti oldugu icin tum ofkezler sabit
+ * olur ve verifier sinir denetimi gerektirmez.
+ *
+ * Ayri bir __always_inline fonksiyon olmasi kasitlidir: switch
+ * her kolunde FARKLI bir base ile cagrilir, derleyici her
+ * birini ayri gomulur ve her gomulmede ofkezler sabitlesir.
+ */
+static __always_inline void ax_write_components(struct path *p,
+						struct policy_key *key,
+						__u32 base,
+						struct dentry *mnt_root)
+{
+	struct dentry *cur;
+	struct dentry *up;
+	const unsigned char *nm;
+	char artkey[AX_PATH_SLOT];
+	int len, d;
+
+	cur = BPF_CORE_READ(p, dentry);
+	if (!cur)
+		return;
+#pragma unroll
+	for (d = 0; d < AX_PATH_DEPTH; d++) {
+		__u32 b = base - (__u32)d;
+
+		if ((__u32)d >= base)
+			break;
+		up = BPF_CORE_READ(cur, d_parent);
+		nm = BPF_CORE_READ(cur, d_name.name);
+		if (!nm)
+			break;
+		len = BPF_CORE_READ(cur, d_name.len);
+		if (len <= 0 || len > AX_NAME_MAX)
+			break;
+
+		/* Kok dentry hicbir bloga yazilmaz. Go tarafi da kok
+		 * icerigi uretmez; iki taraf ayni anahtari uretmek
+		 * icin burada da yazmak sart. */
+		if (!up || up == cur)
+			break;
+
+		__builtin_memset(key->path[b], 0, AX_PATH_SLOT);
+		key->path[b][0] = '/';
+		if (bpf_probe_read_kernel(&key->path[b][1], AX_NAME_MAX,
+					  nm) < 0)
+			return;
+
+		__builtin_memset(artkey, 0, sizeof(artkey));
+		__builtin_memcpy(artkey, key->path[b] + 1, AX_NAME_MAX);
+
+		/* Gorunmez mount kozu mu? (axdaemon mountinfo'dan
+		 * doldurur.)  /etc -> "root" atlanir; /var -> "var"
+		 * korunur.
+		 *
+		 * Bolme isareti HARITAYA GIRMEZ; Go tarafi mount
+		 * kokunun adini dogrudan yazar.
+		 *
+		 * Koz bilesenini TAMAMEN sil.
+		 *
+		 * Yalnizca path[b][0] = '\0' yapmak YETMEZ: Go tarafi
+		 * her blogu "/ad" biciminde bekler ve ilk bayti NUL
+		 * olsa bile adin geri kalini birlestiriyor. Audit
+		 * ciktisi bunu acikca gosterdi:
+		 *   "path":"\u0000root/etc/ax-r3"
+		 * Yani anahtar "/\0root/etc/ax-r3" oluyor ve hicbir
+		 * politika anahtariyla eslesmiyor.
+		 *
+		 * Blogun TAMAMI temizlenir; Go bos blogu atlar. */
+		if (cur == mnt_root && ax_mount_artifact(artkey))
+			__builtin_memset(key->path[b], 0, AX_PATH_SLOT);
+		cur = up;
+	}
+}
+
 static __always_inline int ax_fill_path(struct path *p, struct policy_key *key)
 {
 	struct dentry *cur;
@@ -324,7 +471,14 @@ static __always_inline int ax_fill_path(struct path *p, struct policy_key *key)
 	const unsigned char *nm;
 	struct vfsmount *mnt;
 	struct dentry *mnt_root = 0;
-	char artkey[AX_PATH_SLOT];
+	/* Mount noktasi oneki.
+	 *
+	 * Harita degeri bir yigin tamponuna kopyalanmaz; arama
+	 * yapildigi anda (gecis 1, baska map cagrisi YOK) yazilir.
+	 * Gecis 2'de her bilesende mount_artifact_map'e bakildigi
+	 * icin harita degeri o noktada verifier'da gecersizdir. */
+	__u32 nprefix = 0;
+	__u32 ncomp = 0;
 	__u32 total;
 	int len, d;
 
@@ -417,71 +571,188 @@ static __always_inline int ax_fill_path(struct path *p, struct policy_key *key)
 		len = BPF_CORE_READ(cur, d_name.len);
 		if (len <= 0 || len > AX_NAME_MAX)
 			break;
-		/* Kok dentry Go tarafinda bloga yazilmaz; sayma */
-		if (!up || up == cur)
+		/* Kok dentry Go tarafinda bloga yazilmaz; sayma.
+		 *
+		 * Burada mount noktasi oneki ARANIR. Dentry yurusu
+		 * mount kokunde biter ve o noktada "tmp" gibi bir
+		 * mount noktasi adi YOKTUR (mount bir dizin girdisi
+		 * degil, bir baglantidir). Bu yuzden onek haritadan
+		 * alinir ve yolun ALTINA eklenir.
+		 *
+		 * Arama yalnizca burada, ilk gecis icinde yapilir:
+		 * (a) bu noktada baska map cagrisi YOK, dogrudan
+		 *     stack'e kopyalanabilir; (b) gecis 2'de her
+		 *     bilesende mount_artifact_map'e bakiliyor ve
+		 *     verifier o cagrilarin pointer'lari bozdugu icin
+		 *     harita degeri gecersizlesirdi. */
+		if (!up || up == cur) {
+			struct ax_mp_key mk;
+			struct ax_mp_val *mpv;
+
+			/* d_inode ve i_sb ISARECI'dir; BPF_CORE_READ noktali
+			 * erisimi degil zincir kabul eder. */
+			mk.dev = BPF_CORE_READ(cur, d_inode, i_sb, s_dev);
+			mpv = bpf_map_lookup_elem(&mount_point_map, &mk);
+			if (mpv) {
+				__u32 np = mpv->n;
+
+				/* verifier icin araligi ACIKCA daralt:
+				 * 1 <= np <= 4. Bu olmadan blok indeksi
+				 * kanitlanamiyor ve program "R4 unbounded
+				 * memory access" ile reddediliyordu. */
+				if (np > AX_MP_MAX)
+					np = AX_MP_MAX;
+				if (np >= 1 && ncomp + np <= (__u32)AX_PATH_DEPTH) {
+					nprefix = np;
+					total += mpv->bytes;
+					/* b = 8 - np + i, np in [1,4], i in
+					 * [0,3] -> b in [4,7]. */
+				/* Onek, bilesenlerin ALTINDA durmalidir.
+				 *
+				 * Go tarafi setKeyPath("/tmp/ax-pintest") su
+				 * duzeni uretir:
+				 *     Path[7]="/ax-pintest"   <- en derin bilesen
+				 *     Path[6]="/tmp"          <- mount noktasi
+				 *
+				 * Bilesenler 7'den ASAGI, onek onlarin
+				 * altina yazilir. Ilk denemede onek 7'ye
+				 * yaziliyordu ve anahtar TERS kuruluyordu.
+				 *
+				 * Ofkez ncomp'a bagli; ncomp yigin
+				 * degiskeni oldugu icin switch ile derleme
+				 * zamaninda sabitlestirilir. */
+				/* Onek, bilesenlerin ALTINDA durmalidir ve YOL
+				 * YONUNDE TERS sirada yazilir.
+				 *
+				 * Go tarafi setKeyPath("/dev/shm/ax-f") su duzeni
+				 * uretir:
+				 *     Path[7]="/ax-f"  Path[6]="/shm"  Path[5]="/dev"
+				 *
+				 * Yani mount noktasi onceki slotlarindan geriye
+				 * dogru siralanir ve Go tarafi slot[] dizisini de
+				 * TERS doldurur (bkz. buildMountPointVal).
+				 *
+				 * Ilk iki denemede ya onek bilesenlerin USTUNE
+				 * yaziliyordu ya da ayni yonde siraliyordu;
+				 * /tmp tek bilesenli oldugu icin dogru gorunuyor,
+				 * /dev/shm ve /run/user/1000 ise tutmuyordu.
+				 */
+				switch (ncomp) {
+				case 0:
+					if (nprefix > 0)
+						__builtin_memcpy(key->path[7], mpv->slot[0], AX_PATH_SLOT);
+					if (nprefix > 1)
+						__builtin_memcpy(key->path[6], mpv->slot[1], AX_PATH_SLOT);
+					if (nprefix > 2)
+						__builtin_memcpy(key->path[5], mpv->slot[2], AX_PATH_SLOT);
+					if (nprefix > 3)
+						__builtin_memcpy(key->path[4], mpv->slot[3], AX_PATH_SLOT);
+					break;
+				case 1:
+					if (nprefix > 0)
+						__builtin_memcpy(key->path[6], mpv->slot[0], AX_PATH_SLOT);
+					if (nprefix > 1)
+						__builtin_memcpy(key->path[5], mpv->slot[1], AX_PATH_SLOT);
+					if (nprefix > 2)
+						__builtin_memcpy(key->path[4], mpv->slot[2], AX_PATH_SLOT);
+					if (nprefix > 3)
+						__builtin_memcpy(key->path[3], mpv->slot[3], AX_PATH_SLOT);
+					break;
+				case 2:
+					if (nprefix > 0)
+						__builtin_memcpy(key->path[5], mpv->slot[0], AX_PATH_SLOT);
+					if (nprefix > 1)
+						__builtin_memcpy(key->path[4], mpv->slot[1], AX_PATH_SLOT);
+					if (nprefix > 2)
+						__builtin_memcpy(key->path[3], mpv->slot[2], AX_PATH_SLOT);
+					if (nprefix > 3)
+						__builtin_memcpy(key->path[2], mpv->slot[3], AX_PATH_SLOT);
+					break;
+				case 3:
+					if (nprefix > 0)
+						__builtin_memcpy(key->path[4], mpv->slot[0], AX_PATH_SLOT);
+					if (nprefix > 1)
+						__builtin_memcpy(key->path[3], mpv->slot[1], AX_PATH_SLOT);
+					if (nprefix > 2)
+						__builtin_memcpy(key->path[2], mpv->slot[2], AX_PATH_SLOT);
+					if (nprefix > 3)
+						__builtin_memcpy(key->path[1], mpv->slot[3], AX_PATH_SLOT);
+					break;
+				case 4:
+					if (nprefix > 0)
+						__builtin_memcpy(key->path[3], mpv->slot[0], AX_PATH_SLOT);
+					if (nprefix > 1)
+						__builtin_memcpy(key->path[2], mpv->slot[1], AX_PATH_SLOT);
+					if (nprefix > 2)
+						__builtin_memcpy(key->path[1], mpv->slot[2], AX_PATH_SLOT);
+					if (nprefix > 3)
+						__builtin_memcpy(key->path[0], mpv->slot[3], AX_PATH_SLOT);
+					break;
+				case 5:
+					if (nprefix > 0)
+						__builtin_memcpy(key->path[2], mpv->slot[0], AX_PATH_SLOT);
+					if (nprefix > 1)
+						__builtin_memcpy(key->path[1], mpv->slot[1], AX_PATH_SLOT);
+					if (nprefix > 2)
+						__builtin_memcpy(key->path[0], mpv->slot[2], AX_PATH_SLOT);
+					break;
+				case 6:
+					if (nprefix > 0)
+						__builtin_memcpy(key->path[1], mpv->slot[0], AX_PATH_SLOT);
+					if (nprefix > 1)
+						__builtin_memcpy(key->path[0], mpv->slot[1], AX_PATH_SLOT);
+					break;
+				case 7:
+					if (nprefix > 0)
+						__builtin_memcpy(key->path[0], mpv->slot[0], AX_PATH_SLOT);
+					break;
+				default:
+					break;
+				}
+
+				}
+				/* Bilesenler + onek sigmiyorsa onek
+				 * yazilmaz. Yarim yazilmis yol, hic
+				 * yazilmamis yoldan daha kotudur. */
+			}
 			break;
+		}
 
 		total += len + 1;
+		ncomp++;
 		cur = up;
 	}
+
 	if (total > (__u32)MAX_PATH_LEN)
 		return -3;
 
 	/* Gecis 2: her bilesen SABIT bloguna yazilir.
+	 *
 	 * d = 0 dosyanin kendi adidir ve yolun SON ogesidir, bu
-	 * yuzden en yuksek bloga yazilir. */
-	cur = BPF_CORE_READ(p, dentry);
-#pragma unroll
-	for (d = 0; d < AX_PATH_DEPTH; d++) {
-		__u32 b = (__u32)(AX_PATH_DEPTH - 1 - d);
+	 * yuzden en yuksek bloga yazilir.
+	 *
+	 * Mount noktasi oneki varsa blok tabani onek kadar ASAGI
+	 * kayar: /tmp/ax-pintest 2 bilesen + 1 onek blogu ister ve
+	 * sirayla
+	 *     Path[7]="/ax-pintest"  Path[6]="/tmp"
+	 * yazilir. Go tarafi setKeyPath() ayni sirayi uretir.
+	 *
+	 * BASE derleme zamani SABIT olarak verilir (switch asagida).
+	 * Bunun nedeni verifier: nprefix bir yigin degiskenidir ve
+	 * "8 - nprefix + i" gibi ifadelerin sonucunu kanitlayamaz.
+	 * Ilk denemede program "R4 unbounded memory access" ile
+	 * reddedildi (offset 272 = path[8], tam bir blok tasmasi).
+	 * Sabit ofkezle bu tur bir hata tamamen ortadan kalkar.
+	 */
+	ax_write_components(p, key, 7, mnt_root);
 
-		up = BPF_CORE_READ(cur, d_parent);
-		nm = BPF_CORE_READ(cur, d_name.name);
-		if (!nm)
-			break;
-		len = BPF_CORE_READ(cur, d_name.len);
-		if (len <= 0 || len > AX_NAME_MAX)
-			break;
-
-		/* Kok dentry hicbir bloga yazilmaz. Go tarafi da kok
-		 * icerigi uretmez; iki taraf ayni anahtari uretmek
-		 * icin burada da yazmak sart. */
-		if (!up || up == cur)
-			break;
-
-		__builtin_memset(key->path[b], 0, AX_PATH_SLOT);
-		key->path[b][0] = '/';
-		if (bpf_probe_read_kernel(&key->path[b][1], AX_NAME_MAX,
-					  nm) < 0)
-			return -6;
-
-		__builtin_memset(artkey, 0, sizeof(artkey));
-		__builtin_memcpy(artkey, key->path[b] + 1, AX_NAME_MAX);
-
-		/* Gorunmez mount kozu mu? (axdaemon mountinfo'dan
-		 * doldurur.)  /etc -> "root" atlanir; /var -> "var"
-		 * korunur.
-		 *
-		 * Bolme isareti HARITAYA GIRMEZ; Go tarafi mount
-		 * kokunun adini dogrudan yazar. */
-		/* Koz bilesenini TAMAMEN sil.
-		 *
-		 * Yalnizca path[b][0] = '\0' yapmak YETMEZ: Go tarafi
-		 * her blogu "/ad" biciminde bekler ve ilk bayti NUL
-		 * olsa bile adin geri kalini birlestiriyor. Audit
-		 * ciktisi bunu acikca gosterdi:
-		 *   "path":"\u0000root/etc/ax-r3"
-		 * Yani anahtar "/\0root/etc/ax-r3" oluyor ve hicbir
-		 * politika anahtariyla eslesmiyor.
-		 *
-		 * Blogun TAMAMI temizlenir; Go bos blogu atlar. */
-		if (cur == mnt_root && ax_mount_artifact(artkey))
-			__builtin_memset(key->path[b], 0, AX_PATH_SLOT);
-		cur = up;
-	}
-
-	/* kok bos ise tum bloklar temiz kalsin */
-	key->path[0][0] = '\0';
+	/* Kok bos ise tum bloklar temiz kalsin.
+	 *
+	 * DIKKAT: onek + bilesenler 0. blogu da kullanabilir
+	 * (toplam 8 bilesende). O durumda 0. blogu silmek GERCEK
+	 * bir yol bilesenini yok ederdi. */
+	if (ncomp + nprefix < (__u32)AX_PATH_DEPTH)
+		key->path[0][0] = '\0';
 	return 0;
 }
 

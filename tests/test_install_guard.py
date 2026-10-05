@@ -1011,12 +1011,43 @@ class TestInstallPathsAgree(unittest.TestCase):
             m.group(1).strip(), "$(DESTDIR)/usr/lib/axlinux",
             "LIBDIR degisti; wrapper ve paket yolu bozulur")
 
-    def test_bindir_is_local_bin(self):
+    def test_prefix_is_canonical_usr(self):
+        """PREFIX kanonik /usr olmali.
+
+        ONCEDEN PREFIX /usr/local idi ve systemd birimleri
+        /usr/local/bin/axdaemon'i gosteriyordu. RPM ise ikilileri
+        /usr/bin altina kuruyordu; sonuc: rpm ile kurulan sistemde
+        servis 203/EXEC ile hic acilamiyordu. Simdi kaynak kurulumu,
+        .deb ve .rpm AYNI yollari kullanir.
+        """
         mk = read(self.ROOT / "Makefile")
         p = re.search(r"^PREFIX\s*[?:]?=\s*(.+)$", mk, re.M)
         self.assertIsNotNone(p, "PREFIX tanimi yok")
-        self.assertEqual(p.group(1).strip(), "/usr/local",
-                         "PREFIX degisti; paket /usr/local/bin kuruyor")
+        self.assertEqual(p.group(1).strip(), "/usr",
+                         "PREFIX /usr olmali; kanonik yol /usr/bin")
+
+    def test_unit_files_match_prefix(self):
+        """systemd birimleri PREFIX ile ayni yolu gostermeli.
+
+        Bu birimlerle PREFIX ayrisirsa paket sessizce calismaz:
+        ExecStart var olmayan bir ikiliyi isaret eder ve systemd
+        203/EXEC verir. Kurulum sirasinda fark edilmesi zor
+        oldugu icin yapilandirmada denetlenir.
+        """
+        mk = read(self.ROOT / "Makefile")
+        p = re.search(r"^PREFIX\s*[?:]?=\s*(.+)$", mk, re.M)
+        self.assertIsNotNone(p, "PREFIX tanimi yok")
+        bindir = p.group(1).strip() + "/bin"
+
+        for unit, exe in (("axdaemon.service", "axdaemon"),
+                          ("axlog.service", "axlog")):
+            text = read(self.ROOT / "packaging" / unit)
+            starts = re.findall(r"^ExecStart=(.+)$", text, re.M)
+            self.assertTrue(starts, "%s icin ExecStart yok" % unit)
+            for line in starts:
+                self.assertIn(
+                    os.path.join(bindir, exe), line,
+                    "%s ExecStart PREFIX ile eslesmiyor: %s" % (unit, line))
 
     def test_blocks_are_non_empty(self):
         for t in ("install", "package"):
@@ -1024,7 +1055,7 @@ class TestInstallPathsAgree(unittest.TestCase):
                             f"{t} blogu bos; blok cikarimi bozuk")
 
     def test_both_paths_place_python_under_axctl(self):
-        """*.py dosyalari AXCTL/ ALT DIZININE kurulmali.
+        r"""*.py dosyalari AXCTL/ ALT DIZININE kurulmali.
 
         Duz kurulum (\$(LIBDIR)/*.py) kodun "axctl.cli" bekledigi
         yoldan ayrilir ve paket eski surumu calistirir.
@@ -1056,8 +1087,8 @@ class TestInstallPathsAgree(unittest.TestCase):
         self.assertIn("$(BINDIR)/axdaemon", install_blk)
         self.assertIn("$(BINDIR)/axlog", install_blk)
         self.assertIn("$(LIBDIR)/axbpf.o", install_blk)
-        self.assertIn("$(STAGE)/usr/local/bin/axdaemon", pkg_blk)
-        self.assertIn("$(STAGE)/usr/local/bin/axlog", pkg_blk)
+        self.assertIn("$(STAGE)/usr/bin/axdaemon", pkg_blk)
+        self.assertIn("$(STAGE)/usr/bin/axlog", pkg_blk)
         self.assertIn("$(STAGE)/usr/lib/axlinux/axbpf.o", pkg_blk)
 
     def test_wrapper_matches_libdir(self):

@@ -51,6 +51,21 @@ const (
 	// So the discriminator lives in userspace: a mount root is an
 	// artifact iff root != "/" AND root != mountpoint.
 	MountArtifactMapName = "mount_artifact_map"
+	// MountPointMapName holds MOUNTPOINT prefixes that a dentry walk
+	// cannot see.
+	//
+	// /tmp is a tmpfs mount on Fedora:
+	//
+	//	/proc/self/mountinfo: root=/ mountpoint=/tmp
+	//	/tmp/ax-pintest -> ax-pintest -> "/"
+	//
+	// "tmp" is a mount attachment, not a directory entry, so the walk
+	// produces "/ax-pintest" and the "/tmp" prefix is lost. Rules for
+	// /tmp then never match while "reload" reports success.
+	//
+	// Key: (st_dev, st_ino) of the mount root. Keyed on dev+ino
+	// because every tmpfs root shares inode 1.
+	MountPointMapName = "mount_point_map"
 )
 
 // Yol alani sabit bloklara bolunur. Boylece eBPF tarafinda her
@@ -159,12 +174,13 @@ func actionToString(a uint32) string {
 
 // Manager wraps the allow and deny eBPF maps plus the mode array map.
 type Manager struct {
-	allowMap  *ebpf.Map
-	denyMap   *ebpf.Map
-	modeMap   *ebpf.Map
-	learnMap  *ebpf.Map
-	auditMap  *ebpf.Map
-	artifactM *ebpf.Map
+	allowMap    *ebpf.Map
+	denyMap     *ebpf.Map
+	modeMap     *ebpf.Map
+	learnMap    *ebpf.Map
+	auditMap    *ebpf.Map
+	artifactM   *ebpf.Map
+	mountPointM *ebpf.Map
 }
 
 // NewFromCollection takes the maps out of a loaded collection.
@@ -179,12 +195,13 @@ func NewFromCollection(coll *ebpf.Collection) (*Manager, error) {
 
 	maps := coll.Maps
 	mgr := &Manager{
-		allowMap:  maps[AllowMapName],
-		denyMap:   maps[DenyMapName],
-		modeMap:   maps[ModeMapName],
-		learnMap:  maps[LearnMapName],
-		auditMap:  maps[AuditMapName],
-		artifactM: maps[MountArtifactMapName],
+		allowMap:    maps[AllowMapName],
+		denyMap:     maps[DenyMapName],
+		modeMap:     maps[ModeMapName],
+		learnMap:    maps[LearnMapName],
+		auditMap:    maps[AuditMapName],
+		artifactM:   maps[MountArtifactMapName],
+		mountPointM: maps[MountPointMapName],
 	}
 
 	var missing []string
@@ -196,6 +213,9 @@ func NewFromCollection(coll *ebpf.Collection) (*Manager, error) {
 	}
 	if mgr.modeMap == nil {
 		missing = append(missing, ModeMapName)
+	}
+	if mgr.mountPointM == nil {
+		missing = append(missing, MountPointMapName)
 	}
 	if len(missing) > 0 {
 		return nil, fmt.Errorf("collection icinde map yok: %s "+
