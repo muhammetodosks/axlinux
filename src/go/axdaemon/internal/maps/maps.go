@@ -31,6 +31,26 @@ const (
 	// operations produced no events.
 	LearnMapName = "learn_map"
 	AuditMapName = "audit_buffer"
+	// MountArtifactMapName holds the names of MOUNT ROOTS THAT ARE
+	// NOT VISIBLE IN ANY PATH.
+	//
+	// On Fedora the root filesystem is a btrfs SUBVOLUME:
+	//
+	//	/proc/self/mountinfo: root=/root mountpoint=/
+	//	/etc/ax-t -> ax-t -> etc -> root -> /
+	//
+	// "root" is not part of any visible path; writing it produces
+	// "/root/etc/ax-t" while the policy says "/etc/ax-t" and the
+	// rule silently never matches.
+	//
+	// /var and /home are separate subvolume mounts:
+	//
+	//	root=/var mountpoint=/var     -> "var" IS visible, keep it
+	//	root=/   mountpoint=/tmp     -> nothing to hide
+	//
+	// So the discriminator lives in userspace: a mount root is an
+	// artifact iff root != "/" AND root != mountpoint.
+	MountArtifactMapName = "mount_artifact_map"
 )
 
 // Yol alani sabit bloklara bolunur. Boylece eBPF tarafinda her
@@ -139,11 +159,12 @@ func actionToString(a uint32) string {
 
 // Manager wraps the allow and deny eBPF maps plus the mode array map.
 type Manager struct {
-	allowMap *ebpf.Map
-	denyMap  *ebpf.Map
-	modeMap  *ebpf.Map
-	learnMap *ebpf.Map
-	auditMap *ebpf.Map
+	allowMap  *ebpf.Map
+	denyMap   *ebpf.Map
+	modeMap   *ebpf.Map
+	learnMap  *ebpf.Map
+	auditMap  *ebpf.Map
+	artifactM *ebpf.Map
 }
 
 // NewFromCollection takes the maps out of a loaded collection.
@@ -158,11 +179,12 @@ func NewFromCollection(coll *ebpf.Collection) (*Manager, error) {
 
 	maps := coll.Maps
 	mgr := &Manager{
-		allowMap: maps[AllowMapName],
-		denyMap:  maps[DenyMapName],
-		modeMap:  maps[ModeMapName],
-		learnMap: maps[LearnMapName],
-		auditMap: maps[AuditMapName],
+		allowMap:  maps[AllowMapName],
+		denyMap:   maps[DenyMapName],
+		modeMap:   maps[ModeMapName],
+		learnMap:  maps[LearnMapName],
+		auditMap:  maps[AuditMapName],
+		artifactM: maps[MountArtifactMapName],
 	}
 
 	var missing []string

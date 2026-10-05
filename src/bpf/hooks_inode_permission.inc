@@ -5,7 +5,7 @@
 
 
 /* MAY_READ=4, MAY_WRITE=2, MAY_EXEC=1 */
-static __always_inline __u32 mask_to_action(int mask)
+static __always_inline int mask_to_action(int mask)
 {
 	if (mask & 0x4)
 		return ACTION_FILE_READ;
@@ -23,7 +23,11 @@ int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 	struct audit_event *event = ax_event();
 	struct policy_value *val;
 	__u32 mode;
-	__u32 action;
+	int action;
+
+	/* Koruma kontrolu icin PID; ayrica event->pid de
+	 * bunu kullanir (bpf_get_current_pid_tgid bir kez). */
+	__u32 cur_pid = bpf_get_current_pid_tgid() >> 32;
 
 	mode = ax_mode();
 	if (mode == MODE_DISABLED)
@@ -51,15 +55,46 @@ int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 	val = ax_lookup_wild(key);
 	int denied = val && val->effect == EFFECT_DENY;
 
-	event->pid = bpf_get_current_pid_tgid() >> 32;
+	event->pid = cur_pid;
 	__builtin_memcpy(event->comm, key->comm, sizeof(event->comm));
 	event->action = action;
 	event->effect = denied ? EFFECT_DENY : EFFECT_ALLOW;
 	event->rule_id = denied ? val->rule_id : 0;
 	event->hook_type = HOOK_INODE_PERMISSION;
 
-	if (!denied) {
-	/* Ogrenme gozlemi.
+	/* Tek karar noktasi.
+	 *
+	 * Once iki ayri `return` vardi: biri "izinli" yolunda 0,
+	 * biri "engellendi" yolunda -EPERM. Derleyici (clang 22,
+	 * Fedora 44) bu iki cikisi TEK BIR stack degiskeninde
+	 * birlestirip `return <degisken>` uretiyor; degisken
+	 * isaretsiz oldugu icin yukleme `r0 = *(u32 *)(r10-8)`
+	 * oluyor ve verifier araligi 0..4294967295 goruyor:
+	 *
+	 *   At program exit the register R0 has smin=0 smax=4294967295
+	 *   should have been in [-4095, 0]
+	 *
+	 * LSM kancasi yalnizca 0 veya negatif dondurmelidir, program
+	 * reddedilir ve YUKLENMEZ. Sonuc: daemon "ebpf yuklenemedi"
+	 * deyip enforcement OLMADAN calismaya devam eder.
+	 *
+	 * Cozum: karar tek bir `if` icinde verilir ve fonksiyon
+	 * TEK bir `return 0` ile biter. Boylece derleyicinin
+	 * birlestirecegi iki farkli donus degeri kalmaz.
+	 */
+	if (denied) {
+		if (mode == MODE_ENFORCING) {
+			event->decision = DECISION_DENIED;
+			ax_audit(ctx, event);
+			return -EPERM;
+		}
+		/* permissive: kayit dus, ama izin ver */
+		event->decision = DECISION_ALLOWED;
+		ax_audit(ctx, event);
+		return 0;
+	}
+
+	/* Izin verilen erisim yalnizca ogrenme modunda gozlem uretir.
 	 *
 	 * Buraya kadar yalnizca DENY kurali eslesen operasyonlar
 	 * olay uretiyordu. Ogrenme modunun amaci ise tam tersidir:
@@ -69,24 +104,12 @@ int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 	 * gozlem toplaniyordu; kullaniciya "3 gun kayit tutulacak"
 	 * yazilip hicbir sey toplanmiyordu.
 	 *
-	 * Burada izin verilen operasyon bir gozleme donusur.
 	 * Yalnizca ogrenme ACIKKEN: her izinli dosya okumasini
 	 * surekli audit etmek sistemde gereksiz yuk olusturur.
 	 */
-		if (ax_learning()) {
-			event->decision = DECISION_ALLOWED;
-			ax_audit(ctx, event);
-		}
-		return 0;
-	}
-
-	if (mode == MODE_ENFORCING) {
-		event->decision = DECISION_DENIED;
+	if (ax_learning()) {
+		event->decision = DECISION_ALLOWED;
 		ax_audit(ctx, event);
-		return -EPERM;
 	}
-
-	event->decision = DECISION_ALLOWED;
-	ax_audit(ctx, event);
 	return 0;
 }

@@ -28,13 +28,49 @@ echo "  SELinux: $(getenforce)"
 
 # 1) Politika modulunu derle (kaynak varsa) ve kur
 PP=""
-for cand in "$PREFIX/share/selinux/packages/$MODULE.pp" \
-            "$FC/../selinux/packages/$MODULE.pp" \
-            "/usr/share/selinux/packages/$MODULE.pp"; do
-    [ -f "$cand" ] && { PP="$cand"; break; }
+# SCRIPT_DIR: bu betigin bulundugu dizin. Kurulumda
+# /usr/local/share/axlinux/ altina, kaynakta packaging/fedora/ altina
+# konur. Derlenen .pp de ayni dizinde olur.
+SCRIPT_DIR=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
+
+# ONCELIK SIRASI ONEMLI.
+#
+# Dogru sira: ONCE bu betigin yanindaki (yani az once derlenmis)
+# modul, SONRA sisteme kurulmus olan.
+#
+# Once sistem yolu ("/usr/share/selinux/packages") basta oldugu icin
+# ESKI kurulu modul seçiliyordu ve yeni derlenen modul HIC kurulmuyordu.
+# Sonuc: kaynaga yeni izin eklemek (orn. bpffs yazma izni) hicbir
+# etki gostermiyordu; sesearch kurali bulamiyor, harita pinleme
+# yine "permission denied" veriyordu.
+# Adaylar arasinda EN YENI dosya secilir (`-nt`).
+#
+# Sadece oncelik sirasi yetersiz: kurulum yeni kaynagi, sistem
+# yolu eskiyi tasiyor olabilir. Eski modul kurulunca yeni tip
+# tanimlari (orn. axlinux_cli_exec_t) yok oluyor ve modul
+# "type ... is not defined" ile basarisiz kuruluyor.
+PP=""
+for cand in "$SCRIPT_DIR/$MODULE.pp" \
+            "$SCRIPT_DIR/../$MODULE.pp" \
+            "$PREFIX/share/axlinux/$MODULE.pp" \
+            "$PREFIX/share/selinux/packages/$MODULE.pp" \
+            "/usr/share/selinux/packages/$MODULE.pp" \
+            "$FC/../selinux/packages/$MODULE.pp"; do
+    [ -f "$cand" ] || continue
+    if [ -z "$PP" ] || [ "$cand" -nt "$PP" ]; then
+        PP="$cand"
+    fi
 done
 if [ -z "$PP" ]; then
-    PP=$(find / -name "$MODULE.pp" -path '*selinux*' 2>/dev/null | head -1)
+    # ONCEDEN: find / -name "$MODULE.pp" -path '*selinux*'
+    # Bu kosul derlenen dosyayi BULAMIYORDU: kaynaktan kurulumda
+    # dosya packaging/fedora/axlinux.pp altindadir ve yolunda
+    # "selinux" kelimesi YOK. Sonuc: modul kurulamadi, SELinux
+    # Enforcing altinda axdaemon unconfined_t'de calisti ve alan
+    # kurallari hic uygulanmadi.
+    #
+    # Simdi yol filtresi yok; yalnizca adi eslesen dosya aranir.
+    PP=$(find / -name "$MODULE.pp" 2>/dev/null | head -1)
 fi
 
 if [ -n "$PP" ] && [ -f "$PP" ]; then
@@ -73,7 +109,8 @@ set_fcontext axlinux_var_lib_t   '/var/lib/axlinux(/.*)?'
 set_fcontext axlinux_var_log_t   '/var/log/axlinux(/.*)?'
 set_fcontext axlinux_var_run_t   '/run/axlinux(/.*)?'
 set_fcontext axlinux_daemon_exec_t "$PREFIX/bin/axdaemon"
-set_fcontext axlinux_log_exec_t  "$PREFIX/bin/axctl"
+set_fcontext axlinux_log_exec_t    "$PREFIX/bin/axlog"
+set_fcontext axlinux_cli_exec_t    "$PREFIX/bin/axctl"
 echo "  dosya baglamlari tanimlandi"
 
 # 3) Mevcut dosyalara baglamlari UYGULA. Bu olmadan dosyalar
@@ -81,7 +118,7 @@ echo "  dosya baglamlari tanimlandi"
 #    lib_t, etc_t) ve AXlinux okuyamaz.
 for p in "$PREFIX/lib/axlinux" /etc/axlinux /var/lib/axlinux \
          /var/log/axlinux /run/axlinux \
-         "$PREFIX/bin/axdaemon" "$PREFIX/bin/axlog" \
+         "$PREFIX/bin/axdaemon" "$PREFIX/bin/axlog" "$PREFIX/bin/axctl" \
          "$UNITDIR/axdaemon.service" "$UNITDIR/axlog.service"; do
     [ -e "$p" ] && restorecon -R "$p" 2>/dev/null
 done

@@ -386,9 +386,18 @@ else
                               linux-tools-common python3-pytest \
                               build-essential git rsync curl \
                               ca-certificates netcat-openbsd ;;
-        dnf|yum) install_pkgs clang llvm libbpf-devel linux-headers \
-                              python3-pytest gcc make git rsync curl \
-                              netcat-openbsd ;;
+          # selinux-policy-devel / policycoreutils SELinux icin ZORUNLU:
+          # modul bu gelistirme dosyalari olmadan derlenmez.
+          #
+          # Once SELinux adimi "modul derlenemedi" diye uyari verip
+          # geciyordu. Sonuc sessiz ve kotuydu: SELinux Enforcing
+          # altinda axdaemon unconfined_t alaninda calisiyor ve
+          # hicbir alan kurali uygulanmiyordu.
+          dnf|yum) install_pkgs clang llvm libbpf-devel linux-headers \
+                                python3-pytest gcc make git rsync curl \
+                                netcat-openbsd bpftool audit \
+                                selinux-policy-devel policycoreutils \
+                                selinux-policy-targeted ;;
         pacman)  install_pkgs clang llvm libbpf libbpf-devel linux-headers \
                               python-pytest base-devel git rsync curl \
                               netcat-openbsd ;;
@@ -506,12 +515,36 @@ fi
 begin "Derleme"
 cd "$SRC" || { fail_step "kaynak dizinine girilemedi"; summary; exit 1; }
 
-tick "vmlinux.h uretiliyor (kernel BTF)"
-if [ ! -f src/bpf/vmlinux.h ]; then
-    bpftool btf dump file /sys/kernel/btf/vmlinux format c > src/bpf/vmlinux.h 2>/dev/null
-fi
-[ -s src/bpf/vmlinux.h ] && ok "vmlinux.h: $(wc -l < src/bpf/vmlinux.h) satir" \
-    || { fail_step "vmlinux.h uretilemedi"; summary; exit 1; }
+  tick "vmlinux.h uretiliyor (kernel BTF)"
+  # HER ZAMAN yeniden uretilir. Once yalnizca "dosya yoksa" uretiliyordu:
+  #
+  #   if [ ! -f src/bpf/vmlinux.h ]; then ... fi
+  #
+  # Depoda Eylul'den kalma, GELISTIRME MAKESININ cekirdeginden
+  # uretilmis bir vmlinux.h vardir. Varlik kontrolu dosyayi oldugu
+  # gibi birakiyordu ve nesne HEDEF CEKIRDEGIN YAPILARINI TASCIIYORDU.
+  #
+  # Sonuc sessiz ve kotuydu: Fedora 6.19'da yanlis offset'lerle
+  # derlenen nesne dogrulayicidan gecse bile bprm->file okumasi bozuk
+  # cikiyor, yol cozumlemesi bos kaliyor ve process.exec kurallari
+  # HIC UYGULANMIYORDU. Kurulum "basarili" diyordu.
+  #
+  # Dogrusu: vmlinux.h bir derleme ARTIKLIDIR, kaynak degildir.
+  # Her kurulumda calisan cekirdegin BTF'sinden turetilir.
+  # AX_VMLINUX_KEEP=1 ile elle hazirlanmis dosya korunabilir.
+  if [ "${AX_VMLINUX_KEEP:-0}" = "1" ] && [ -s src/bpf/vmlinux.h ]; then
+      info "AX_VMLINUX_KEEP=1: mevcut vmlinux.h korunuyor"
+  else
+      rm -f src/bpf/vmlinux.h
+      bpftool btf dump file /sys/kernel/btf/vmlinux format c > src/bpf/vmlinux.h 2>/dev/null
+  fi
+  if [ -s src/bpf/vmlinux.h ]; then
+      ok "vmlinux.h: $(wc -l < src/bpf/vmlinux.h) satir (kernel $(uname -r))"
+  else
+      fail_step "vmlinux.h uretilemedi"
+      summary
+      exit 1
+  fi
 
 tick "eBPF LSM derleniyor"
 if make -C src/bpf >/tmp/ax-bpf.log 2>&1; then
@@ -576,26 +609,36 @@ chmod 0750 "$LOGDIR" 2>/dev/null
 # Yani "calisiyor" gorunuyordu ama SELinux korumasi YOKTU.
 begin "SELinux"
 if ! command -v getenforce >/dev/null 2>&1; then
-    ok_step "SELinux sistemde yok, atlandi"
+    ok "SELinux sistemde yok, atlandi"
 else
     _se="$(getenforce 2>/dev/null || echo Bilinmiyor)"
-    ok_step "SELinux: $_se"
+    ok "SELinux: $_se"
     _sxs="$SRC/packaging/fedora"
     _sxr="/usr/local/share/axlinux/selinux-setup.sh"
 
-    # Politika modulunu derle (yalniz SELinux olan sistemde)
-    if [ ! -f /usr/share/selinux/packages/axlinux.pp ]; then
-        if [ -f "$_sxs/Makefile" ] && [ -f /usr/share/selinux/devel/Makefile ]; then
-            if make -C "$_sxs" >/dev/null 2>&1 && [ -f "$_sxs/axlinux.pp" ]; then
-                install -d /usr/share/selinux/packages
-                install -m 0644 "$_sxs/axlinux.pp" /usr/share/selinux/packages/
-                ok "SELinux modulu derlendi"
-            else
-                warn_step "SELinux modulu derlenemedi (selinux-policy-devel eksik olabilir)"
-            fi
+    # Politika modulunu DERLE ve kur.
+    #
+    # ONCEDEN yalniz "dosya yoksa" derleniyordu:
+    #     if [ ! -f /usr/share/selinux/packages/axlinux.pp ]; then
+    #
+    # Sisteme KURULMUS ESKI modul oldugu icin yeni derleme hic
+    # yapilmazdi. Sonuc: kaynaga eklenen yeni SELinux kurallari
+    # (orn. bpffs yazma izni, axlinux_cli_exec_t) ASLA yuklenmiyor;
+    # selinux-setup.sh eski modulu kuruyor ve
+    # "type axlinux_cli_exec_t is not defined" ile BASARISIZ oluyor.
+    #
+    # Dogrusu: modul bir DERLEME ARTIKLIDIR; her kurulumda kaynaktan
+    # yeniden uretilir.
+    if [ -f "$_sxs/Makefile" ] && [ -f /usr/share/selinux/devel/Makefile ]; then
+        if make -C "$_sxs" >/dev/null 2>&1 && [ -f "$_sxs/axlinux.pp" ]; then
+            install -d /usr/share/selinux/packages
+            install -m 0644 "$_sxs/axlinux.pp" /usr/share/selinux/packages/
+            ok "SELinux modulu derlendi"
         else
-            warn_step "SELinux gelistirme dosyalari yok; modul kurulamadi"
+            warn "SELinux modulu derlenemedi (selinux-policy-devel eksik olabilir)"
         fi
+    else
+        warn "SELinux gelistirme dosyalari yok; modul guncellenemedi"
     fi
 
     # SELinux drop-in: NoNewPrivileges kendi alana gecisini
@@ -697,23 +740,56 @@ else
     VFAIL=1
 fi
 
-# 8b kancalar
-HOOKS=$(journalctl -u axdaemon --since '-5min' --no-pager 2>/dev/null \
-        | grep -oE 'aktif=[0-9]+ toplam=[0-9]+' | tail -1)
-if [ -n "$HOOKS" ]; then
-    A5=$(echo "$HOOKS" | sed 's/.*aktif=\([0-9]*\).*/\1/')
-    T5=$(echo "$HOOKS" | sed 's/.*toplam=\([0-9]*\).*/\1/')
-    if [ "$A5" = "$T5" ] && [ "${T5:-0}" -gt 0 ]; then
-        ok "LSM kancalari bagli: $HOOKS"
-    else
-        err "kanca eksik: $HOOKS"
-        info "bpf LSM zincirde mi?  cat $LSM_FILE"
-        VFAIL=1
-    fi
-else
-    err "kanca bilgisi alinamadi"
-    VFAIL=1
-fi
+  # 8b kancalar
+  #
+  # ONCEDEN gunluk kaziniyordu:
+  #   journalctl -u axdaemon --since '-5min' | grep 'aktif=N toplam=N'
+  #
+  # Bu kirilgandir ve kurulumda surekli basarisiz oluyordu:
+  #   - mesaj 5 dakikadan eskiyse veya gunluk donduyse bos doner
+  #   - kurulum 5 dakikadan uzun surerse mesaj pencereden cikar
+  #   - sonuc: "kanca bilgisi alinamadi" ama kancalar baglidir
+  #
+  # Dogrusu: calisan daemon'a SOR. axctl status --json her zaman
+  # lsm_hooks_active / lsm_hooks_total dondurur. Gunluk yalnizca
+  # JSON okunamazsa yedek yoldur.
+  A5=""
+  T5=""
+  # Daemon yeniden baslatildiktan SONRA bu kontrol calisir; soket
+  # hazir olmadan axctl status bos doner ve "kanca bilgisi
+  # alinamadi" hatasi verir. Kisa bir bekleme dongusu eklenir.
+  ST=""
+  for _try in 1 2 3 4 5 6 7 8 9 10; do
+      ST=$(axctl status --json 2>/dev/null)
+      [ -n "$ST" ] && break
+      sleep 1
+  done
+  if [ -n "$ST" ]; then
+      A5=$(printf '%s' "$ST" | tr ',' '\n' \
+           | sed -n 's/.*"lsm_hooks_active":\([0-9]*\).*/\1/p' | head -1)
+      T5=$(printf '%s' "$ST" | tr ',' '\n' \
+           | sed -n 's/.*"lsm_hooks_total":\([0-9]*\).*/\1/p' | head -1)
+  fi
+  if [ -z "$A5" ] || [ -z "$T5" ]; then
+      HOOKS=$(journalctl -u axdaemon --since '-30min' --no-pager 2>/dev/null \
+              | grep -oE 'aktif=[0-9]+ toplam=[0-9]+' | tail -1)
+      if [ -n "$HOOKS" ]; then
+          A5=$(echo "$HOOKS" | sed 's/.*aktif=\([0-9]*\).*/\1/')
+          T5=$(echo "$HOOKS" | sed 's/.*toplam=\([0-9]*\).*/\1/')
+      fi
+  fi
+  if [ -n "$A5" ] && [ -n "$T5" ]; then
+      if [ "$A5" = "$T5" ] && [ "${T5:-0}" -gt 0 ]; then
+          ok "LSM kancalari bagli: $A5/$T5"
+      else
+          err "kanca eksik: $A5/$T5"
+          info "bpf LSM zincirde mi?  cat $LSM_FILE"
+          VFAIL=1
+      fi
+  else
+      err "kanca bilgisi alinamadi (axctl status --json okunamadi)"
+      VFAIL=1
+  fi
 
 # 8c soket
 if [ -S "$RUNDIR/axdaemon.sock" ]; then
@@ -745,8 +821,22 @@ else
 fi
 
 # 8e koruma
-PROT=$(axctl status 2>/dev/null | grep -c 'LSM Kan' || true)
-[ "${PROT:-0}" -ge 1 ] && info "kilitlenme korumasi 29 surec"
+#
+# ONCEDEN: PROT=$(axctl status | grep -c 'LSM Kan')   -> anlamsiz bir sayim
+# ve ciktiya SABIT "29 surec" yaziliyordu. Yani dogru da olsa
+# yanlis da olsa ayni sey gorunuyordu; gercek bir dogrulama degildi.
+#
+# Simdi sayi calisan daemon'dan gelir (internal/protected tek kaynak).
+# JSON guzel yazildigi icin '"anahtar": deger' biciminde bosluk var.
+# Hem bosluklu hem bosluksuz bicimi kapsayan bir desen kullanilir.
+PROT=$(axctl status --json 2>/dev/null \
+      | sed -n 's/.*"protected_process_count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
+      | head -1)
+if [ "${PROT:-0}" -ge 20 ]; then
+    ok "kilitlenme korumasi: $PROT surec"
+else
+    warn "kilitlenme korumasi beklenenden az: ${PROT:-0} surec"
+fi
 
 if [ "$VFAIL" = "0" ]; then
     done_step "tum kontroller gecti"

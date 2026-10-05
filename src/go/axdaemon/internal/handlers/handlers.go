@@ -17,6 +17,7 @@ import (
 	"axlinux/axdaemon/internal/maps"
 	"axlinux/axdaemon/internal/mode"
 	"axlinux/axdaemon/internal/policy"
+	"axlinux/axdaemon/internal/protected"
 	"axlinux/axdaemon/pkg/protocol"
 )
 
@@ -262,6 +263,16 @@ func (h *Handler) handleGetStatus(req protocol.Request) protocol.Response {
 		result["bpf_programs_loaded"] = lsmSt.AttachedCount()
 		result["bpf_programs_total"] = lsmSt.HookCount()
 		result["hooks"] = lsmSt.Status()
+
+		// Kilitlenme korumasi: hicbir kural bu surecleri hedefleyemez.
+		//
+		// Bu liste daha once yalnizca install.sh ciktisinda SABIT bir
+		// "29" olarak yaziliyordu ve gercek bir sayim yapilmirdi.
+		// Artik tek dogruluk kaynagi (internal/protected) buradan
+		// yayinlanir; protected_test.go ayni listenin BPF tarafinda
+		// da oldugunu dogrular.
+		result["protected_processes"] = protected.List()
+		result["protected_process_count"] = protected.Count()
 
 		// enforcement_active is the field that matters: it is false
 		// when hooks are attached but the kernel cannot run them,

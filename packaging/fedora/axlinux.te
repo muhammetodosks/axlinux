@@ -37,6 +37,7 @@ type axlinux_daemon_t;
 type axlinux_daemon_exec_t;
 type axlinux_log_t;
 type axlinux_log_exec_t;
+type axlinux_cli_exec_t;
 
 type axlinux_var_lib_t;
 type axlinux_var_log_t;
@@ -83,6 +84,27 @@ gen_require(`
 	type default_t;
 ')
 
+# --- bpffs yazma izni (harita pinleme) ---
+#
+# Haritalar /sys/fs/bpf/axlinux altina PINLENIR; boylece daemon
+# yeniden baslayinca haritalar korunur.
+#
+# SELinux bunu ENGELLIYORDU ve hata sessizce geciyordu:
+#   pinlenemedi map=mode_map error="permission denied"
+# Harita pinlenmedigi icin her yeniden baslatmada yeni haritalar
+# olusuyor ve map'ler tutarsiz hale geliyordu.
+#
+# Dogrulama: ls -Zd /sys/fs/bpf -> system_u:object_r:bpf_t:s0
+# Yani gercek tip bpf_t (sysfs_bpf_t degil; cil modulunde acik
+# degildi ve modul derlenemiyordu).
+allow axlinux_daemon_t bpf_t:dir { add_name create write search getattr setattr read open lock };
+allow axlinux_daemon_t bpf_t:file { create write read open unlink lock getattr setattr };
+allow axlinux_daemon_t bpf_t:lnk_file { create read unlink };
+allow axlinux_daemon_t bpf_t:sock_file { create write read unlink getattr };
+
+# capability2 { bpf perfmon } zaten asagida veriliyor; bpf ve perfmon
+# `capability2` sinifinin izinleridir, `capability` degil.
+
 
 # --- Dosya baglamlari ---
 #
@@ -122,6 +144,7 @@ init_system_domain(axlinux_log_t, axlinux_log_exec_t)
 # ve dosya etiketlenmedigi icin alan gecisi calismiyor.
 files_type(axlinux_daemon_exec_t)
 files_type(axlinux_log_exec_t)
+files_type(axlinux_cli_exec_t)
 
 # axbpf.o bir VERI dosyasidir (calistirilabilir degil) ama
 # file_contexts'ta kullanilacaksa file_type NITELIGI tasimali.

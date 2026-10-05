@@ -1,5 +1,84 @@
 # Changelog
 
+## 1.1.0 - Fedora 44 uyumlulugu
+
+Fedora 44 (en gecerli kararli Fedora surumu) uzerinde tam dogrulama.
+Bu surum sessiz kalan bir dizi gercek hatayi kalici olarak duzeltir.
+
+### Kritik duzeltmeler (enforcement hic calismiyordu)
+
+- **eBPF programlari Fedora cekirdeginde yuklenmiyordu.**
+  Fedora 44 (clang 22, kernel 6.19) dogrulayicisi coklu `return`
+  iceren LSM kancalarini reddediyordu:
+  `At program exit the register R0 has smin=0 smax=4294967295`.
+  Sonuc: hicbir kanca baglanmiyor, daemon "ebpf yuklenemedi" deyip
+  enforcement OLMADAN calisiyordu; kurulum "basarili" gorunuyordu.
+  Kalan tek sayisal PID korumasi kaldirildi (PID 1/2 adla zaten
+  korunuyor: systemd/init/kthreadd/swapper/migration).
+  `src/go/axdaemon/internal/protected` artik tek dogruluk kaynagi;
+  `contract_test.go` BPF listesiyle ayniligini dogrular.
+
+- **`process.exec` ve `file.execute` kurallari hic uygulanmiyordu.**
+  Iki ayri sebep:
+  1. Koruma kontrolu EBVEYN sureci uzerinde yapiliyordu; "bash",
+     "sudo" korumali oldugu icin kanca her zaman erken donuyordu.
+     Artik hedef binary uzerinde kontrol edilir.
+  2. Yol cozumlemesi btrfs alt birim kokunde ("root") takiliyordu.
+     Fedora 33'ten beri kok bir alt birim; kernel yolu
+     "/root/etc/secret" veriyor, politika "/etc/secret" yaziyor.
+     Cozum: daemon `/proc/self/mountinfo`den gorunmez mount
+     koklerini okuyup `mount_artifact_map` ile BPF'ye verir
+     (`internal/maps/artifacts.go`).
+     `/etc`, `/var`, `/home`, `/root`, `/usr/bin` dogrulandi.
+
+- **Sembolik baglar yanlis degerlendiriliyordu.** Kurallar cagrilan
+  ada degil GERCEK calistirilan dosyaya uygulanir. Bu korunur:
+  aksi halde `ln -s /bin/ls /tmp/ok` ile tum kurallar atlanirdi.
+
+- **`vmlinux.h` bayat kopyadan derleniyordu.** Depoda Eylul'den
+  kalma, gelistirme makinesinin cekirdeginden uretilmis dosya
+  vardi ve `install.sh` yalniz "yoksa" uretiyordu. Artik her
+  kurulumda calisan cekirdegin BTF'sinden yeniden uretilir.
+
+- **`ax_lookup2` joker aramasi yapmiyordu.** `subject: "*"` +
+  `object:` ile yazilan `file.execute` kurallari bprm kancasinda
+  hic bulunamiyordu.
+
+### SELinux
+
+- Politika modulunun **her kurulumda yeniden derlenmesi** sart.
+  Yoksa sisteme kurulmus eski modul kullaniliyor ve kaynaga eklenen
+  yeni kurallar hic yuklenmiyordu.
+- `selinux-setup.sh` adaylar arasinda **en yeni** modulu secer.
+- `bpffs` (`/sys/fs/bpf`) yazma izinleri eklendi.
+- `axlog` icin fcontext yanlislikla `axctl`e veriliyordu; dogru
+  tip `axlinux_log_exec_t` ve yeni `axlinux_cli_exec_t`.
+- Modul arama yolu duzeltildi; kaynak agacindaki derlenmis modul
+  once degerlendiriliyor.
+
+### Dogrulama tutarliligi
+
+- `axctl policy check` ve `axctl reload` **ayni dogrulayicilari**
+  kullanir. Ikisi celisiyordu: yinelenen kural `id` Go'da
+  reddediliyor, Python'da kabul ediliyordu.
+- `..` iceren yollar her iki dogrulayicida da reddedilir.
+- `axctl status --json` artik `protected_processes` yayinlar;
+  `install.sh` sabit "29 surec" yazmak yerine GERCEK sayimi
+  gosterir.
+- Kilitlenme korumasi 31 surec (eski metin 29 diyordu).
+
+### Bilinen sinir
+
+- **Ayrilmis mount noktalari yol kurallarina girmez.** `/tmp` gibi
+  bir dosya sisteminin mount noktasinin adi dentry zincirinde
+  gorunmez; kernel `/ax-dosya` verir, politika `/tmp/ax-dosya`
+  yazar. Yapisal bir sinirdir, `docs/policy-language.md` icinde
+  belgelenmistir.
+- **Harita pinleme (map pinning) calismiyor.** `bpf_obj_pin`
+  EPERM donuyor; yetkiler ve SELinux izinleri yerinde. Pinleme
+  opsiyoneldir: daemon her baslatmada haritalari kendisi olusturur
+  ve enforcement tam calisir.
+
 ## 1.0.0 - 2026-10-02
 
 AXlinux 1.0.0. Bu surum "deneysel" etiketini kaldirir: paket

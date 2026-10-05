@@ -1,4 +1,4 @@
-# AXlinux 1.0.0 — Dağıtım Belgesi
+# AXlinux 1.1.0 — Dağıtım Belgesi
 
 **Sen YAML yaz, AXlinux uygulasın.**
 
@@ -9,7 +9,7 @@ Kural yazarsın, uygularsın. Kural yazmazsan sistem serbest kalır.
 
 | | |
 |---|---|
-| Sürüm | **1.0.0** |
+| Sürüm | **1.1.0** |
 | Sürücü modülü | Linux LSM + eBPF (CO-RE) |
 | Dağıtım | `axdaemon` (Go), `axlog` (Go), `axctl` (Python 3) |
 | Doğrulanmış | Ubuntu 24.04.5, Debian 12 (bookworm), **Pardus 25.2 (yirmibes)** |
@@ -105,6 +105,56 @@ düşürmez — paketler tek tek kurulur, olmayanlar atlanır ve raporlanır.
 | `~/.axlinux/policy.yaml` | Senin politikân (kullanıcı başına) |
 
 ---
+
+
+## Fedora 44 (SELinux Enforcing)
+
+Fedora AXlinux'in birincil hedef dagitimidir ve **Enforcing** SELinux
+altinda dogrulanmistir. `selinux=permissive` kullanilmaz.
+
+### Fedora'ya ozgu davranislar
+
+Kok dosya sistemi bir **btrfs alt birimidir** (`subvolid=256`,
+`mountinfo: root=/root mountpoint=/`). Bu, yol cozumlemesinde iki
+ayri konuyu dogurur:
+
+| Konum | Gorunur yol | Not |
+|---|---|---|
+| `/etc/...` | `/etc/...` | calisir |
+| `/var/...`, `/home/...` | `/var/...`, `/home/...` | calisir |
+| `/root/...` | `/root/...` | calisir |
+| `/tmp/...` | `/tmp/...` | **calismaz** (ayri mount) |
+
+`/tmp` bir tmpfs mount oldugu icin mount noktasinin adi dentry
+zincirinde gorunmez. Bu yapisal bir sinirdir, bir hata degildir.
+Yol kurallari kullanirken mutlak yolun **kok dosya sisteminde**
+oldugundan emin olun.
+
+SELinux tarafi:
+
+```bash
+# Surecler kendi alanlarinda calisir
+$ ps -eo label,comm | grep ax
+system_u:object_r:axlinux_daemon_t:s0 axdaemon
+system_u:object_r:axlinux_log_t:s0      axlog
+
+# Politika gercekten yuklu mu
+$ sudo semodule -l | grep axlinux
+axlinux
+```
+
+SELinux modulu `selinux-policy-devel` gerektirir; `install.sh`
+paketi kendisi kurar ve modulu her seferinde yeniden derler.
+
+### Fedora dogrulama sonucu
+
+Fedora 44, kernel `6.19.10-300.fc44.x86_64`, SELinux Enforcing
+uzerinde:
+
+```
+bpf: 5/5   kancalar: 5/5   enforcement: True   audit sagligi: True
+tests/deep_verify.sh: 716 gecti / 0 kaldi / 2 atlandi
+```
 
 ## 4. İlk beş dakika
 

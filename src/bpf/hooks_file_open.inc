@@ -53,6 +53,10 @@ int BPF_PROG(ax_file_open, struct file *file, int ret)
 	__u32 mode;
 	__u32 action;
 
+	/* Koruma kontrolu icin PID; ayrica event->pid de
+	 * bunu kullanir (bpf_get_current_pid_tgid bir kez). */
+	__u32 cur_pid = bpf_get_current_pid_tgid() >> 32;
+
 	mode = ax_mode();
 	if (mode == MODE_DISABLED)
 		return 0;
@@ -92,7 +96,7 @@ int BPF_PROG(ax_file_open, struct file *file, int ret)
 	 * reddediliyor. */
 	__builtin_memcpy(event->comm, key->comm, sizeof(event->comm));
 	__builtin_memcpy(event->path, key->path, sizeof(event->path));
-	event->pid = bpf_get_current_pid_tgid() >> 32;
+	event->pid = cur_pid;
 	event->action = action;
 	event->effect = EFFECT_DENY;
 	event->hook_type = HOOK_FILE_OPEN;

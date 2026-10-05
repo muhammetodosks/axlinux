@@ -41,6 +41,11 @@ check-env:
 
 vmlinux: $(VMLINUX)
 
+# vmlinux.h bir DERLEME ARTIKLIDIR; depoda tutulmaz.
+#
+# Elle uretilmis bir dosya kullanilacaksa once `make vmlinux` calistirilir.
+# `make` bunu otomatik olarak dogru yapar: dosya hedef disi bir
+# cekirdekte uretilmisse yeniden uretilir.
 $(VMLINUX):
 	@echo ">> vmlinux.h uretiliyor (kernel BTF)..."
 	@$(BPFTOOL) btf dump file $(BTF) format c > $@.tmp

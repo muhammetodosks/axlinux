@@ -321,3 +321,35 @@ rules:
 3. **Zaman kuralları yok.** (v2.0'da eklenebilir)
 4. **Kullanıcı bazlı kural yok.** (v1.0'da eklenebilir)
 5. **Dinamik politika yok.** Her değişiklik için `axctl reload` gerekir.
+
+## Yol kurallari ve mount siniri
+
+Yol bazli kurallar (`object:`) **aynı dosya sistemi içinde** çalışır.
+Ayrı bir mount olan dosya sistemlerinde mount noktasının adı dentry
+zincirinde görünmez.
+
+bpftrace ile ölçülen davranış:
+
+| Konum | Dosya sistemi | Görünen dentry zinciri |
+|---|---|---|
+| `/etc/ax-dosya` | btrfs (kök) | `ax-dosya → etc → root(subvolume) → /` |
+| `/tmp/ax-dosya` | tmpfs | `ax-dosya → /` — **`tmp` görünmez** |
+
+Yani `/tmp` üzerinde `object: /tmp/ax-dosya` yazan bir kural için
+kernel `/ax-dosya` yolunu çözer; politika `/tmp/ax-dosya` yazar.
+Anahtarlar kesişmez ve kural uygulanmaz.
+
+**Bu bir hata değil, yapısal bir sınırdır.** `object:` alanında
+kök dosya sistemine ait mutlak yollar kullanın.
+
+İki ayrı konu karıştırılmamalı:
+
+- **btrfs alt birim kökü** (`/etc` çalışır): Fedora 33'den beri kök
+  bir alt birim olarak bağlanır ve dentry zincirine `root` adlı
+  görünmez bir bileşen girer. Bu **düzeltildi**; btrfs kökünde
+  yol kuralları çalışır.
+- **Ayrı mount** (`/tmp` çalışmaz): mount noktasının adı hiç
+  oluşmaz. Bu düzeltilemez; kapsam dışıdır.
+
+`axctl policy check` bu ayrımı doğrulamaz — kural geçerli sayılır,
+çünkü sözdizimi doğrudur. Uygulama ölçülerek anlaşılır.

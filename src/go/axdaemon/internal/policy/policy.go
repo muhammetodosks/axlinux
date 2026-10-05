@@ -5,6 +5,7 @@ package policy
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -194,6 +195,23 @@ func validate(p *Policy) error {
 		}
 		if len(r.Subject) == 0 {
 			return fmt.Errorf("kural %s: subject gerekli", r.ID)
+		}
+		// Dizin disina cikan gezinme ("..") reddedilir.
+		//
+		// /etc/a/../../b yazildiginda gorunen hedef /b'dir.
+		// Operator /etc altinda bir kural yazdigini sanir ama
+		// kural baska bir yere uygulanir. Sessizce normalize
+		// edilmez: kullanici ne yazdigini bilmez ve politika
+		// beklediginden genis kapsar.
+		if strings.Contains(r.Object, "..") {
+			for _, seg := range strings.Split(r.Object, "/") {
+				if seg == ".." {
+					return fmt.Errorf(
+						"kural %s: object yolu '..' iceriyor (%q); "+
+							"dizin disina cikan gezinme reddedilir",
+						r.ID, r.Object)
+				}
+			}
 		}
 		// Port negatif veya 65535 ustu olamaz; kernel __u16
 		// bekliyor ve tasma sessizce farkli portu hedefler.

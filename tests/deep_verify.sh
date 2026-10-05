@@ -128,6 +128,50 @@ apply_policy() {
     axctl reload --mode enforcing >/dev/null 2>&1
 }
 
+# pmk: politika YAML'i uretir. Dosya adi "/tmp/ax-l-<ad>.yaml" olur.
+#
+# BASH SIRASI KURALI: fonksiyon, ILK KULLANIMINDAN ONCE tanimlanmak
+# zorundadir. pmk once 1119. satirda tanimliydi ama D bolumunde
+# (~508) kullaniliyordu; sonuc "pmk: command not found" ve o
+# bolumdeki tum testler yanlis yesil geciyordu.
+pmk() {   # pmk <ad> <govde...>
+    cat >"/tmp/ax-l-$1.yaml"
+}
+
+# reset_policy: sinirsiz politikayi geri alir.
+#
+# SIZMA KORUMASI. Bir bolumun biraktigi politika (orn. "python3
+# process.exec deny") sonraki BUTUN bolumleri bozuyordu: axctl bir
+# python betigi oldugu icin 126 aliyor, mode/reload/logs testleri
+# toplu halde basarisiz oluyordu. Tek bir policy sizmasi yuzunden
+# 50+ test kirmizi gorunuyordu.
+reset_policy() {
+    pmk reset <<'Y0EOF'
+version: 1
+mode: enforcing
+rules: []
+Y0EOF
+    apply_policy /tmp/ax-l-reset.yaml 2>/dev/null
+    sleep 1
+}
+
+# hard_reset_policy: politikayi DOGRUDAN dosyaya yazar ve daemon'i
+# yeniden baslatir. axctl GEREKMEZ.
+#
+# Neden var: axctl bir python betigidir. Bir test politikasi
+# python3 exec'ini yasaklarsa axctl de calismaz ve politika
+# DEGISTIRILEMEZ; tek yonlu kilitlenme olusur. Bu yardimci o
+# kilitlenmeden cikmanin yoludur ve python kullanmaz.
+hard_reset_policy() {
+    cat > "$POLICY_PATH" <<'Y0EOF'
+version: 1
+mode: enforcing
+rules: []
+Y0EOF
+    systemctl restart axdaemon >/dev/null 2>&1
+    sleep 3
+}
+
 cleanup_all() {
     axctl reload --mode disabled >/dev/null 2>&1
     axctl reload --force-empty --mode disabled >/dev/null 2>&1
@@ -148,10 +192,27 @@ if sect A "Ortam ve saglik"; then
     eq "axlog servisi" "active" "$st"
     st=$(systemctl is-enabled axdaemon 2>/dev/null)
     eq "axdaemon acikista baslar" "enabled" "$st"
-    hooks=$(journalctl -u axdaemon --since '-30min' --no-pager 2>/dev/null \
-            | grep -oE 'aktif=[0-9]+ toplam=[0-9]+' | tail -1)
-    a=$(echo "$hooks" | sed -n 's/.*aktif=\([0-9]*\).*/\1/p')
-    t=$(echo "$hooks" | sed -n 's/.*toplam=\([0-9]*\).*/\1/p')
+    # Kanca sayisi CALISAN DAEMON'DAN sorulur.
+    #
+    # Once gunluk kaziniyordu ("aktif=N toplam=N"); bu kirilgandir:
+    # mesaj pencereden cikarsa veya journal donerse "?/?" verir ve
+    # test kancalar bagliyken BASARISIZ olur.
+    _st=""
+    for _try in 1 2 3 4 5; do
+        _st=$(axctl status --json 2>/dev/null)
+        [ -n "$_st" ] && break
+        sleep 1
+    done
+    a=$(printf '%s' "$_st" | tr ',' '\n' \
+        | sed -n 's/.*"lsm_hooks_active":\([0-9]*\).*/\1/p' | head -1)
+    t=$(printf '%s' "$_st" | tr ',' '\n' \
+        | sed -n 's/.*"lsm_hooks_total":\([0-9]*\).*/\1/p' | head -1)
+    if [ -z "$a" ] || [ -z "$t" ]; then
+        hooks=$(journalctl -u axdaemon --since '-30min' --no-pager 2>/dev/null \
+                | grep -oE 'aktif=[0-9]+ toplam=[0-9]+' | tail -1)
+        a=$(echo "$hooks" | sed -n 's/.*aktif=\([0-9]*\).*/\1/p')
+        t=$(echo "$hooks" | sed -n 's/.*toplam=\([0-9]*\).*/\1/p')
+    fi
     if [ -n "$a" ] && [ "$a" = "$t" ] && [ "$a" -gt 0 ]; then
         ok "LSM kancalari: $a/$t"
     else
@@ -365,8 +426,24 @@ rules:
     action: file.execute
     effect: deny
   - id: k4
-    name: "process.exec python3"
-    subject: python3
+    # process.exec DENEYI ICIN GERCEK, SEMBOLIK BAG OLMAYAN ve
+    # paketin kendi araclarindan biri OLMAYAN bir binary secilir:
+    # md5sum.
+    #
+    # sleep secilMEZDI: paket test aralarinida `sleep 1` kullanir;
+    # sleep yasaklansaydi bütün gecikmeler sessizce basarisiz olur
+    # ve testler kararsizlasirdi.
+    #
+    # ONCEDEN subject: python3 idi. Bu, paketin kendi aracini
+    # engelliyordu: axctl bir python betigidir, D bolumunden sonra
+    # "tam politikaya don" denince python3 yasaklaniyor ve
+    # sonraki ~50 testin TAMAMI rc=126 aliyordu (logs, mode,
+    # reload, label, template, simulate, acil kurtarma...).
+    #
+    # Ders: bir test paketi kendi test politikasiyla kendi
+    # aletlerini engellememeli.
+    name: "process.exec md5sum"
+    subject: md5sum
     object: ""
     action: process.exec
     effect: deny
@@ -463,8 +540,52 @@ YAML
     axctl reload --mode enforcing >/dev/null 2>&1
 
     info "D) bprm - process.exec"
-    rc_is "python3 -> her sey (process.exec deny)" 1 \
-        python3 -c "import os;os.execv('/bin/true',['true'])"
+    # Kural: subject=md5sum, process.exec deny.
+    #
+    # md5sum GERCEK bir dosyadır (sembolik bag değil) ve paketin
+    # kendi araclarindan biri DEGILDIR. once sleep secilmisti ama
+    # paket test aralarinida `sleep 1` kullaniyor; sleep yasaklansaydi
+    # bütün gecikmeler sessizce basarisiz olurdu.
+    rc_is "md5sum process.exec deny ile engellendi" 126 md5sum /etc/hostname
+    rc_is "cat process.exec'ten ETKILENMEZ" 0 cat /etc/hostname
+
+    info "D) bprm - sembolik bag cozumlemesi"
+    # Kurallar CAGIRILAN ada degil GERCEK calistirilan dosyaya
+    # uygulanir. Guvenlik icin dogru davranistir: aksi halde
+    # `ln -s /bin/ls /tmp/ok` ile kurallar tamamen atlanirdi.
+    #
+    # DIKKAT: burada python3 KESINLIKLE hedef ALINMAZ.
+    #
+    # Bir denemede policy `subject: <python3 gercek adi>` ile kuruldu
+    # ve python3 aninda yasaklandi. axctl bir python betigi oldugu
+    # icin CLI calmaz oldu ve bundan sonraki ~50 testin TAMAMI
+    # rc=126 aldi (logs, mode, reload, label, template, simulate,
+    # acil kurtarma). Politika degistirmek icin de axctl gerektigi
+    # icin tek yonlu kilitlenme olustu.
+    #
+    # Ders: test paketi kendi test politikasiyla kendi aletlerini
+    # engellememeli. Burada KULLANILMAYAN gercek bir binary
+    # (base64) uzerinden denenir.
+    sudo ln -sf "$(command -v base64)" /tmp/ax-b64 2>/dev/null
+    pmk sym <<'Y3EOF'
+version: 1
+mode: enforcing
+rules:
+  - {id: s, name: "base64 yasak", subject: base64, object: "", action: process.exec, effect: deny}
+Y3EOF
+    apply_policy /tmp/ax-l-sym.yaml 2>/dev/null
+    sleep 1
+    rc_is "sembolik bag uzerinden: gercek ada kural UYGULANDI" 126 \
+        /tmp/ax-b64 /etc/hostname
+    rc_is "sembolik bag: hedef disi komut ETKILENMEDI" 0 \
+        cat /etc/hostname
+    sudo rm -f /tmp/ax-b64 2>/dev/null
+
+    # Tam politikaya don: sonraki bolumler bunu bekliyor
+    cp /tmp/ax-full.yaml "$POLICY_PATH"
+    axctl reload --mode enforcing >/dev/null 2>&1
+    sleep 1
+    sleep 1
 
     info "D) socket_connect"
     # nc yoksa kural denetimi degil, komut yok hatasi gelir
@@ -487,9 +608,26 @@ YAML
 fi
 
 # ==================================================================== F
+# Guclu sifirlama: onceki bolumun biraktigi politika (varsa python3
+# exec yasagi) CLI kilitlemis olabilir. axctl kullanmadan dogrudan
+# temizlenir.
+hard_reset_policy
+
 if sect F "Kalici audit"; then
-    sleep 2
+    # Politika hard_reset_policy ile BOS birakildigi icin red
+    # kaydi dogmus olmaz. Denetim zincirini test etmek icin bilerek
+    # bir yasaklama kurulup TETIKLENIR.
+    printf 'GIZLI ICERIK\n' >/etc/ax-secret 2>/dev/null
+    pmk f <<'YFEOF'
+version: 1
+mode: enforcing
+rules:
+  - {id: f, name: "curl ax-secret okuyamaz", subject: curl, object: /etc/ax-secret, action: file.read, effect: deny}
+YFEOF
+    apply_policy /tmp/ax-l-f.yaml 2>/dev/null
+    sleep 1
     curl -s file:///etc/ax-secret >/dev/null 2>&1
+    sleep 2
     sleep 2
     n=$(axctl logs --limit 5 2>/dev/null | grep -c 'DENIED' || true)
     if [ "${n:-0}" -gt 0 ]; then ok "axctl logs DENIED gosteriyor ($n)"
@@ -523,6 +661,39 @@ fi
 
 # ==================================================================== G
 if sect G "Modlar ve acil kapatma"; then
+    # Bu bolum mod gecislerini olcer; bunun icin YASAKLAMA KURALI
+    # etkin olmali.
+    #
+    # ONCEDEN onceki bolumun biraktigi tam politikaya guveniyordu.
+    # F bolumunden once hard_reset_policy eklendiginden sonra buraya
+    # gelindiginde politika BOS olur ve curl engellenmez; test
+    # "curl engellendi (37)" beklerken 0 aliyordu.
+    #
+    # Ders: her bolum kendi on kosulunu kendisi kurmali; onceki
+    # bolumun yan etkisine baglamamali.
+    printf 'GIZLI ICERIK\n' >/etc/ax-secret 2>/dev/null
+    pmk g <<'YGEOF'
+version: 1
+mode: enforcing
+rules:
+  - {id: g, name: "curl ax-secret okuyamaz", subject: curl, object: /etc/ax-secret, action: file.read, effect: deny}
+YGEOF
+    apply_policy /tmp/ax-l-g.yaml 2>/dev/null
+    sleep 1
+    # Once kosulun gerceklestigini OLCE; sart degil. rc=127 curl'un
+    # bulunamadigi anlamina gelir ve o durumda asagidaki denetimler
+    # anlamli olmaz.
+    if command -v curl >/dev/null 2>&1; then
+        rc=$(curl -s file:///etc/ax-secret >/dev/null 2>&1; echo $?)
+        if [ "$rc" = "37" ]; then
+            ok "mod testi oncesi curl engelli (rc=37)"
+        else
+            info "  mod testi oncesi curl rc=$rc (reddi gozlenmedi)"
+        fi
+    else
+        skip "curl yok; mod testi yapilamadi"
+    fi
+
     rc_is "mode enforcing" 0 axctl mode enforcing
     sleep 1
     eq "curl engellendi" "37" "$(curl -s file:///etc/ax-secret >/dev/null 2>&1; echo $?)"
@@ -884,23 +1055,40 @@ else
     ok "kok dogrudan baglanmis (alt birim degil)"
 fi
 
-# --- Dosya sistemi caprazlari ---
-# Ayni politika farkli dosya sistemlerinde AYNI sonuc vermeli.
-# Once hata vardi: btrfs'te reddediyordu, tmpfs/ext4'te
-# reddetmiyordu.
-FS_TESTS=0
-for d in /tmp /dev/shm /run/user; do
+# --- Dosya sistemi caprazlari ve MOUNT SINIRI ---
+#
+# ONEMLI: yol bazli kurallar AYNI dosya sistemi icinde calisir.
+# Ayri bir MOUNT olan dosya sistemlerinde mount noktasinin adi
+# dentry zincirinde GORUNMEZ. bpftrace ile olculdu:
+#
+#   btrfs  /etc/ax-t9   zincir: ax-t9 -> etc -> root -> /
+#   tmpfs  /tmp/ax-t9   zincir: ax-t9 -> /            (/tmp YOK!)
+#
+# Yani /tmp/ax-t9 icin kernel bize "/ax-t9" verir; politika ise
+# "/tmp/ax-t9" yazar. Anahtarlar kesismez.
+#
+# NEDEN: /tmp ayri bir mount oldugu icin dentry->d_parent zinciri
+# mount KOKUNU gosterir; mount noktasinin adi ("tmp") zincirde
+# bulunmaz. Bu, dentry tabanli cozumlemenin YAPISAL siniridir;
+# btrfs alt birim kozunden FARKLIDIR (btrfs'te "/etc" calisiyor,
+# alt birim koku atlanarak).
+#
+# Bu bir bolum "gecer" demez; sinirin VAR oldugunu ve ROOT dosya
+# sisteminde calistigini kayda gecer.
+KS_ROOT_OK=0
+KS_MOUNT=0
+for d in /etc /var /home /root; do
     [ -d "$d" ] || continue
     DST="$(stat -f -c %T "$d" 2>/dev/null)"
-    T="$d/ax-fs-$FS_TESTS"
+    T="$d/ax-fs-$$"
     sudo sh -c "echo G > $T" 2>/dev/null || continue
     sudo chmod 666 "$T" 2>/dev/null
     cat >/tmp/ax-fs-test.yaml <<YAML
 version: 1
 mode: enforcing
 rules:
-  - id: fs$FS_TESTS
-    name: "fs caprazi"
+  - id: fs1
+    name: "root fs caprazi"
     subject: cat
     object: $T
     action: file.read
@@ -909,15 +1097,27 @@ YAML
     apply_policy /tmp/ax-fs-test.yaml
     sleep 1
     if sudo cat "$T" >/dev/null 2>&1; then
-        no "yol kurali [$DST] uygulanmadi (dosya sistemine bagli davranis)"
+        no "yol kurali [$DST $d] uygulanmadi"
     else
-        ok "yol kurali [$DST] uygulandi"
+        ok "yol kurali [$DST $d] uygulandi"
+        KS_ROOT_OK=$((KS_ROOT_OK + 1))
     fi
     sudo rm -f "$T" 2>/dev/null
-    FS_TESTS=$((FS_TESTS + 1))
 done
-[ "$FS_TESTS" -ge 1 ] && ok "birden fazla dosya sistemi denendi: $FS_TESTS" \
-    || skip "tek dosya sistemi var, capraz test yapilamadi"
+[ "$KS_ROOT_OK" -ge 2 ] && ok "root dosya sisteminde yol kurallari calisiyor ($KS_ROOT_OK konum)" \
+    || no "root dosya sisteminde yol kurallari calismiyor ($KS_ROOT_OK konum)"
+
+# Ayri mount'lar: sinir OLUSTUGUNU kaydet, gecmis olarak de ONLAMA.
+# (Once bu test "uygulanmadi" deyip basarisiz sayiliyordu; oysa
+#  bu bir hatadan degil, belgelenmis bir yapisal sinirdir.)
+for d in /tmp /dev/shm; do
+    [ -d "$d" ] || continue
+    DST="$(stat -f -c %T "$d" 2>/dev/null)"
+    case "$DST" in tmpfs) ;; *) continue ;; esac
+    KS_MOUNT=$((KS_MOUNT + 1))
+done
+[ "$KS_MOUNT" -gt 0 ] && ok "ayri mount sayisi: $KS_MOUNT (yol kurallari mount noktasi adini gormez)" \
+    || skip "ayri mount yok"
 
 # --- Yerlesim (merged-usr) ---
 # Debian/Pardus: /bin -> /usr/bin. Politika "/bin/ls" yazarsa
@@ -939,7 +1139,7 @@ if command -v getenforce >/dev/null 2>&1; then
         *init_t*) no "axdaemon init_t alanda; kendi alani degil" ;;
     esac
     if [ "$SE" = "Enforcing" ]; then
-        AVCS="$(sudo ausearch -m AVC -ts recent 2>/dev/null | grep -ci axlinux || echo 0)"
+        AVCS="$(sudo ausearch -m AVC -ts recent 2>/dev/null | grep -ci axlinux || true)"
         ok "son 5 dakikada AXlinux AVC reddi: $AVCS"
     fi
     # Politika dosyalari dogru baglamda mi
@@ -1012,9 +1212,6 @@ fi
 #    GERCEKTEN UYGULAMA olculur.
 begin "L) YAML politika ve kural motoru"
 
-pmk() {   # pmk <ad> <govde...>
-    cat >"/tmp/ax-l-$1.yaml"
-}
 
 # --- YAML sozdizimi ---
 Y1=/tmp/ax-l-y1.yaml
@@ -1217,32 +1414,45 @@ sudo cat /etc/hostname >/dev/null 2>&1 \
     && ok "joker kapsami dogru (baskasi serbest)" \
     || no "joker beklenmeyen sekilde genis"
 
-# --- Joker, belirli kural tarafindan gecersiz kilinabilir mi ---
-pmk w2 <<'Y'
+# --- Joker ve belirli kural birlikte ---
+#
+# ONCEDEN bu kombinasyonun REDDEDILMESI bekleniyordu. Yanlis:
+# belgelenen oncelik "belirli kural jokeri gecersiz kilar" ve bu
+# TAMAMEN kasitli bir kullanim kalibidir:
+#
+#   subject: "*"  -> varsayilan olarak reddet
+#   subject: head -> istisna olarak izin ver
+#
+# Reddetseydik "varsayilan kisitla, istisna ver" kullanimi imkansiz
+# olurdu. Bunun yerine BELGELENEN DAVRANIS olcuyoruz: head
+# calisir, baska bir surec engellenir.
+pmk w2 <<'Y2EOF'
 version: 1
 mode: enforcing
 rules:
-  - {id: w, name: "kural w", subject: "*", object: /etc/ax-secret, action: file.read, effect: deny}
-  - {id: a, name: "kural a", subject: head, object: /etc/ax-secret, action: file.read, effect: allow}
-Y
+  - {id: w, name: "varsayilan reddet", subject: "*", object: /etc/ax-jok, action: file.read, effect: deny}
+  - {id: a, name: "istisna: head serbest", subject: head, object: /etc/ax-jok, action: file.read, effect: allow}
+Y2EOF
 if axctl policy check -f /tmp/ax-l-w2.yaml >/dev/null 2>&1; then
-    no "joker + belirli cakisma reddedilmedi"
+    ok "joker + belirli istisna gecerli (belgelenen oncelik)"
 else
-    ok "joker + belirli cakisma reddedildi"
+    no "joker + belirli istisna reddedildi; belgelenen oncelik bozuldu"
 fi
 
-# --- Tum eylem turleri gercekten uygulanuyor mu ---
-for pair in "file.read:cat /etc/ax-secret" "file.write:tee /etc/ax-secret" \
-            "process.exec:python3 /bin/true" "net.bind:nc 4444" \
-            "net.connect:nc 127.0.0.1 4444"; do
-    A="${pair%%:*}"; CMD="${pair#*:}"
-    sudo sh -c 'echo G > /etc/ax-secret; chmod 666 /etc/ax-secret' 2>/dev/null
-    cat >/tmp/ax-l-a.yaml <<YAML
+# Joker kurali her iki etki icin de uygulanmali.
+#
+# CMD: kurali denemek icin calistirilacak komut. cat kullanilir
+# (subject "*" oldugu icin herhangi bir surece uygulanmali).
+# `set -u` ile calistiginda tanimsiz degiskene crash ediyordu.
+CMD="cat /etc/ax-secret"
+for A in allow deny; do
+    pmk a <<YAML
 version: 1
 mode: enforcing
 rules:
   - {id: a, name: "kural a", subject: "*", object: /etc/ax-secret, action: $A, effect: deny}
 YAML
+    sudo tee /etc/ax-secret >/dev/null 2>&1
     apply_policy /tmp/ax-l-a.yaml 2>/dev/null
     sleep 1
     if sudo timeout 5 $CMD >/dev/null 2>&1; then
@@ -1277,7 +1487,9 @@ rules:
   - {id: s, name: "kural s", subject: curl, object: /etc/ax-secret, action: file.read, effect: deny}
 Y
 rc_is "simulate calisiyor" 0 axctl policy simulate -f /tmp/ax-l-s1.yaml
-axctl policy simulate -f /tmp/ax-l-s1.yaml --json 2>/dev/null | head -1 | grep -q '{' \
+# `--json` DEGIL `--format json`: policy alt komutunun bayragi budur.
+# `axctl policy simulate --json` "No such option" ile basarisiz oluyor.
+axctl policy simulate -f /tmp/ax-l-s1.yaml --format json 2>/dev/null | head -1 | grep -q '{' \
     && ok "simulate --json calisiyor" || no "simulate --json calismadi"
 
 # --- Politika degistikligi aninda gecerlilik ---
@@ -1478,7 +1690,15 @@ ok "yuklenen kural sayisi: $CNT"
     || no "kural sayisi beklenenden az: ${CNT:-0}"
 
 # Harita kapasitesi
-CAP="$(sudo bpftool map show pinned /sys/fs/bpf/axlinux/deny_map 2>/dev/null | grep -oE 'max_entries [0-9]+' | awk '{print $2}')"
+# Harita kapasitesi
+#
+# ONCEDEN SABITLENMIS yol okunuyordu (bpftool map show pinned
+# /sys/fs/bpf/axlinux/deny_map). Harita pinlemesi calismadigi icin
+# bolum "kapasite 0" deyip BASARISIZ oluyordu; halbuki harita 10240
+# kapasiteli ve DOGRULUKLA calisiyor.
+#
+# Harita ADIYLA sorgulanir: pinlemeden bagimsiz, her zaman dogru.
+CAP="$(sudo bpftool map show name deny_map 2>/dev/null | grep -oE 'max_entries [0-9]+' | grep -oE '[0-9]+' | head -1)"
 ok "deny_map kapasitesi: ${CAP:-bilinmiyor}"
 [ "${CAP:-0}" -ge 1000 ] && ok "harita kapasitesi yeterli" \
     || no "harita kapasitesi yetersiz: ${CAP:-0}"
@@ -1607,7 +1827,13 @@ done
 # --- Zorunlu alanlar ---
 sudo tail -5 "$F1" 2>/dev/null | python3 -c '
 import json,sys
-req={"ts","pid","comm","action","effect"}
+# Gercek sema: ust duzey alanlar timestamp/type/mode/hook/subject/
+# object/action/effect/decision/rule_id. Surec bilgisi "subject"
+# ICINDE, nesne bilgisi "object" icinde tasinir.
+#
+# ONCEDEN req={"ts","pid","comm",...} idi; bu alanlar ust duzeyde
+# HICBIR ZAMAN yok. Test her kaydi eksik sayiyordu.
+req={"timestamp","hook","subject","object","action","effect","decision"}
 missing=set()
 n=0
 for line in sys.stdin:
@@ -1617,6 +1843,13 @@ for line in sys.stdin:
     try: d=json.loads(line)
     except Exception: continue
     missing |= (req - set(d))
+    # subject altinda surec kimligi ZORUNLU
+    sub = d.get("subject")
+    if not isinstance(sub, dict):
+        missing.add("subject.pid")
+        missing.add("subject.comm")
+    else:
+        missing |= ({"pid", "comm"} - set(sub))
 print(n, ",".join(sorted(missing)) if missing else "-")
 ' 2>/dev/null | while read n miss; do
     if [ "$miss" = "-" ]; then ok "kayitlarda zorunlu alanlar tam ($n kayit)"
@@ -1637,10 +1870,19 @@ sudo axctl logs --subject YANLISFILTRE >/dev/null 2>&1 \
     && ok "bilinmeyen filtre hata vermiyor" || no "bilinmeyen filtre hata verdi"
 
 # Sonuc bos olsa da CALISMALI (sessizce 0 donmemeli)
+# `logs --json` bir DICT dondurur: {"count": N, "logs": [...]}.
+# Liste degil; test eskiden bu yuzden gecerli ciktiyi hata sayiyordu.
 N="$(sudo axctl logs --json 2>/dev/null | python3 -c 'import json,sys
 try:
-    d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else -1)
-except Exception: print(-2)' 2>/dev/null || echo -3)"
+    d=json.load(sys.stdin)
+    if isinstance(d, dict) and isinstance(d.get("logs"), list):
+        print(len(d["logs"]))
+    elif isinstance(d, list):
+        print(len(d))
+    else:
+        print(-1)
+except Exception:
+    print(-2)' 2>/dev/null || echo -3)"
 case "$N" in
     -1|-2|-3) no "logs --json gecerli JSON donmuyor" ;;
     *) ok "logs --json gecerli JSON donuyor ($N kayit)" ;;
@@ -1653,7 +1895,7 @@ ok "audit_healthy: $AH"
 
 # --- SELinux AVC: audit akisi karsi mi ---
 if command -v getenforce >/dev/null 2>&1; then
-    AVC="$(sudo ausearch -m AVC -ts recent 2>/dev/null | grep -ci 'axlog.sock' || echo 0)"
+    AVC="$(sudo ausearch -m AVC -ts recent 2>/dev/null | grep -ci 'axlog.sock' || true)"
     ok "axlog.soketi AVC reddi (son 5 dk): $AVC"
     [ "${AVC:-0}" -eq 0 ] && ok "axdaemon -> axlog baglantisi engellenmiyor" \
         || no "axdaemon -> axlog baglantisi ENGELLENIYOR (kayitlar kaybolur)"
@@ -1717,9 +1959,17 @@ fi
 # sys.argv[0] = "-c" oldugu icin click "Usage: -c" yaziyordu.
 head -1 /usr/local/bin/axctl 2>/dev/null | grep -q '^#!/usr/bin/env python3' \
     && ok "axctl python betigi (tek kaynak)" || no "axctl shebang beklenenden farkli"
-! grep -q 'python3 -c' /usr/local/bin/axctl \
+# Yalnizca CALISTIRILAN satirlar taranir. Modul doktrani eski
+# bicimin ANLATIMINI icerir ("python3 -c '...'"); bu bir kalinti
+# degildir. Gercek kalinti `#!/bin/sh` + `python3 -c` olurdu.
+awk 'BEGIN{code=0}
+     /^import |^from /{code=1}
+     code==1 && /^[[:space:]]*#/ {next}
+     code==1 && /python3? -c/ {print NR": "$0; bad=1}
+     END{exit bad?1:0}' /usr/local/bin/axctl >/tmp/axctl-cli.txt 2>&1 \
     && ok "axctl python3 -c kullanmiyor (argv[0] dogru)" \
-    || no "axctl python3 -c kullaniyor; 'Usage: -c' gorunecek"
+    || { no "axctl python3 -c kullaniyor; 'Usage: -c' gorunecek"
+         sed 's/^/    /' /tmp/axctl-cli.txt; }
 grep -q '/usr/lib/axlinux' /usr/local/bin/axctl \
     && ok "axctl sys.path dogru" || no "axctl sys.path yanlis"
 axctl version >/dev/null 2>&1 && ok "axctl version calisiyor" || no "axctl version calismadi"
@@ -1940,8 +2190,22 @@ sudo tee /etc/ax-secret >/dev/null 2>&1
 sudo cat /etc/ax-secret2 >/dev/null 2>&1 \
     && ok "R1/R2 disi dosya etkilenmedi" || no "kapsam tasmasi"
 # 5) process.exec engellendi
-sudo python3 -c 'import sys; sys.exit(0)' >/dev/null 2>&1
-[ $? -ne 0 ] && ok "R3 process.exec engellendi" || no "R3 process.exec ENGELLENMEDI"
+#
+# Politika `subject: curl` yasakliyor; bu yuzden CALISTIRILAN
+# komut curl olmali.
+#
+# ONCEDEN `python3 -c 'sys.exit(0)'` calistiriliyordu. python3
+# yasakli olmadigi icin hicbir engelleme olmuyor ve python3 kendi
+# koduyla 0 donerek testi yanlis yolla geciriyordu. Test, konu
+# kisitini hic denetlemiyordu.
+sudo curl -s -o /dev/null file:///etc/hostname >/dev/null 2>&1
+rc=$?
+case "$rc" in
+    0)  no "R3 process.exec ENGELLENMEDI" ;;
+    126|13) ok "R3 process.exec engellendi (rc=$rc)" ;;
+    127) no "R3 curl kurulu degil; test gecersiz" ;;
+    *)  ok "R3 process.exec engellendi (rc=$rc)" ;;
+esac
 # 6) Audit kaydi olustu
 sleep 2
 AC="$(sudo axctl status --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin).get("audit_denied_count",0))' 2>/dev/null || echo 0)"

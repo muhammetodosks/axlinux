@@ -24,7 +24,7 @@ import (
 )
 
 // Version is the daemon version. Keep in sync with axctl's __version__.
-const Version = "1.0.0"
+const Version = "1.1.0"
 
 func main() {
 	var (
@@ -95,6 +95,22 @@ func main() {
 			// ve kancalar surekli audit uretirken operator ogrenme
 			// modunun kapandigini sanir. Her acilista sifirlanir:
 			// ogrenme durumu surec yasamindadir, dosya degil.
+			// Gorunmez mount kozlarini (btrfs alt birim koku)
+			// mountinfo'dan okuyup BPF'ye ver.
+			//
+			// Bunu yapmazsak Fedora'da kok dosya sistemindeki
+			// HER yol kurali sessizce calismaz: BPF yolu
+			// "/root/etc/secret" gorur, politika "/etc/secret"
+			// yazar.
+			if names, err := mapsMgr.PopulateMountArtifacts(); err != nil {
+				logger.Warn("mount kozlari okunamadi; kok dosya "+
+					"sistemindeki yol kurallari btrfs'te "+
+					"uygulanmayabilir", "error", err)
+			} else if len(names) > 0 {
+				logger.Info("gorunmez mount kozlari",
+					"names", names)
+			}
+
 			if err := mapsMgr.SetLearning(false); err != nil {
 				logger.Warn("ogrenme bayragi sifirlanamadi",
 					"error", err)

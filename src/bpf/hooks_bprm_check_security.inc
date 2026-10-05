@@ -12,6 +12,10 @@ int BPF_PROG(ax_bprm_check, struct linux_binprm *bprm, int ret)
 	__u32 mode;
 	struct file *file;
 
+	/* Koruma kontrolu icin PID; ayrica event->pid de
+	 * bunu kullanir (bpf_get_current_pid_tgid bir kez). */
+	__u32 cur_pid = bpf_get_current_pid_tgid() >> 32;
+
 	mode = ax_mode();
 	if (mode == MODE_DISABLED)
 		return 0;
@@ -42,6 +46,8 @@ int BPF_PROG(ax_bprm_check, struct linux_binprm *bprm, int ret)
 	 * tek ax_lookup2 cagrisiyla birlikte sorgulanir. Ayri iki
 	 * ax_lookup cagrisi verifier'da instruction patlamasina
 	 * yol actigi icin birlesiktirilir. */
+	char target[AX_NAME_MAX];
+	int ti;
 	struct policy_key *pkey = ax_key(0);   /* yol kurali */
 	struct path_buf *pb = ax_pathbuf();   /* + surec kurali anahtari */
 	struct policy_key *skey;
@@ -59,16 +65,84 @@ int BPF_PROG(ax_bprm_check, struct linux_binprm *bprm, int ret)
 	 * sistem disi birakir (bkz. ax_protected). */
 	__builtin_memset(pkey, 0, sizeof(*pkey));
 	ax_get_comm(pkey->comm);
-	if (ax_protected(pkey->comm))
-		return 0;
 	pkey->action = ACTION_FILE_EXEC;
 	ax_fill_path((struct path *)&file->f_path, pkey);
 
+	/* Hedef binary'nin adi = yolun EN DERIN dolu bileseni.
+	 * (Slotlar 7'den 0'a dogru doldurulur.)
+	 *
+	 * KRITIK: bprm_check_security aninda
+	 * bpf_get_current_comm() YENI BINARI DEGIL, CALISAN
+	 * SURECI verir; execve henuz gerceklesmemistir. Onceki
+	 * kod hedef yerine bpf_get_comm() kullanip surec kuralini
+	 * "curl" yerine "sudo"/"bash" ile sorguluyordu, bu yuzden
+	 * hicbir zaman eslesmiyordu. */
+	/* Slotlar Go ile ORTAK bicimde, BASI "/" olacak sekilde
+	 * yazilir (ax_fill_path: key->path[b][0] = '/'). Go tarafi bu
+	 * bicimi cozup "/usr/bin/sleep" olusturur.
+	 *
+	 * OZELDE hedef ad burada ALINIRKEN bastaki '/' ATLANMALI.
+	 * Atlanmazsa target "/sleep" olur; politika anahtari ise
+	 * "sleep" bekler, anahtarlar kesismez ve kural HIC
+	 * UYGULANMAZ. Process.exec ve file.execute bu yuzden hic
+	 * calismiyordu.
+	 */
+	__builtin_memset(target, 0, sizeof(target));
+#pragma unroll
+	for (ti = 0; ti < AX_PATH_DEPTH; ti++) {
+		if (pkey->path[ti][0] != '\0') {
+			/* Hedef ad 16 bayta kadar alinir ve NULL ile
+			 * sonlandirilir. Dallanmadan iki 8 baytlik
+			 * tasima kullanilir:
+			 *
+			 *   - veriye bagli `break` iceren dongu
+			 *     clang tarafindan ACILAMIYORDU
+			 *     ("loop not unrolled") ve her exec'te
+			 *     dongu maliyeti olusturuyordu.
+			 *   - comm alani zaten 16 bayt; daha uzun adlar
+			 *     kirpilir ve dogru sekilde sonlandirilir.
+			 *
+			 * Slotun BASINDAKI '/' atlanir: slotlar Go ile
+			 * ortak bicimde "/ad" olarak yazilir.
+			 */
+			__u32 off = (pkey->path[ti][0] == '/') ? 1 : 0;
+			__u64 lo = 0, hi = 0;
+
+			__builtin_memcpy(&lo, pkey->path[ti] + off, 8);
+			__builtin_memcpy(&hi, pkey->path[ti] + off + 8, 8);
+			__builtin_memcpy(target, &lo, 8);
+			__builtin_memcpy(target + 8, &hi, 8);
+			target[15] = '\0';
+		}
+	}
+	/* Yol cozulemediyse ebeveyne dus: "bash calistirilamaz"
+	 * turu bir kural yine de yakalansin. */
+	if (target[0] == '\0')
+		ax_get_comm(target);
+
+	/* Koruma EBVEYNDE DEGIL HEDEFTE kontrol edilir.
+	 *
+	 * Once pkey->comm uzerinde kontrol ediliyordu; "bash",
+	 * "sudo", "systemd" korumali oldugu icin kanca HER
+	 * ZAMAN erkenden donuyor, tum process.exec kurallari
+	 * etkisiz kaliyordu.
+	 *
+	 * deep_verify'daki test de yanlis yolla gecidi: python3
+	 * calistiriliyor, blok HIC olmuyor, python3 kendi koduyla
+	 * exit(1) donuyordu; test "1 bekliyordu, 1 aldi" deyip
+	 * gecti.
+	 *
+	 * Dogru: kilitleme riski hedef BINARY yazginca dogar
+	 * ("bash'i yasakla"). Ebeveynin korumali olmasi hedefin
+	 * yasaklanmasina engel OLMAMALIDIR. */
+	if (ax_protected(target))
+		return 0;
+
 	/* 2) surec bazli process.exec (yol bos) */
 	__builtin_memset(skey, 0, sizeof(*skey));
-	ax_get_comm(skey->comm);
 	ax_clear_path(skey);
 	skey->action = ACTION_PROCESS_EXEC;
+	__builtin_memcpy(skey->comm, target, sizeof(skey->comm));
 
 	/* Audit alanlari map aramasindan ONCE doldurulur:
 	 * bpf_map_lookup_elem cagrisi sonrasi verifier pkey
@@ -76,30 +150,15 @@ int BPF_PROG(ax_bprm_check, struct linux_binprm *bprm, int ret)
 	event = ax_event();
 	if (!event)
 		return 0;
-	__u32 eff_action = pkey->action;
-	__builtin_memcpy(event->comm, pkey->comm, sizeof(event->comm));
+	__builtin_memcpy(event->comm, target, sizeof(event->comm));
 	__builtin_memcpy(event->path, pkey->path, sizeof(event->path));
-	event->pid = bpf_get_current_pid_tgid() >> 32;
-	event->action = eff_action;
+	event->pid = cur_pid;
+	event->action = pkey->action;
 	event->effect = EFFECT_DENY;
 	event->hook_type = HOOK_BPRM_CHECK_SECURITY;
 
 	val = ax_lookup2(pkey, skey);
 	if (!val || val->effect != EFFECT_DENY) {
-	/* Ogrenme gozlemi.
-	 *
-	 * Buraya kadar yalnizca DENY kurali eslesen operasyonlar
-	 * olay uretiyordu. Ogrenme modunun amaci ise tam tersidir:
-	 * "normalde ne yapiyorsun" gozlemi. Normal isler tanim
-	 * geregi IZIN VERILEN operasyonlardir, yani hicbiri olay
-	 * uretmiyordu. Sonuc: ogrenme modu AÇILSA BILE sifir
-	 * gozlem toplaniyordu; kullaniciya "3 gun kayit tutulacak"
-	 * yazilip hicbir sey toplanmiyordu.
-	 *
-	 * Burada izin verilen operasyon bir gozleme donusur.
-	 * Yalnizca ogrenme ACIKKEN: her izinli dosya okumasini
-	 * surekli audit etmek sistemde gereksiz yuk olusturur.
-	 */
 		if (ax_learning()) {
 			event->effect = EFFECT_ALLOW;
 			event->rule_id = 0;

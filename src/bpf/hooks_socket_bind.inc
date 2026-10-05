@@ -13,6 +13,10 @@ int BPF_PROG(ax_socket_bind, struct socket *sock,
 	struct policy_value *val;
 	__u32 mode;
 
+	/* Koruma kontrolu icin PID; ayrica event->pid de
+	 * bunu kullanir (bpf_get_current_pid_tgid bir kez). */
+	__u32 cur_pid = bpf_get_current_pid_tgid() >> 32;
+
 	mode = ax_mode();
 	if (mode == MODE_DISABLED)
 		return 0;
@@ -53,7 +57,7 @@ int BPF_PROG(ax_socket_bind, struct socket *sock,
 	val = ax_lookup_wild(key);
 	int denied = val && val->effect == EFFECT_DENY;
 
-	event->pid = bpf_get_current_pid_tgid() >> 32;
+	event->pid = cur_pid;
 	__builtin_memcpy(event->comm, key->comm, sizeof(event->comm));
 	__builtin_memcpy(event->path, key->path, sizeof(event->path));
 	event->action = ACTION_NET_BIND;

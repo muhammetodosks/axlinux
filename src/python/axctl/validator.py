@@ -48,6 +48,7 @@ def validate_policy(policy: dict) -> list:
         rules = []
 
     seen_rules = set()
+    seen_ids = {}
     for i, rule in enumerate(rules):
         rule_errors = _validate_rule(rule, i, labels)
         errors.extend(rule_errors)
@@ -56,6 +57,28 @@ def validate_policy(policy: dict) -> list:
         if rule_key in seen_rules:
             errors.append(f"Kural {i+1}: Yinelenen kural ({rule_key})")
         seen_rules.add(rule_key)
+
+        # Yinelenen `id` de reddedilir.
+        #
+        # Go tarafi (policy.go validate) id tekrarlarini ZATEN
+        # reddeder; burada reddedilmedigi icin iki dogrulayici
+        # CELISIYORDU: "axctl policy check" gecerli derken
+        # "axctl reload" hata veriyordu.
+        #
+        # Iki kural ayni id'yi paylasirsa audit kayitlarinda
+        # hangisinin tetiklendigi ayirt edilemez ve operator ihlali
+        # kaynagina isaret edemez.
+        if isinstance(rule, dict):
+            rid = rule.get("id")
+            if isinstance(rid, str) and rid:
+                if rid in seen_ids:
+                    errors.append(
+                        f"Kural {i+1}: Yinelenen kural id ({rid}); "
+                        f"ayrica kural {seen_ids[rid]+1} kullanıyor. "
+                        "Audit kayıtlarında hangi kuralın tetiklendiği "
+                        "ayırt edilemez.")
+                else:
+                    seen_ids[rid] = i
 
     conflicts = _detect_conflicts(rules, labels)
     errors.extend(conflicts)
@@ -124,6 +147,19 @@ def _validate_rule(rule: dict, index: int, labels: dict) -> list:
 
     # YOL GEREKSINIMI
     #
+    # Yolun disina cikan gezinme (..) reddedilir.
+    #
+    # /etc/a/../../b yazildiginda gorunen hedef /b'dir; operator
+    # /etc altinda bir kural yazdigini sanir ama baska yere
+    # uygulanir. Sessizce normalize EDILMEZ: kullanici ne yazdigini
+    # bilmez ve politika beklediginden genis kapsar.
+    _obj = rule.get("object", "")
+    if isinstance(_obj, str) and _obj:
+        if ".." in _obj.split("/"):
+            errors.append(
+                f"{prefix}: 'object' yolu '..' iceriyor ({_obj}); "
+                "dizin disina cikan gezinme reddedilir")
+
     # Once her file.* aksiyonu icin object zorunluydu. Bu hem
     # yanlisti: file.read yolsuz (surec bazli) bir kural gecerlidir
     # ve Go tarafi kabul eder, hem de Go ile celisiyordu.

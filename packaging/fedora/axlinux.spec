@@ -13,7 +13,7 @@
 #   - rpm tabanli yaşam dongusu: %pre/%post/%preun/%postun
 
 Name:           axlinux
-Version:        1.0.0
+Version:        1.1.0
 Release:        1%{?dist}
 Summary:        Mandatory access control with a YAML policy language
 
@@ -199,7 +199,7 @@ fi
 %{_datadir}/selinux/%{selinux_policy_name}.fc
 
 %changelog
-* Thu Oct 02 2026 AXlinux Team <dev@axlinux.local> - 1.0.0-1
+* Thu Oct 02 2026 AXlinux Team <dev@axlinux.local> - 1.1.0-1
 - Ilk RPM paketi. SELinux enforcing Fedora'da calisir.
 - axdaemon ayri SELinux alanina tasindi; bpf() yetkisi
   yalnizca bu alana verilir.

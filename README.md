@@ -4,6 +4,23 @@ Kullanıcı odaklı, YAML tabanlı Mandatory Access Control sistemi.
 Milyonlarca satır hazır politika yok: **politika senin, tek
 gerçek kaynak `~/.axlinux/policy.yaml`.**
 
+## Fedora 44 uyumlulugu
+
+Fedora 44 (en gecerli kararli surum) SELinux **Enforcing** altinda
+tam dogrulanmistir: 5/5 eBPF kanitasi, 5/5 LSM kanitasi,
+enforcement aktif, 716 dogrulama kontrolu geciyor.
+
+Fedora'ya ozgu iki davranis bilinmelidir:
+
+- Kok dosya sistemi btrfs alt birimidir; `/etc`, `/var`, `/home`,
+  `/root` yol kurallari calisir. `/tmp` gibi **ayri mount** noktalari
+  yol cozumlemesinde gorunmez (yapisal sinir, `docs/policy-language.md`).
+- `process.exec` / `file.execute` kurallari **sembolik baglarin
+  hedefine** uygulanir: `/usr/bin/python3` bir bag ise kural
+  `python3.14` icin yazilir. Bu guvenlik icin zorunludur.
+
+Ayrinti: `DAGITIM.md` ve `CHANGELOG.md`.
+
 ## Kurulum
 
 ```bash

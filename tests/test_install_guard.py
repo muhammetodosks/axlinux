@@ -850,15 +850,54 @@ class TestDebPackage(unittest.TestCase):
             r"/usr/lib/axlinux/axctl/",
             "paket axctl/*.py -> axctl/ altina koymali")
 
-    def test_axctl_wrapper_sets_program_name(self):
-        """python -c modunda sys.argv[0] = "-c" olur.
+    def test_axctl_wrapper_is_a_real_script(self):
+        """Sarmalayici `python3 -c` biciminde OLMAMALI.
 
-        Yardim ciktisi "Usage: -c ..." olarak gorunuyordu.
+        Eski bicim `#!/bin/sh` + `python3 -c '...'` idi. Bu bicimde
+        sys.argv[0] degeri "-c" oldugu icin click yardim ciktisi
+        "Usage: -c [OPTIONS]" olarak gorunuyordu; ayrica RPM ve
+        install.sh farkli sarmalayicilar tasiyordu.
+
+        Simdi tek dogruluk kaynagi olan `packaging/axctl` gercek bir
+        python betigi: sys.argv[0] dogru dosya yoludur.
         """
-        w = read(self.ROOT / "packaging" / "axctl")
-        self.assertIn('sys.argv[0] = "axctl"', w)
-        self.assertIn("/usr/lib/axlinux", w)
-        self.assertIn('"$@"', w, "CLI argumanlari iletilmeli")
+        path = self.ROOT / "packaging" / "axctl"
+        w = read(path)
+
+        # 1) Shebang gercek bir python betigi olmali (sh degil).
+        self.assertTrue(
+            w.startswith("#!/usr/bin/env python3"),
+            "axctl sarmalayicisi /bin/sh ile baslamamali; gercek bir "
+            "python betigi olmali (shebang: %r)" % w.splitlines()[:1])
+
+        # 2) Dosya gercekten PYTHON olarak derlenebilmeli.
+        try:
+            compile(w, str(path), "exec")
+        except SyntaxError as e:
+            self.fail("packaging/axctl python betigi degil: %s" % e)
+
+        # 3) Calistirilan bir `python3 -c` kalinti olmamali.
+        #    (Docstring icinde anlatim olarak gecmesi sorun degil.)
+        # Modul doktrani (eski bicimin ANLATIMI) taranmaz; yalnizca
+        # gercek kod satirlari.
+        lines = w.splitlines()
+        kod_baslar = 0
+        for i, line in enumerate(lines):
+            if line.startswith("import ") or line.startswith("from "):
+                kod_baslar = i
+                break
+        for i in range(kod_baslar, len(lines)):
+            line = lines[i]
+            st = line.strip()
+            if st.startswith("#"):
+                continue
+            if "python3 -c" in line or "python -c" in line:
+                self.fail("packaging/axctl:%d calistirilan python3 -c "
+                          "kalinti: %r" % (i + 1, line))
+
+        self.assertIn("from axctl.cli import main", w)
+        self.assertIn("sys.path.insert", w)
+
 
     def test_installed_size_computed_after_staging(self):
         """Installed-Size staging TUM bitmeden hesaplanmamali."""
