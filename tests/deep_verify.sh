@@ -1937,6 +1937,89 @@ else
     ok "audit segmenti yok (10 MB siniri henuz dolmadi; Go testleri dogruluyor)"
 fi
 
+# --- COK KULLANICILI SENARYO ---
+#
+# Tek kullanicili testler, cok kullanicili sistemde kurallarin
+# birbirine karismadigini GOSTERMEZ. Bu bolum ikinci bir kullanici
+# olusturur ve iki kullanicinin kendi dosyalarina erisimini ayri
+# ayri dener.
+#
+# Kritik ayrim: kural "subject" bazlidir (hangi surec) ve "object"
+# bazlidir (hangi yol). Iki kullanicinin ayni yolu okumasi FARKLI
+# sonuc vermelidir.
+# Politika DURUMUNU degistirir; bloktan sonraki testler kendi
+# varsayimini yapar. Onceki eklemede ayni sorun yasandi: bu blok
+# politika birakip "yuksek hacim" sayacini bozuyordu.
+AXMU_SAVED="/tmp/ax-polko-cokkull-$$.yaml"
+cp "$POLICY_PATH" "$AXMU_SAVED" 2>/dev/null || : >"$AXMU_SAVED"
+AXMU_B=$(id -u axlinux-test 2>/dev/null)
+if [ -z "$AXMU_B" ]; then
+    sudo useradd -m -s /bin/bash axlinux-test 2>/dev/null
+    # Politika DURUMUNU degistirir; bloktan sonraki testler kendi
+# varsayimini yapar. Onceki eklemede ayni sorun yasandi: bu blok
+# politika birakip "yuksek hacim" sayacini bozuyordu.
+AXMU_SAVED="/tmp/ax-polko-cokkull-$$.yaml"
+cp "$POLICY_PATH" "$AXMU_SAVED" 2>/dev/null || : >"$AXMU_SAVED"
+AXMU_B=$(id -u axlinux-test 2>/dev/null)
+fi
+
+if [ -z "$AXMU_B" ]; then
+    skip "cok kullanicili test: ikinci kullanici olusturulamadi"
+else
+    AXMU_HOME=$(getent passwd axlinux-test | cut -d: -f6)
+    sudo mkdir -p "$AXMU_HOME/.ssh" 2>/dev/null
+    sudo sh -c "echo GIZLI-ANAHTAR > '$AXMU_HOME/.ssh/id_rsa'" 2>/dev/null
+    sudo chmod 600 "$AXMU_HOME/.ssh/id_rsa" 2>/dev/null
+    sudo chown -R axlinux-test:axlinux-test "$AXMU_HOME" 2>/dev/null
+
+    cat >/tmp/ax-multiuser.yaml <<YAML
+version: 1
+mode: enforcing
+rules:
+  - id: mu1
+    name: "kullanici A gizli anahtari"
+    subject: ["cat"]
+    object: $AXMU_HOME/.ssh/id_rsa
+    action: file.read
+    effect: deny
+YAML
+    apply_policy /tmp/ax-multiuser.yaml
+    sleep 1
+
+    # Kullanici A: KENDI gizli anahtari -> engellenmeli
+    if sudo -u axlinux-test cat "$AXMU_HOME/.ssh/id_rsa" >/dev/null 2>&1; then
+        no "cok kullanicili: kullanici kendi gizli dosyasini okuyabildi"
+    else
+        ok "cok kullanicili: kullanici A kendi gizli anahtarini okuyamiyor"
+    fi
+
+    # Kullanici B (root disi, baska kullanici): AYNI dosya -> kural
+    # subject=cat oldugu icin ENGELLENMELI (kural yola bagli)
+    if cat "$AXMU_HOME/.ssh/id_rsa" >/dev/null 2>&1; then
+        no "cok kullanicili: baska kullanici kurali atlatti (SIZINTI)"
+    else
+        ok "cok kullanicili: kural baska kullanicida da gecerli"
+    fi
+
+    # YANLIŞ POZITIF: kullanici kendi normal dosyasini yazabilmeli
+    if sudo -u axlinux-test sh -c "echo x > '$AXMU_HOME/normal.txt'" >/dev/null 2>&1; then
+        ok "cok kullanicili: kullanici kendi normal dosyasini yazabiliyor"
+    else
+        no "cok kullanicili: kullanici kendi dosyasina da yazamiyor (yanlis pozitif)"
+    fi
+    sudo rm -f "$AXMU_HOME/normal.txt" 2>/dev/null
+    rm -f /tmp/ax-multiuser.yaml 2>/dev/null
+fi
+
+# Politika DURUMUNU GERI AL
+if [ -s "$AXMU_SAVED" ]; then
+    apply_policy "$AXMU_SAVED" || true
+else
+    cp /dev/null "$POLICY_PATH" 2>/dev/null || :
+    axctl reload --mode enforcing >/dev/null 2>&1 || :
+fi
+rm -f "$AXMU_SAVED"
+
 # --- DIZIN KURALLARI ICERIGI KORUYOR MU? ---
 #
 # GUVENLIK ACIGI (olculdu ve duzeltildi):
