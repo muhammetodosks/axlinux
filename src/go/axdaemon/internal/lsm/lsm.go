@@ -9,6 +9,8 @@ import (
 	"sync"
 
 	"github.com/cilium/ebpf"
+
+	"axlinux/axdaemon/internal/maps"
 	"github.com/cilium/ebpf/link"
 
 	"axlinux/axdaemon/internal/lsmenv"
@@ -84,6 +86,16 @@ type Manager struct {
 	// noEnforce records that the operator passed --no-enforce, so
 	// zero attached hooks is a decision rather than a fault.
 	noEnforce bool
+	// pinDir is where shared maps live, by name. The loader reuses
+	// an existing pin here so policy survives a restart.
+	pinDir string
+}
+
+// SetPinDir sets the directory shared maps are pinned in.
+func (m *Manager) SetPinDir(dir string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pinDir = dir
 }
 
 // NewManager creates a manager for the given axbpf object path.
@@ -115,7 +127,53 @@ func (m *Manager) Load() error {
 		return fmt.Errorf("ebpf collection spec yuklenemedi: %w", err)
 	}
 
-	coll, err := ebpf.NewCollection(spec)
+	// Paylasilan haritalar ISMINE GORE pinlenir. Bu olmadan
+	// her baslatmada YENI harita olusur ve onceki pin artik
+	// sahipsiz bir nesneye ait olur:
+	//
+	//   - pin dosyasi var diye "pinleme calisiyor" gorunur,
+	//     ama daemon pinlenen haritayi DEGIL, koleksiyonun
+	//     taze haritasini kullanir;
+	//   - "kurallar yeniden baslatmayi atlar" vaadi TUTMAZ,
+	//     yeniden baslatma tum kurallari SILER;
+	//   - bpftool/mapdump bayat veri gosterir (3 anahtar),
+	//     oysa status 20 diyor.
+	//
+	// PinByName, var olan pini YENIDEN KULLANIR; boylece
+	// programlar ve yazmalar ayni haritaya gider.
+	for _, name := range []string{
+		maps.AllowMapName, maps.DenyMapName, maps.ModeMapName,
+	} {
+		if ms, ok := spec.Maps[name]; ok && ms.Pinning == ebpf.PinNone {
+			ms.Pinning = ebpf.PinByName
+		}
+	}
+
+	// MapOptions.PinPath olmadan PinByName calismaz
+	// ("pin by name: missing MapOptions.PinPath").
+	var coll *ebpf.Collection
+	if m.pinDir != "" {
+		// Pin dizini yuklemeden ONCE olmali. Onceki kodda
+		// dizini pinMaps() olusturuyordu ve o, koleksiyon
+		// yuklendikten sonra calisiyor:
+		//
+		//   pin map to /sys/fs/bpf/axlinux/allow_map:
+		//   no such file or directory
+		//
+		// Yani ilk kurulumda haritalar hicbir zaman pinlenmiyor,
+		// enforcement sessizce hic baslamiyordu.
+		if err := os.MkdirAll(m.pinDir, 0700); err != nil {
+			return fmt.Errorf("pin dizini olusturulamadi (%s): %w",
+				m.pinDir, err)
+		}
+		coll, err = ebpf.NewCollectionWithOptions(spec,
+			ebpf.CollectionOptions{
+				// v0.12'de alan adi "Maps" (MapOptions turunde).
+				Maps: ebpf.MapOptions{PinPath: m.pinDir},
+			})
+	} else {
+		coll, err = ebpf.NewCollection(spec)
+	}
 	if err != nil {
 		return fmt.Errorf("ebpf collection olusturulamadi: %w", err)
 	}

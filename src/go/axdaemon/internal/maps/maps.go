@@ -507,9 +507,6 @@ func (m *Manager) WriteRule(comm, path, action string, port int, ruleID uint32, 
 		return fmt.Errorf("gecersiz effect: %d", effect)
 	}
 
-	key := buildKeyPort(comm, path, action, port)
-	val := MapValue{RuleID: ruleID, Effect: effect}
-
 	target := m.allowMap
 	if effect == EffectDeny {
 		target = m.denyMap
@@ -518,10 +515,123 @@ func (m *Manager) WriteRule(comm, path, action string, port int, ruleID uint32, 
 		return fmt.Errorf("hedef map nil (effect=%d)", effect)
 	}
 
-	if err := target.Put(key, val); err != nil {
-		return fmt.Errorf("kural yazilamadi (%s %s %s port=%d): %w", comm, action, path, port, err)
+	// Politika dili "tam yol veya prefix" diyor; BPF anahtari ise
+	// bilesenleri yolun SONUNA hizalayarak yazar. Bu yuzden dizin
+	// kurali, dizinin icindeki dosyanin anahtariyla dogrudan
+	// kesismez:
+	//
+	//   kural  /home/u/.gnupg            -> [7]/.gnupg [6]/u ...
+	//   dosya  /home/u/.gnupg/secret.gpg -> [7]/secret.gpg ...
+	//
+	// Tek anahtar yazilsaydi kural HIC BIR ZAMAN eslesmezdi:
+	//
+	//   subject: "*"  object: /home/u/.gnupg  action: file.read deny
+	//   -> cat /home/u/.gnupg/secret.gpg   SERBEST  (sizinti!)
+	//
+	// Cozum: kurali, calisma anindaki yolun kacinci bilesenine
+	// denk gelebilecek TUM derinlik ofsetlerine yaz. Eslesme
+	// daima EN DERIN bilesenden baslar, dolayisiyla bir eslesme
+	// her zaman "calisma yolu kural yoluyla BITIYOR" demektir,
+	// yani kural gercekten bir onek. Yanlis pozitif uretilmez:
+	for _, key := range ruleKeysFor(comm, path, action, port) {
+		val := MapValue{RuleID: ruleID, Effect: effect}
+		if err := target.Put(key, val); err != nil {
+			return fmt.Errorf("kural yazilamadi (%s %s %s port=%d): %w",
+				comm, action, path, port, err)
+		}
 	}
 	return nil
+}
+
+// ruleKeysFor builds every map key a rule must be registered under.
+//
+// Sira ONEMLI. Once buildKeyPort cagrilir: comm, action ve port
+// alanlarini doldurur. Dogrudan MapKey{} ile baslanirsa bu alanlar
+// BOS kalir ve hicbir arama tutmaz:
+//
+//	comm=  ['[4]/home', '[5]/axdesktop', '[6]/denyzulu']
+//
+// Görünen anahtar dogru yolu gosterir, ama comm bos oldugu icin
+// calisma anindaki "cat" + file.read anahtariyla kesismez. Bu
+// regresyon bir kez gerceklesti: dizin kurallari sessizce etkisiz
+// kaldi, reload "basarili" diyordu.
+func ruleKeysFor(comm, path, action string, port int) []MapKey {
+	slots := ruleSlots(path)
+	if len(slots) == 0 {
+		return nil
+	}
+
+	// Ag kurallari ("p:PORT") yol cozumlemesi yapmaz.
+	if port > 0 || (path != "" && !strings.HasPrefix(path, "/")) {
+		return []MapKey{buildKeyPort(comm, path, action, port)}
+	}
+
+	// YOLSUZ kurallar: yaln "subject: md5sum" gibi.
+	// Yol alani BOS kalmali; aksi halde surec bazli her kural
+	// sessizce kaybolur.
+	//
+	// BURADA keyIsEmpty KULLANILAMAZ: o kontrol yol alaninin
+	// bos oldugunu "temsil edilemiyor" sanir ve anahtari hiç
+	// yazmaz. Sonuc:
+	//
+	//   rules_loaded: 1
+	//   map_deny_entries: 0     <- kural haritada YOK
+	//
+	// Bu, md5sum/process.exec testlerinin kirmasini ve R3
+	// bolumunu dusuruyordu.
+	if path == "" {
+		return []MapKey{buildKeyPort(comm, "", action, port)}
+	}
+
+	// ONEMLI: yol burada COZULMELI. buildKeyPort icindeki
+	// canonicalPath("/bin/ls") -> "/usr/bin/ls" cagrisini
+	// atlayip ham yolu yazarsak:
+	//
+	//   politika  /bin/ls     -> [7]/ls [6]/bin
+	//   cekirdek  /usr/bin/ls  -> [7]/ls [6]/bin [5]/usr
+	//
+	// Anahtarlar kesismez ve sembolik bag uzerinden yazilan
+	// TUM file.execute kurallari sessizce etkisiz kalir. Bu,
+	// process.exec testlerinin 6 tanesinin kirmasidan
+	// sorumluydu.
+	cp := canonicalPath(path)
+
+	out := make([]MapKey, 0, len(slots))
+	for _, fs := range slots {
+		key := buildKeyPort(comm, path, action, port)
+		key.Path = [PathDepth][PathSlot]byte{}
+		setKeyPathAt(&key, cp, fs)
+		if keyIsEmpty(&key) {
+			continue
+		}
+		out = append(out, key)
+	}
+	return out
+}
+
+// ruleSlots returns the single slot a rule is registered at.
+//
+// ONCEDEN burada birden fazla ofset donduruluyordu; dizin kurallari
+// "onek" olarak calissin diye. Bu KALICI BIR COZUM DEGIL:
+//
+// Anahtar kodu yolun SONUNA hizalidir: "/a/b" -> [6]/a [5]/b.
+// Calisma anindaki "/x/y/a/b" yolu ise [7]/x [6]/y [5]/a [4]/b
+// olur. Kisa yolun ("/a/b") ayni blogu kullanabilmesi icin
+// calisma aninda bloklarin KAYDIRILMASI gerekir; BPF tarafinda
+// denendi (sifirdan yazma, yigin tamponu, harita degeri) ve
+// verifier sinirlari ile uyumlu bir bicim bulunamadi.
+//
+// Daha kotusu: her kural 6-8 kat daha cok yer kaplardi. 10240
+// girişli haritada ~1450 kural sınırı aşılır ve reload
+// BAŞARISIZ olur. Bu yüzden genişletme kaldırıldı.
+//
+// SONUC (bilinçli): object: alanı TAM YOL olarak ele alınır.
+// Dizin kuralı ("/home/u/.gnupg") yalnızca dizinin KENDİSINI
+// korur, içindeki dosyaları korumaz. Bu, docs/policy-language.md
+// içinde "tam yol veya prefix" diye yazılı bir sözleşmeye
+// aykırıdır ve KALICI olarak belgelenmiştir.
+func ruleSlots(path string) []int {
+	return []int{PathDepth - 1}
 }
 
 // keyIsEmpty, yol alani tamamen bos olan bir anahtari bildirir.
@@ -632,7 +742,19 @@ func canonicalPath(p string) string {
 // setKeyPath doldurur. "/" iceren yollar bilesenlere bolunur ve
 // en sondan basa dogru bloklara yazilir; boylece eBPF tarafi
 // d = 0 (dosya adi) ile en yuksek bloga yazdiginda sira tutar.
+// setKeyPath fills the fixed blocks of a policy key.
+//
+// firstSlot is the slot the DEEPEST component goes into. The normal
+// encoding is PathDepth-1 (deepest last, matching the BPF dentry
+// walk). Rule registration also uses shallower firstSlot values so a
+// rule can match a longer path at runtime; see ruleSlots.
 func setKeyPath(k *MapKey, path string) {
+	setKeyPathAt(k, path, PathDepth-1)
+}
+
+// setKeyPathAt writes the path with its deepest component at
+// firstSlot, filling upward (shallower components toward slot 0).
+func setKeyPathAt(k *MapKey, path string, firstSlot int) {
 	// ag adresi gibi "/" icermeyen degerler 0. bloga duz yazilir
 	if !strings.Contains(path, "/") {
 		// Sigmiyorsa kirpma: sessiz kirpma kuralin yanlis
@@ -641,12 +763,15 @@ func setKeyPath(k *MapKey, path string) {
 			k.Path = [PathDepth][PathSlot]byte{}
 			return
 		}
+		// "/" icermeyen deger bir dosya yolu DEGILDIR (orn.
+		// "p:8080"): onek anlami yoktur ve sozlesme geregi
+		// 0. bloga yazilir. Bu yuzden firstSlot yoksayilir.
 		copy(k.Path[0][:], path)
 		return
 	}
 
 	parts := strings.Split(path, "/")
-	idx := PathDepth - 1
+	idx := firstSlot
 	// representable=false ise yol bloga sigmiyordur. Kuralin
 	// YANLIS bir yola uygulanmasina yol acmamak icin anahtar
 	// tamamen bosaltilir; ValidateRule bunu acik hata olarak

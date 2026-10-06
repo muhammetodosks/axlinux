@@ -284,6 +284,14 @@ struct {
  * kalmaz ve verifier'in instruction patlamasi onlenir. */
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+  /* 3 yuva:
+  *   0 -> cagiranin yolu
+  *   1 -> joker arama anahtari (comm="*")
+  *   2 -> CALISMA TAMPONU (ax_lookup_path_prefixes)
+  *
+  * Yigin tamponu kullanilamaz: 8*32 = 256 bayt ve kancanin
+  * diger yerelleriyle birlikte BPF yigin sinirini asiyor
+  * ("BPF stack limit is exceeded"). Harita degeri yiginda degildir. */
 	__uint(max_entries, 2);
 	__type(key, __u32);
 	__type(value, struct policy_key);

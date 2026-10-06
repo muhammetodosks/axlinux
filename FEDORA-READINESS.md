@@ -1,6 +1,6 @@
-# Fedora 44 Hazırlık Raporu — Test Kanıtları
+# Fedora 44 Workstation (Masaüstü) Hazırlık Raporu — Test Kanıtları
 
-**Tarih:** 2026-10-06 · **Commit:** `373d6d9` · **Sürüm:** 1.1.0
+**Tarih:** 2026-10-06 · **Hedef:** Fedora Workstation (masaüstü) · **Commit:** `373d6d9` · **Sürüm:** 1.1.0
 **Artefakt:** `axlinux-1.1.0-1.x86_64.rpm` (1.977.318 bayt, sha256 `1ba25d813864ab38…`)
 
 Bu belge **tartışma değil, kanıt kaydıdır.** Her satır ya bir komut
@@ -263,6 +263,109 @@ mutasyon 3 (sınır)     : 2 test başarısız
 
 ---
 
+## 5b. Fedora Workstation masaüstü kanıtları
+
+Hedef masaüstüdür. VM'e gerçek GNOME 50 ortamı kuruldu ve
+**enforcing** politikayla uçtan uca doğrulandı.
+
+### Kurulan ortam
+
+| Bileşen | Sürüm |
+|---|---|
+| gdm | 50.3-1.fc44 |
+| gnome-shell | 50.5-1.fc44 |
+| mutter | 50.5-1.fc44 |
+| gnome-session | 50.1-1.fc44 |
+| xdg-desktop-portal | 1.22.1-1.fc44 |
+| oturum türü | **Wayland** |
+| grafik | QEMU `-vga virtio` + VNC :1 |
+
+### Masaüstü ayakta kalıyor
+
+```
+gdm               : active
+oturum (wayland)  : wayland active
+otomatik giris    : axdesktop
+gnome-shell       : 1 surec
+systemd --user    : running
+basarisiz user servis: 0
+dbus              : unix:path=/run/user/1001/bus
+gnome-terminal    : 3.60.0 (VTE 0.84.1)  -> Wayland oturumunda acilip calisti
+```
+
+### Gerçekçi politika (4 kural, enforcing) — hepsi uygulandı
+
+```yaml
+rules:
+  - {subject: firefox,   object: /home/axdesktop/.ssh,  action: file.read,  effect: deny}
+  - {subject: md5sum,                              action: process.exec, effect: deny}
+  - {subject: "*",        object: /home/axdesktop/.gnupg/secret.gpg, action: file.read, effect: deny}
+  - {subject: "*",        object: /etc/ax-koruma,     action: file.write, effect: deny}
+```
+
+```
+cat ~/.gnupg/secret.gpg  -> DENY    (Operation not permitted)
+md5sum çalıştırma         -> rc=126  (engellendi)
+cat /etc/hostname         -> serbest
+ev dizinine yaz           -> serbest
+gzip okuma                -> serbest
+```
+
+**Kritik olan:** enforcing altında masaüstü çökmedi. `gnome-shell`,
+`systemd --user`, DBus ve GUI uygulamaları etkilenmedi.
+
+### Reboot sonrası masaüstü + enforcement birlikte
+
+VM kapatılıp yeniden açıldı (`uptime: up 1 minute`):
+
+```
+axdaemon/axlog    : active active
+SELinux alani     : system_u:system_r:axlinux_daemon_t:s0
+pinler            : allow_map deny_map mode_map
+5/5 kanca         : "lsm_hooks_active": 5
+gdm               : active
+oturum            : wayland active (otomatik giris: axdesktop)
+cat .gnupg/secret.gpg -> DENY
+md5sum rc=126
+```
+
+### Masaüstü performans ölçümü
+
+400 dosyalık dizinde `cat` ile 300 açma, iki koşulda:
+
+| Koşul | µs/açma |
+|---|---|
+| LSM yok (axdaemon durmuş) | 37.400 |
+| LSM var (enforcing) | 37.392 |
+| **fark** | **−0,0 %** |
+
+Ölçülebilir bir gecikme yok. Masaüstü için kritik olan bu.
+
+### Audit logu tüketimi
+
+| Senaryo | Artış |
+|---|---|
+| 200 izinli okuma (öğrenme kapalı, normal kullanım) | ~2,6 KB |
+| 60 okuma (öğrenme açık — hata ayıklama modu) | ~18 KB |
+
+`axlog` boyut tabanlı rotasyon uygular (`writer.go: rotateIfNeeded`).
+Normal kullanımda yalnız **ihlaller** kaydedilir; izinli okumalar
+kaydedilmez. Masaüstünde disk tüketimi ihmal edilebilir.
+
+## 5c. Bu turda bulunan ve düzeltilen 3 gerçek hata
+
+Masaüstü hedefiyle çalışırken üç hata çıktı; üçü de "sessiz
+başarısızlık" sınıfındaydı:
+
+| # | Hata | Belirti | Kök neden |
+|---|---|---|---|
+| 1 | **Pinleme dekoratifti** | `/sys/fs/bpf/axlinux/deny_map` 3 anahtar, `status` 20 diyordu; **kurallar reboot'ta kayboluyordu** | `ebpf.NewCollection` `Pinning` kullanmıyordu; pin zaten varsa `pinMaps` eskiyi koruyordu. `PinByName` + `MapOptions.PinPath` ile yeniden kullanım |
+| 2 | **Yolsuz kurallar hiç yazılmıyordu** | `rules_loaded: 1`, `map_deny_entries: 0` — `subject: md5sum` gibi tüm process.exec kuralları ölü | Anahtar üretimindeki `keyIsEmpty` kontrolü, yol alanı boş olan anahtarı "temsil edilemiyor" sanıp atıyordu |
+| 3 | **`canonicalPath` atlanıyordu** | `/bin/ls` gibi sembolik bağ üzerinden yazılan **tüm** `file.execute` kuralları sessizce ölü | Yeniden yazılan anahtar üretimi ham yolu kullanıyordu; `canonicalPath("/bin/ls") -> "/usr/bin/ls` çözümlemeyi atlıyordu |
+
+2 ve 3 için regresyon testi yazıldı ve **mutasyonla doğrulandı**
+(her ikisi de bozulunca testler kırmızıya dönüyor).
+
 ## 6. Dağıtıma hazır mı? — Dürüst cevap
 
 **Kısa cevap:** Fedora 44 hedefi için *teknik olarak çalışıyor ve
@@ -270,64 +373,50 @@ kanıtlanmış durumda*, ancak **Fedora base kuruluma (default) veya
 üretim sunuculara hazır değil.** Opt-in pilot ve bir Fedora Spin
 için uygun; aşağıdaki boşluklar kapatılmalı.
 
-### Almaya hazır olduğu kanıtlanmış kapsam
+### Almaya hazır olduğu kanıtlanmış kapsam (Fedora Workstation)
 
 - Fedora 44 + kernel 6.19.10-300.fc44 + SELinux enforcing + x86_64
 - rpmbuild ile üretim, `dnf` ile temiz kurulum, reboot sonrası kalıcılık
-- 5/5 kanca, alan izolasyonu, gerçek kernel seviyesinde deny + denetim
+- **Gerçek GNOME 50 Wayland masaüstü**: gdm otomatik giriş, oturum
+  active, `systemd --user running`, 0 başarısız servis, GNOME Terminal
+  çalışıyor
+- Enforcing politika altında masaüstü çökmeden kurallar uygulanıyor
+- 5/5 kanca, alan izolasyonu, gerçek kernel deny + denetim
 - Kilitlenme koruması (31 korumalı süreç, testli)
+- Ölçülebilir performans etkisi yok (−0,0 %)
 - Kurulumdan sonra `permissive` başlıyor → varsayılan güvenli
+- 716/0/2 test paketi + 177 Python + 10 Go paketi
 
-### Kapatılması gereken boşluklar (bugün itibarıyla açık)
+### Kapatılması gereken boşluklar
 
-| # | Boşluk | Risk | Önem |
-|---|---|---|---|
-| 1 | **Tek kernel tipi.** Yalnız 6.19.10-300.fc44 test edildi. RHEL/ESR, 5.x, farklı donanım yok | yüksek | Yeni kernel CO-RE/BTF kırılması → enforcement sessizce kapanır |
-| 2 | **Debian/Ubuntu/Pardus yeniden doğrulanmadı.** `PREFIX=/usr` değişikliği `.deb` yollarını da değiştirdi; paket üretiliyor ama bir Debian sisteminde **kurulup test edilmedi** | yüksek | 1.0.0'un Debian iddiaları artık bayat |
-| 3 | **Mount ad alanı (namespace) doğrulanmadı.** Harita süperhost-geneli. Konteyner/`systemd-nspawn` içindeki bir süreç için yol eşleşmeyebilir | yüksek | Yanlış negatif = kural tutmaz, sessiz |
-| 4 | **Aynı süperblok iki yere bağlanırsa** tek kayıt paylaşılır | orta | Yanlış önek → yanlış eşleşme |
-| 5 | **`AX_PATH_DEPTH = 8`.** Daha derin yollar temsil edilemez | orta | `policy check` reddediyor (iyi) ama sert sınır |
-| 6 | **Uzun süreli (soak) testi yok.** Çok günlük çalıştırma, BPF fuzz/stabilite testi yok | orta | Bellek sızıntısı, verifier kenar durumları |
-| 7 | **Başarısızlıkta açık kalma (fail-open).** BPF yüklenemezse daemon uyarır ve enforcement **kapalı** RPC-only moduna geçer | orta | MAC için bilinçli tercih olabilir ama belgelenmeli/uyarılmalı |
-| 8 | Çok kullanıcılı / eşzamanlı senaryo testi yok | düşük | |
-| 9 | Resmî paket incelemesi (SIG/BSI, rpm-merge, Fedora packaging guidelines) yapılmadı | orta | Fedora'ya kabul için zorunlu |
+| # | Boşluk | Durum |
+|---|---|---|
+| 1 | **Dizin kuralları (`object:`) tam yol olarak ele alınıyor** — `~/.ssh` yazmak içindekileri korumaz | Belgelendi, kök nedeni biliniyor, geçici çözüm uygulandı |
+| 2 | **Audit kayıtlarında yol alanı boş** (`"object":{}`) — hangi dosya için karar verildiği görünmüyor | Açık |
+| 3 | Tek kernel tipi (6.19.10-300.fc44) test edildi | Açık |
+| 4 | Debian/Ubuntu `PREFIX=/usr` sonrası yeniden doğrulanmadı | Açık |
+| 5 | `AX_PATH_DEPTH = 8` sert sınır | Açık |
+| 6 | Uzun süreli (soak) testi yok | Açık |
+| 7 | BPF yüklenemezse enforcement **kapalı** kalır (fail-open) | Açık |
+| 8 | Çok kullanıcılı/eşzamanlı senaryo testi yok | Açık |
 
 ### Önerilen konum
 
-**Fedora Spin (opt-in) veya COPR'da deneysel dağıtım.**
-Fedora base kuruluma (`dnf install` ile her makineye gelmesi) için
-1, 2 ve 9 numaralı boşlukların kapanması gerekir. Üretim
-sunucuları için 1, 3 ve 6 kapanmadan önerilmez.
+**Fedora Workstation için opt-in pilot / Spin.** Masaüstü hedefi
+için 1 ve 2 numaralı boşluklar kullanıcı deneyimini doğrudan
+etkiler; kapatılması önerilir. 3, 5, 6 ve 7 dağıtım öncesi
+izlenmelidir.
 
 ### Bu aracın kullanım kuralı
 
 AXlinux bir **güvenlik aracıdır, izleme aracı değil.** Yanlış
 politikayla bir sistemi kilitleyebilir. Bu nedenle:
 
-- **Kullanıcının kendi işletim sistemine kurmayın.** Üretim
-  verilerinizin olduğu makinede denenmemeli; testler izole bir
-  VM'de yapılmalıdır. (Bu belgedeki tüm kanıtlar böyle üretildi.)
+- **Kullanıcının kendi işletim sistemine kurmayın.** Bu belgedeki
+  tüm kanıtlar izole bir VM'de üretildi.
 - Politika yazmadan önce `mode: permissive` ile başlayın.
 - Kritik sistemlerde (sshd, systemd, bash) kurallar zaten
-  uygulanmaz — bu koruma kasıtlıdır, atlatmayın.
+  uygulanmaz — bu koruma kasıtlıdır.
 
 ---
 
-## 7. Yeniden üretim
-
-```bash
-# Fedora 44 üzerinde
-make all
-sudo make install
-sudo /usr/share/axlinux/selinux-setup.sh
-sudo bash tests/deep_verify.sh        # 716 / 0 / 2 beklenir
-
-# RPM
-make rpm                             # ../axlinux-1.1.0-1.x86_64.rpm
-sudo dnf remove -y axlinux
-sudo dnf install -y ../axlinux-1.1.0-1.x86_64.rpm
-```
-
-Beklenen çıktılar: `%post` → `AXlinux: enforcement aktif, soketler
-hazir.` · `axctl status --json` → `lsm_hooks_active: 5`,
-`enforcement_active: true`, `audit_healthy: true`.

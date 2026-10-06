@@ -82,12 +82,29 @@ Bu surum sessiz kalan bir dizi gercek hatayi kalici olarak duzeltir.
   izni vermiyordu. `/sys/fs/bpf/axlinux/` altinda `allow_map`,
   `deny_map` ve `mode_map` kalici olarak pinleniyor.
 
+### Cozulmeyen, belgelenmis sinir
+
+- **Dizin kurallari (`object:`) TAM YOL olarak ele alinir.**
+  `object: /home/u/.gnupg` dizinin kendisini korur, icindeki
+  dosyalari korumaz. Politika metni "prefix" diyordu; bu bir sozlesme
+  ihlalidir. Kok neden: anahtar kodu yolun sonuna hizali
+  (`/a/b` -> `[6]/a [5]/b`), kisa yolun ayni blogu kullanabilmesi
+  icin BPF tarafinda blok kaydirma gerekiyor; uc farkli bicim
+  denendi ve verifier sinirlariyla uyumlu calisan yol bulunamadi.
+  Kural basina 6-8 anahtar yazmak 10240 girişli haritada ~1450
+  kuralda reload'u dusuruyordu. Gecici cozum: tam yol yazin.
+  Gercek cozum `setKeyPath` + `ax_fill_path` kodlamasini birlikte
+  "mutlak derinlik" bicimine cevirmektir.
+
 ### Kalan sinirlar
 
 - **Mount ad alani basina calisir.** `mount_point_map` superblock
   cihazina gore anahtarlanir (inode mountinfo'da yoktur ve
   `stat()` SELinux tarafindan reddedilir). Ayni superblocku iki
   ayri yola baglamak tek kaydi paylasir; pratikte bu olusmaz.
+- **Audit yol alani bos.** JSONL kayitlarinda `"object":{}` geliyor;
+  hangi dosya icin karar verildigi kayitta gorunmuyor. Ihlaller
+  sayilabiliyor ama denetim dosyasi incelemesi yapilamiyor.
 
 ## 1.0.0 - 2026-10-02
 

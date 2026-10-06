@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"log/slog"
 	"os"
@@ -71,6 +70,7 @@ func main() {
 	// Enforcement parcalari. eBPF yuklenemezse daemon yine calisir:
 	// RPC sunucusu, politika dogrulama ve simulasyon kullanilabilir kalir.
 	lsmMgr := lsm.NewManager(*bpfObj)
+	lsmMgr.SetPinDir(*pinDir)
 	var mapsMgr *maps.Manager
 	var auditMgr *audit.Manager
 
@@ -287,26 +287,20 @@ func pinMaps(m *maps.Manager, dir string, logger *slog.Logger) {
 			continue
 		}
 		path := dir + "/" + name
-		err := mm.Pin(path)
-		switch {
-		case err == nil:
-			logger.Debug("map pinlendi", "map", name, "path", path)
-		case errors.Is(err, os.ErrExist):
-			// Beklenen durum, hata degil. Haritalar onceki
-			// calismadan pinli kalmistir ve LoadPinnedMap bunlari
-			// YENIDEN KULLANIR; boylece kurallar yeniden baslatmayi
-			// atlatir. Yeni koleksiyonun haritasi pinlenmez, ki
-			// eskisi ezilmesin.
-			//
-			// Onceki kosul os.IsExist(err) idi ve bu hatada false
-			// donuyordu; bu yuzden her yeniden baslatmada "map
-			// pinlenemedi" uyarisi cikiyordu, halbuki hicbir sey
-			// bozuk degildi.
-			logger.Debug("map zaten pinli, yeniden kullaniliyor",
+		// Haritalari y yukleyici PinByName ile pinliyor ve
+		// var olan pini YENIDEN KULLANIYOR. Burada yalniz
+		// dogruluyoruz; elle Pin() çağrısı aynı yola ikinci
+		// kez yazmaya çalışıp hata verirdi.
+		if _, err := os.Stat(path); err == nil {
+			logger.Debug("map zaten pinli, yeniden kullanildi",
 				"map", name, "path", path)
-		default:
-			logger.Warn("map pinlenemedi", "map", name, "error", err)
+			continue
 		}
+		if err := mm.Pin(path); err != nil {
+			logger.Warn("map pinlenemedi", "map", name, "error", err)
+			continue
+		}
+		logger.Debug("map pinlendi", "map", name, "path", path)
 	}
 }
 

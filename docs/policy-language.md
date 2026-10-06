@@ -317,15 +317,39 @@ rules:
 ## Sınırlamalar
 
 1. **Wildcard sadece `subject: "*"` için.** Object wildcard yok.
-2. **Regex yok.** Sadece tam yol veya prefix.
+2. **Regex yok.** Sadece tam yol.
 3. **Zaman kuralları yok.** (v2.0'da eklenebilir)
 4. **Kullanıcı bazlı kural yok.** (v1.0'da eklenebilir)
 5. **Dinamik politika yok.** Her değişiklik için `axctl reload` gerekir.
 
-## Yol kurallari ve mount noktalari
+## Yol kurallari: tam yol ve mount noktalari
 
-Yol bazli kurallar (`object:`) **ayri mount'larin icinde de**
-calisir. Iki ayri durum vardir ve ikisi de cozulmustur.
+> **DIZIN KURALLARI CALISMAZ — `object:` TAM YOL OLARAK ELE ALINIR.**
+>
+> Politika dili eski metinlerde "prefix" diyordu. Bu bir sozlesme
+> ihlali ve duzeltilmedi:
+>
+>   object: /home/u/.gnupg, action: file.read, effect: deny
+>   cat /home/u/.gnupg/secret.gpg   ->  SERBEST   (sizinti)
+>
+> **Neden:** anahtar kodu yolun SONUNA hizalidir. `/a/b` kurali
+> `[6]/a [5]/b` olarak yazilir; calisma anindaki `/x/y/a/b` yolu ise
+> `[7]/x [6]/y [5]/a [4]/b` olur. Kisa yolun ayni blogu
+> kullanabilmesi icin BPF tarafinda bloklarin KAYDIRILMASI
+> gerekir. Sifirdan yazma, yigin tamponu (512 bayt siniri) ve
+> harita degeri olmak uzere uc bicim de denendi; verifier
+> sinirlariyla uyumlu, calisan bir yol bulunamadi.
+>
+> **Gecici olarak neden genisletme yapilmiyor:** kural basina 6-8
+> anahtar yazilsaydi 10240 girişli haritada ~1450 kuralda reload
+> basarisiz olurdu — sessiz bir bozulmadan kotu.
+>
+> **Kullanilacak yol:** korunacak dosyalari tam yol olarak yazin.
+> Gerekirse birden fazla kural yazin. Ileride cozum, iki tarafi
+> da degistiren "mutlak derinlik" kodlamaya gecmektir
+> (`setKeyPath` + `ax_fill_path` birlikte).
+
+Iki ayri mount durumu vardir ve **ikisi de cozulmustur**.
 
 bpftrace ile olculen ham davranis:
 
