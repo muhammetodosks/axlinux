@@ -1,5 +1,107 @@
 # Changelog
 
+## 1.2.0 - Dizin kurallari, kalici politika, imzali paket
+
+Fedora Workstation masaustu hedefi icin uretilmis surum. Bu surumde
+politik dili ve dağıtim yolu IKI KALICI HATA giderildi; ikisi de
+kullaniciya sessizce yanlis guvenlik hissi veriyordu.
+
+### Guvenlik acigi: dizin kurallari icerigi KORUMUYORDU
+
+    object: /tmp/dizin   +   action: file.read   effect: deny
+
+Bu kural yalnizca dizinin KENDISINI engelliyordu. Icindeki dosyalar
+(`secret.txt`, `id_rsa`) SERBEST birakiliyordu:
+
+    cat /tmp/dizin              -> Operation not permitted
+    cat /tmp/dizin/secret.txt   -> OKUNUYOR (sizinti)
+
+Kullanici "anahtarlarim korunuyor" saniyordu.
+
+Duzeltme: BPF tarafinda yol ONEKI eslesmesi. Kural anahtari,
+gercek yolun bilesen blogunun k kadar derineye kaydirilmis hali;
+eslesen turetilen anahtar Go'nun `setKeyPath` ciktisiyla bitbit ayni.
+Go tarafinda degisiklik yok.
+
+Kanit (Fedora 44, enforcing, kural `object: /tmp/pm`):
+    /tmp/pm/kok.txt              RED
+    /tmp/pm/a/ust.txt            RED
+    /tmp/pm/a/b/derin.txt        RED
+    /tmp/pm/a/b/c/d4.txt         RED
+    /tmp/pm/a/b/c/d/d5.txt       RED
+    /tmp/pm.txt                  SERBEST   (benzer ad, farkli yol)
+    /etc/hostname                SERBEST   (kural disi)
+
+### Politika reboot sonrasi KAYBOLUYORDU
+
+Politika yalnizca `axctl` API'siyle, calisan kullanicinin
+`~/.axlinux/policy.yaml` dosyasindan yukleniyordu. Acilista hicbir sey
+okunmuyordu; BPF haritalari bos basliyordu. Reboot sonrasi TUM
+kurallar kayboluyor ve sistem sessizce "hicbir sey kisitlanmiyor"
+durumuna donuyordu.
+
+Duzeltme: `/etc/axlinux/policies.d/*.yaml` acilista okunuyor.
+Tek uygulama yolu `ApplyPolicy`: hem RPC hem boot ayni kodu
+kullaniyor, iki yol zamanla ayrisamaz.
+
+Politika bozuksa HICBIR kural yazilmaz, sistem kisitlamasiz kalir ve
+daemon gunluge belirgin uyari yazar. Sistemi yanlislikla kilitlemektense
+bilincli bir secim.
+
+### install.sh sistem geneli politika dizinini KURMUYORDU
+
+RPM yolu dizini spec'te kuruyordu; install.sh KURMUYORDU. Iki kurulum
+yolu ayni sistemi kurmuyordu ve ikisi de "calisiyor" diyordu.
+Duzeltildi; install.sh artik dizini 0750 root:root, ornek politika
+dosyasini 0640 olarak kuruyor.
+
+### RPM imzalama
+
+Gercek bir depoda dagitilan her paket imzali olmak zorundadir.
+Yeni: `make rpm-gpg-key`, `make rpm-sign`, `make rpm-export-key`,
+`make rpm-verify-sign`. Anahtar repoda tutulmaz.
+
+### Audit rotasyonu HIC calismiyordu
+
+`openCurrent()` dosya adini her zaman bugunun tarihinden
+uretiyordu; 10 MB siniri tetiklendiginde ayni dosya `O_APPEND` ile
+yeniden aciliyordu. Dosya hicbir zaman donmuyor, yalnizca buyuyordu
+(VM'de 10.798.351 bayt). Saklama ust siniri da hic yoktu.
+
+Duzeltme: numarali segment, gun degisiminde tum segmentleri kapsayan
+sikistirma, 14 gunluk saklama ve 200 MB toplam boyut siniri.
+
+### Diger duzeltmeler
+
+- `audit_healthy` kalici `false` kaliyordu: tek seferlik "broken pipe"
+  sonrasi hata hafizadan temizlenmiyordu, saglikli sistem surekli
+  yanlis alarm veriyordu.
+- `axlog` RPM 1.1.0 derlenirken 1.0.0 bildiriyordu. Surum artik tek
+  kaynaktan (spec) geliyor ve `-ldflags` ile iki ikiliye de
+  enjekte ediliyor.
+- `inode_permission` ogrenme modunda her izinli erisim icin YOLSIZ
+  kayit uretiyordu (10 dakikada 43.641 kayit / 10 MB). Bu kayitlar
+  ne bilgi tasir ne kural uretir; kaldirildi. Bu kancada yol
+  cozulemez: LSM imzasi `struct inode *` alir ve inode'in
+  dentry'ye geri isaretcisi yoktur.
+- `deep_verify` sabit `/tmp` yolu kullaniyordu; root olmayan bir
+  kullanici birakip cikinca sonraki kosuda gercek bir regresyon
+  olmadan FAIL veriyordu.
+- `deep_verify` rotasyon testi anlamsizdi (1999 tarihli dosya yazip
+  "silinmis mi" diye bakiyordu, her kosuda skip donuyordu). Artik
+  numarali segmentleri dogrudan okuyor ve dizin icerigi testini de
+  iceriyor.
+
+### Dogrulama
+
+- `deep_verify.sh`: 723 gecti / 0 kaldi / 1 atlandi
+- Go: 13 paket (writer'da 6 yeni test, maps'te 5 yeni test)
+- Python: 179 gecti + 20 subtest
+- RPM: uretim, GPG imzalama, `rpm -Kv` ile parmak izi dogrulama,
+  temiz kurulum (once kaldir, sonra kur)
+- `install.sh --unattended`: temiz Fedora 44'te 11/11 adim, sonrasi
+  enforcement kanitlari
+
 ## 1.1.0 - Fedora 44 Workstation (masaustu)
 
 Fedora 44 uzerinde **masaustu** hedefi icin dogrulama. Bu surum sessiz

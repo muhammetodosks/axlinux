@@ -9,7 +9,7 @@ Kural yazarsın, uygularsın. Kural yazmazsan sistem serbest kalır.
 
 | | |
 |---|---|
-| Sürüm | **1.1.0** |
+| Sürüm | **1.2.0** |
 | Sürücü modülü | Linux LSM + eBPF (CO-RE) |
 | Dağıtım | `axdaemon` (Go), `axlog` (Go), `axctl` (Python 3) |
 | Doğrulanmış | Ubuntu 24.04.5, Debian 12 (bookworm), **Pardus 25.2 (yirmibes)** |

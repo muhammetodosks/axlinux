@@ -20,7 +20,7 @@
 #   - rpm tabanli yaşam dongusu: %pre/%post/%preun/%postun
 
 Name:           axlinux
-Version:        1.1.0
+Version:        1.2.0
 Release:        1%{?dist}
 Summary:        Mandatory access control with a YAML policy language
 
