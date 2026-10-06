@@ -1973,14 +1973,28 @@ fi
 # Yalnizca CALISTIRILAN satirlar taranir. Modul doktrani eski
 # bicimin ANLATIMINI icerir ("python3 -c '...'"); bu bir kalinti
 # degildir. Gercek kalinti `#!/bin/sh` + `python3 -c` olurdu.
+# Gecici dosya SADECE bu kosuma ait olmali.
+#
+# Once sabit yol ("/tmp/axctl-cli.txt") kullaniliyordu. Root olmayan
+# bir kullanici testi calistirip biraktiginda dosya o kullaniciya
+# ait kaliyor; sonraki calistirmada root ayni yolu yazamayip
+# "Permission denied" aliyor ve awk HATALI CIKAR. Sonuc: gercek bir
+# regresyon olmadigi halde test FAIL ediyor.
+#
+# Boyle bir dogrulama kapisi kendi durumundan etkilenmemelidir; bu
+# yuzden dosya calistirma kimligine ($$) baglanir ve giris once
+# temizlenir.
+AXCTL_CLI_OUT="/tmp/axctl-cli-$$.txt"
+: >"$AXCTL_CLI_OUT" 2>/dev/null || AXCTL_CLI_OUT="$(mktemp /tmp/axctl-cli.XXXXXX)"
 awk 'BEGIN{code=0}
      /^import |^from /{code=1}
      code==1 && /^[[:space:]]*#/ {next}
      code==1 && /python3? -c/ {print NR": "$0; bad=1}
-     END{exit bad?1:0}' /usr/bin/axctl >/tmp/axctl-cli.txt 2>&1 \
+     END{exit bad?1:0}' /usr/bin/axctl >"$AXCTL_CLI_OUT" 2>&1 \
     && ok "axctl python3 -c kullanmiyor (argv[0] dogru)" \
     || { no "axctl python3 -c kullaniyor; 'Usage: -c' gorunecek"
-         sed 's/^/    /' /tmp/axctl-cli.txt; }
+         sed 's/^/    /' "$AXCTL_CLI_OUT"; }
+rm -f "$AXCTL_CLI_OUT"
 grep -q '/usr/lib/axlinux' /usr/bin/axctl \
     && ok "axctl sys.path dogru" || no "axctl sys.path yanlis"
 axctl version >/dev/null 2>&1 && ok "axctl version calisiyor" || no "axctl version calismadi"

@@ -83,8 +83,8 @@ verify: bpf
 # --- Go ---
 go:
 	@echo "== Go =="
-	@cd $(GO_DAEMON) && $(GO) build -o axdaemon .
-	@cd $(GO_LOG)    && $(GO) build -o axlog .
+	@cd $(GO_DAEMON) && $(GO) build -ldflags "-X main.Version=$(VERSION)" -o axdaemon .
+	@cd $(GO_LOG)    && $(GO) build -ldflags "-X main.Version=$(VERSION)" -o axlog .
 	@echo "   axdaemon, axlog hazir"
 	@# Derleme ciktilari root'a ait kalirsa kullanicinin deposu
 	@# silinemez: "rm -rf axlinux" -> "Permission denied". Ayni
@@ -206,12 +206,23 @@ test-integration:
 #
 # Politika (~/.axlinux) ve audit (/var/log/axlinux) PAKETE
 # girmez ve postrm'de de silinmez: kullanici verisidir.
-VERSION  := $(shell sed -n 's/^const Version = "\(.*\)"$$/\1/p' \
-              src/go/axdaemon/main.go)
-PKGNAME  := axlinux
-PKGARCH  := amd64
-STAGE    := $(CURDIR)/.pkg
-PKGFILE  := $(CURDIR)/../$(PKGNAME)_$(VERSION)_$(PKGARCH).deb
+  # Sürüm TEK kaynaktan okunur: packaging/fedora/axlinux.spec.
+  #
+  # Önceden burada `const Version = "..."` ifadesi axdaemon/main.go
+  # dosyasından kazınıyordu. Bu iki şekilde bozuluyordu:
+  #   1) axlog/main.go'da surum SABIT "1.0.0" idi; RPM 1.1.0
+  #      derlenirken log servisi kendini 1.0.0 olarak raporluyordu.
+  #   2) axdaemon'da surum tanimi degisirse (ör. const -> var)
+  #      kazima sessizce BOS string doner, paket "axlinux-.deb"
+  #      adiyla uretilirdi.
+  # Simdi deger spec'ten gelir ve -ldflags ile her iki ikiliye
+  # de enjekte edilir; kaynak dosyalarda surum kopyasi kalmaz.
+  VERSION  := $(shell sed -n 's/^Version:[[:space:]]*\(.*\)$$/\1/p' \
+                packaging/fedora/axlinux.spec | head -1)
+  PKGNAME  := axlinux
+  PKGARCH  := amd64
+  STAGE    := $(CURDIR)/.pkg
+  PKGFILE  := $(CURDIR)/../$(PKGNAME)_$(VERSION)_$(PKGARCH).deb
 
 # --- RPM (Fedora / RHEL / openSUSE) ---
 SELINUX_DIR = packaging/fedora

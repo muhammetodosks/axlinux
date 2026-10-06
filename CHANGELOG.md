@@ -1,5 +1,92 @@
 # Changelog
 
+## 1.1.0 - Fedora 44 Workstation (masaustu)
+
+Fedora 44 uzerinde **masaustu** hedefi icin dogrulama. Bu surum sessiz
+kalan alti gercek hatayi duzeltir; ilk ucu urunun ISLEVINI dogrudan
+etkiliyordu.
+
+### Kritik: politika yeniden baslatmadan sonra KAYBOLUYORDU
+
+Politika yalnizca `axctl` API'siyle, calisan kullanicinin
+`~/.axlinux/policy.yaml` dosyasindan yukleniyordu. Acilista hicbir sey
+okunmuyordu; BPF haritalari bos basliyordu. Reboot sonrasi **tum
+kurallar kayboluyor** ve sistem sessizce "hicbir sey kisitlanmiyor"
+durumuna donuyordu.
+
+Duzeltme: `/etc/axlinux/policies.d/*.yaml` dizini acilista okunuyor
+(lexical sira ile birlestirilerek). Tek uygulama yolu `ApplyPolicy`:
+hem RPC hem boot ayni kodu kullaniyor, iki yol zamanla ayrisamaz.
+
+Politika bozuksa **hicbir kural yazilmaz** ve sistem kisitlamasiz
+kalir; daemon gunluge belirgin uyari yazar. Sistemi yanlislikla
+kilitlemektense bilincli bir secim.
+
+### Kritik: audit rotasyonu HIC calismiyordu
+
+`openCurrent()` dosya adini her zaman bugunun tarihinden uretiyordu.
+10 MB siniri tetiklendiginde ayni dosya `O_APPEND` ile yeniden
+aciliyordu: doska hicbir zaman donmuyor, yalnizca buyuyordu.
+VM'de 10.798.351 bayta ulasmis bir dosya kullanici bunu fark
+etmeden buyumeye devam ediyordu.
+
+Ayrica saklama ust siniri HIC YOKTU: her gun yeni dosya birikiyordu.
+
+Duzeltme: numarali segment (`audit-GUN.1.jsonl`), gun degisiminde tum
+segmentleri kapsayan sikistirma, 14 gunluk saklama. `writer` paketinde
+hic test yoktu; 4 regresyon testi eklendi ve **eski kodda basarisiz
+olduklari dogrulandi**.
+
+### Kritik: `audit_healthy` kalici olarak `false` kaliyordu
+
+`axlog` yeniden basladiginda bir kez "broken pipe" olusuyor, sonraki
+denemede baglanti kendiliginden kuruluyor ve kayitlar akmaya devam
+ediyordu - ama `lastErr` hafizada kaliyordu. Sistem saglikliyken
+`audit_healthy=false` bildiriliyordu: surekli yanlis alarm.
+
+Duzeltme: basarili gonderim `lastErr`'i temizler.
+
+### `axlog` yanlis surum bildiriyordu
+
+`axlog/main.go` icinde `"1.0.0"` sabiti vardi: RPM 1.1.0 derlenirken
+log servisi kendini 1.0.0 olarak raporluyordu. Ayrica `Makefile`
+surumu `axdaemon/main.go`'dan kaziyordu; tanim `const` -> `var`
+olsaydi kazima sessizce bos string donerdi.
+
+Duzeltme: surum tek kaynaktan (`axlinux.spec`) geliyor ve `-ldflags`
+ile iki ikiliye de enjekte ediliyor.
+
+### `deep_verify` kendi durumundan etkileniyordu
+
+Test sabit `/tmp/axctl-cli.txt` yolunu kullaniyordu. Root olmayan bir
+kullanici testi biraktiginda dosya o kullaniciya ait kaliyor; sonraki
+calistirmada root yazamiyor ve awk hatali cikiyordu - gercek bir
+regresyon olmadigi halde test FAIL ediyordu.
+
+Duzeltme: gecici dosya calistirma kimligine bagli.
+
+### Fedora Workstation masaustu kanitlari
+
+- Gercek GNOME 50 oturumu (gdm + Wayland + `systemd --user`)
+- Enforcement acikken gercek GUI uygulamasi (gedit, Wayland istemcisi)
+- Enforcement acikken gercek paket kurulumu (`dnf install`, 13 paket)
+- Reboot sonrasi otomatik giris + politikanin kendiliginden yuklenmesi
+- 4 kurallik gercekci enforcing politika (4/4 uygulandi)
+
+### Olcumler
+
+- **Dosya acma gecikmesi:** LSM kanaci yok 11.3 us -> enforcing 17.7 us.
+  Kanca takma maliyeti +5.8 us, politika sorgusu yalnizca +0.6 us.
+  50.000 acma: 0.25 sn yerine 0.44 sn (fark 0.19 sn, algilanamaz).
+- **Audit disk:** izinli islem **0 bayt**; engellenen islem ~252
+  bayt. Maliyet toplam etkinlige degil IHLAL sayisina bagli.
+
+### Dogrulama
+
+- `deep_verify.sh`: **716 gecti / 0 kaldi / 2 atlandi**
+- Go: 13 paket gecti · Python: 179 gecti + 20 subtest
+- RPM 2.189.772 bayt; temiz kurulum + kaldirma + yeniden kurulum
+
 ## 1.1.0 - Fedora 44 uyumlulugu
 
 Fedora 44 (en gecerli kararli Fedora surumu) uzerinde tam dogrulama.

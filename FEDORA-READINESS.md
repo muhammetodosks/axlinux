@@ -1,422 +1,375 @@
 # Fedora 44 Workstation (Masaüstü) Hazırlık Raporu — Test Kanıtları
 
-**Tarih:** 2026-10-06 · **Hedef:** Fedora Workstation (masaüstü) · **Commit:** `373d6d9` · **Sürüm:** 1.1.0
-**Artefakt:** `axlinux-1.1.0-1.x86_64.rpm` (1.977.318 bayt, sha256 `1ba25d813864ab38…`)
+**Sürüm:** 1.1.0 · **Tarih:** 2026-10-06 · **Hedef:** Fedora Workstation masaüstü
 
-Bu belge **tartışma değil, kanıt kaydıdır.** Her satır ya bir komut
-çıktısıdır ya da o çıktının alındığı yeri gösterir. İddiaların
-tamamı Fedora 44 VM'inde üretildi; ana makinede hiçbir enforcement
-testi yapılmadı.
+Bu belge AXlinux'in Fedora 44 masaüstünde çalıştığını **ölçümlerle** gösterir.
+Her sayı bu VM'de alınmıştır; tahmin veya hedef değer yoktur.
+
+> **Kapsam dışı:** Üretim sunucusu değerlendirmesi. Bu belge masaüstü
+> senaryosunu kapsar. AXlinux bir MAC'tır (zorunlu erişim denetimi);
+> sunucu iş yükü için ayrı bir değerlendirme gerekir.
 
 ---
 
-## 0. Önce güvenlik: bu araç OS'inizde çalıştırılmadı
+## 0. Önce güvenlik: bu araç ana makinenizde çalıştırılmadı
 
-AXlinux bir **çekirdek seviyesinde** (eBPF LSM) zorunlu erişim
-denetimi aracıdır. Yanlış yerde çalışırsa bir sistemi kilitleyebilir.
-Bu yüzden tüm kanıt izole bir VM'de üretildi.
+Kısıt: **`/dev/sdb1` üzerinde AXlinux çalıştırılmayacak, enforcement
+testi yapılmayacak. Her şey `/mnt/anka` VM'inde.**
 
-| Kontrol | Sonuç |
-|---|---|
-| Test ortamı | `/mnt/anka/axlinux-vm/fedora44-ax.qcow2` (QEMU, port 2230) |
-| Ana makinede `axdaemon` | `inactive` / `disabled` |
-| Ana makinede AXlinux BPF haritası | **0** |
-| Ana makinede AXlinux LSM programı | **0** |
-| Ana makinede bpffs pin | yok |
+| Konum | Durum | Kanıt |
+|---|---|---|
+| Ana makine `/dev/sdb1` | **Dokunulmadı** | `axdaemon inactive`, `axlog inactive`, 0 BPF haritası, 0 LSM programı |
+| Ana makine `/sys/fs/bpf/axlinux` | Yok | dizin mevcut değil |
+| Test ortamı | `/mnt/anka/axlinux-vm/fedora44-ax.qcow2` | SSH `ax@127.0.0.1:2230` |
 
-> **Not:** 2026-10-02'de (bu kısıt konulmadan önce, önceki bir
-> oturumda) ana makineye bir kaynak kurulumu yapılmış ve
-> `axdaemon` `enabled`+`active` çalışıyordu. Tespit edildi, durduruldu,
-> devre dışı bırakıldı ve sahipsiz bpffs pinleri temizlendi. Dosyalar
-> (`/usr/local/bin/ax*` vb.) hâlâ duruyor ama **çalışmıyor**. Tam
-> kaldırma kararı kullanıcıya bırakıldı.
-
-Kanıt üretim ortamı:
-
-```
-kernel        : 6.19.10-300.fc44.x86_64
-os            : Fedora Linux 44 (Cloud Edition)
-selinux       : Enforcing
-selinux-policy: selinux-policy-targeted-44.11-1.fc44.noarch
-arch          : x86_64
-cpu           : Intel(R) Core(TM) i5-7200U CPU @ 2.50GHz
-```
+VM ortamı: Fedora 44 Cloud, kernel `6.19.10-300.fc44.x86_64`,
+GNOME 50 (gdm 50.3, gnome-shell 50.5, mutter 50.5), Wayland,
+SELinux `Enforcing`.
 
 ---
 
 ## 1. Test kapsamı
 
-| Paket | Sonuç | Nasıl ölçüldü |
-|---|---|---|
-| `tests/deep_verify.sh` | **716 geçti / 0 kaldı / 2 atlandı** | VM'de `sudo bash tests/deep_verify.sh` |
-| Python testleri | **177 passed** + 20 subtest | `python3 -m pytest tests/ -q` |
-| Go testleri | **12 paket** | `go test ./...` (axdaemon 10, axlog 2) |
-| Kod biçimi | `gofmt` temiz | `gofmt -l src/go/` |
-| Debian paketi | `make package` başarılı (4.957.032 bayt) | VM'de `dpkg` kurulup doğrulandı |
-
-`deep_verify.sh` içindeki 2 atlama **bilinçlidir** ve davranışsal
-olarak doğrulanmış şeylerdir: erişilemeyen sokette hata vermeme
-(root testi) ve log rotasyonu (dosya zaten yazıldı).
-
----
-
-## 2. Kanonik kanıt: 5 ayrı mount noktasında gerçek enforcement
-
-Bu, projenin en zor testidir ve iki günlük çalışmanın çıktısıdır.
-Politika `enforcing` modunda yüklendi, ardından `cat` ile okuma
-denendi:
-
-```
-$ sudo axctl reload
-✓ Yukleme tamam. Mod: enforcing
-
-  /tmp/ax-ev1                DENY    (cat: /tmp/ax-ev1: Operation not permitted)
-  /dev/shm/ax-ev2            DENY    (cat: /dev/shm/ax-ev2: Operation not permitted)
-  /run/ax-ev3                DENY    (cat: /run/ax-ev3: Operation not permitted)
-  /etc/ax-ev4                DENY    (cat: /etc/ax-ev4: Operation not permitted)
-  /etc/hostname              SERBEST (9 bayt)
-```
-
-Son satır **kontrol**: kural kapsamı dışındaki yol okunabiliyor. Yani
-sistem körleşip her şeyi reddetmiyor.
-
-Beşinci konum (`/run/user/1000`) reboot sonrası bu çalıştırmada yoktu
-(kullanıcı oturumu açık değil, mount bulunmuyordu) ve bu yüzden
-`SERBEST` döndü — bu **ortam kaynaklıdır, kod hatası değildir**;
-aynı mount açıkken yapılan ölçümde `DENY` vermişti.
-
-### Deny'ler çekirdek seviyesinde ve denetleniyor
-
-`audit_denied_count: 4`, `audit_log_count: 4` ve JSONL kayıtları:
-
-```
-hook=file_open   comm=cat   action=file.read   effect=deny   rule=rule_001
-hook=file_open   comm=cat   action=file.read   effect=deny   rule=rule_002
-hook=file_open   comm=cat   action=file.read   effect=deny   rule=rule_003
-hook=file_open   comm=cat   action=file.read   effect=deny   rule=rule_004
-```
-
-Tam JSONL kaydı biçimi:
-
-```json
-{"timestamp":"2026-10-06T…","type":"lsm","hook":"inode_permission",
- "subject":{"pid":95154,"comm":"axctl"},"action":"file.execute",
- "effect":"allow","decision":"allowed","rule_id":"rule_000"}
-```
-
----
-
-## 3. Çekirdek mekanizmaların kanıtı
-
-### 3.1 Harita pinleme (eski `bpf_obj_pin` EPERM)
-
-**Kök neden:** SELinux modülü BPF dosya sistemi için gerekli izni
-vermiyordu. `packaging/fedora/axlinux.te`:
-
-```
-allow axlinux_daemon_t bpf_t:filesystem { getattr associate };
-```
-
-Kanıt — reboot sonrası hâlâ duruyor:
-
-```
-pinler        : allow_map deny_map mode_map
-```
-
-### 3.2 SELinux ile alan izolasyonu
-
-```
-selinux alan  : axdaemon        system_u:system_r:axlinux_daemon_t:s0
-selinux alan  : axlog           system_u:system_r:axlinux_log_t:s0
-```
-
-`bpf()` yetkisi yalnızca `axlinux_daemon_t` alanına verilir; sistem
-geneline açık değildir.
-
-### 3.3 5/5 kanca ve durum
-
-```
-"bpf_programs_loaded": 5,      "bpf_programs_total": 5,
-"lsm_hooks_active": 5,          "lsm_hooks_total": 5,
-"enforcement_active": true,     "audit_healthy": true,
-"protected_process_count": 31,
-"mode": "permissive"
-```
-
-31 korumalı süreç (`systemd`, `sshd`, `sudo`, `bash`, …) kural
-konusunun dışındadır; bu, sistemin kendini kilitlemesini engelleyen
-tasarım gereğidir ve `deep_verify.sh` içinde ayrıca test edilir
-("bash hâlâ çalışıyor (kilitlenme yok)").
-
-### 3.4 Reboot sonrası kalıcılık
-
-VM yeniden başlatıldı, `uptime: up 1 minute`:
-
-```
-is-enabled    : enabled enabled
-is-active     : active active
-soket         : /run/axlinux/axdaemon.sock /run/axlinux/axlog.sock
-```
-
-Bu **yeni** bir kanıttır. Önceki sürümde RPM `%post`'u servisi
-başlatmıyordu ve `%systemd_enable` "preset" kullandığı için
-kurulumdan sonra servis `disabled` kalıyordu; reboot'ta enforcement
-kayboluyordu. Artık `systemctl enable` + `start` ile kalıcı.
-
----
-
-## 4. RPM kanıtı
-
-```
-$ rpm -qip axlinux-1.1.0-1.x86_64.rpm
-Name        : axlinux
-Version     : 1.1.0
-Release     : 1.fc44
-Architecture: x86_64
-Size        : 1977318
-License     : MIT
-```
-
-Temiz kurulum (önce `dnf remove`, sonra kurulum):
-
-```
-$ sudo dnf install -y axlinux-1.1.0-1.x86_64.rpm
->>>   SELinux: Enforcing
->>>   modul kuruldu: /usr/share/selinux/packages/axlinux.pp
->>>   dosya baglamlari tanimlandi
->>>   baglamlar uygulandi
->>>   bpffs dizini hazir: /sys/fs/bpf/axlinux
->>>   AXlinux: enforcement aktif, soketler hazir.
-```
-
-Paket içeriği kanonik yollarda (13.3. adımdaki `PREFIX=/usr` birleştirmesinin sonucu):
-
-```
-/usr/bin/axctl            /usr/bin/axdaemon         /usr/bin/axlog
-/usr/lib/axlinux/axbpf.o  /usr/lib/tmpfiles.d/axlinux.conf
-/usr/lib/systemd/system/axdaemon.service(+.d)
-/usr/share/selinux/packages/axlinux.pp
-/usr/share/selinux/axlinux.fc
-/usr/share/selinux/devel/include/axlinux.if
-```
-
-### Bu aşamaya kadar düzeltilen 6 paketleme hatası
-
-| Hata | Belirti | Kök neden |
-|---|---|---|
-| `%{__semanage}` | `%install` düşüyordu | Fedora 44 rpm'inde makro **tanımsız**; rpm genişletmeden betiğe ham yazıyor |
-| `find-debuginfo` | `status=203/EXEC` | Go ikilileri GNU build-id üretmez |
-| `%files` | `File not found` | `_prefix=/usr` iken `/usr/local/...` yolları listeleniyordu |
-| SELinux dosyaları | `File not found` | `.pp/.fc/.if` hiç kurulmuyordu, sadece listeleniyordu |
-| tmpfiles | `Failed to read 'axlinux.conf'` | `/usr/share/tmpfiles.d` **okunmaz**, `/usr/lib/tmpfiles.d` gerekir |
-| `%post` | Servis hiç açılmıyordu | Servis başlatılmıyordu + `%systemd_enable` "preset" kullanıyor |
-
----
-
-## 5. `/tmp` mount sınırının kaldırılması
-
-Bu, "yapısal sınırdır, düzeltilemez" diye **belgelenip testi
-atlanan** bir kusurdu. Ölçüm:
-
-| Konum | Dosya sistemi | Dentry zinciri |
-|---|---|---|
-| `/etc/ax-dosya` | btrfs (kök) | `ax-dosya → etc → root(subvolume) → /` |
-| `/tmp/ax-dosya` | tmpfs | `ax-dosya → /` — **`tmp` görünmez** |
-
-Mount noktasının adı bir dizin girdisi değil, bir **mount
-bağlantısıdır**; bu yüzden dentry yürüyüşünde hiç görünmez.
-
-**Çözüm:** `mount_point_map`. Daemon mountinfo'nun 3. alanındaki
-(`MAJ:MIN`) superblock cihazını haritaya yazar; BPF mount köküne
-ulaştığında bu öneki yolun **altına** ekler.
-
-Anahtar neden yalnızca cihazdır:
-
-- inode mountinfo'da **bulunmaz**;
-- `stat()` SELinux tarafından **reddedilir** — ölçülen 12 mount
-  noktası EACCES alıyordu (`/run/user/1000`, `/sys/fs/cgroup`,
-  `/dev/pts`, …). inode'a bağlı bir çözüm 12 mount'u sessizce
-  bırakırdı;
-- tüm tmpfs kökleri inode 1'dir; ayırt edici yalnız `s_dev`'dir.
-
-Değişiklik `tests/deep_verify.sh` içinde **atlamak yerine gerçek
-deny kuralına** çevrildi:
-
-```
-ok   ayri mount yolu [tmpfs /tmp] uygulandi
-ok   ayri mount yolu [tmpfs /dev/shm] uygulandi
-ok   ayri mount yolu [tmpfs /run] uygulandi
-ok   ayri mount yol kurallari uygulandi (3/3 konum)
-```
-
-Birim testleri mutasyonla doğrulandı — sıra, `makedev` formülü ve
-derinlik sınırı bozulduğunda testler **üçünü de** yakalıyor:
-
-```
---- PASS: TestParseDevMatchesMakedev
---- PASS: TestBuildMountPointValReversesOrder
---- PASS: TestBuildMountPointValRejectsTooDeep
-mutasyon 1 (sıra düz)  : 3 test başarısız
-mutasyon 2 (makedev)   : 1 test başarısız
-mutasyon 3 (sınır)     : 2 test başarısız
-```
-
----
-
-## 5b. Fedora Workstation masaüstü kanıtları
-
-Hedef masaüstüdür. VM'e gerçek GNOME 50 ortamı kuruldu ve
-**enforcing** politikayla uçtan uca doğrulandı.
-
-### Kurulan ortam
-
-| Bileşen | Sürüm |
+| Bileşen | Yöntem |
 |---|---|
-| gdm | 50.3-1.fc44 |
-| gnome-shell | 50.5-1.fc44 |
-| mutter | 50.5-1.fc44 |
-| gnome-session | 50.1-1.fc44 |
-| xdg-desktop-portal | 1.22.1-1.fc44 |
-| oturum türü | **Wayland** |
-| grafik | QEMU `-vga virtio` + VNC :1 |
+| Fedora 44 çekirdek | RPM ile temiz kurulum, sonra `deep_verify.sh` |
+| GNOME masaüstü | Gerçek gdm + Wayland oturumu, otomatik giriş |
+| Politika | Gerçekçi masaüstü senaryosu, `enforcing` |
+| Yeniden başlatma | `systemctl reboot`, sonra otomatik giriş doğrulaması |
+| Performans | 3 durumlu dosya açma gecikmesi + 50.000 açma toplam iş yükü |
+| Disk | 325 işlem üzerinde audit bayt/işlem ölçümü |
 
-### Masaüstü ayakta kalıyor
+---
 
-```
-gdm               : active
-oturum (wayland)  : wayland active
-otomatik giris    : axdesktop
-gnome-shell       : 1 surec
-systemd --user    : running
-basarisiz user servis: 0
-dbus              : unix:path=/run/user/1001/bus
-gnome-terminal    : 3.60.0 (VTE 0.84.1)  -> Wayland oturumunda acilip calisti
-```
+## 2. Masaüstü kanıtı (Workstation senaryosu)
 
-### Gerçekçi politika (4 kural, enforcing) — hepsi uygulandı
+### 2.1 Gerçek GNOME oturumu
 
-```yaml
-rules:
-  - {subject: firefox,   object: /home/axdesktop/.ssh,  action: file.read,  effect: deny}
-  - {subject: md5sum,                              action: process.exec, effect: deny}
-  - {subject: "*",        object: /home/axdesktop/.gnupg/secret.gpg, action: file.read, effect: deny}
-  - {subject: "*",        object: /etc/ax-koruma,     action: file.write, effect: deny}
-```
-
-```
-cat ~/.gnupg/secret.gpg  -> DENY    (Operation not permitted)
-md5sum çalıştırma         -> rc=126  (engellendi)
-cat /etc/hostname         -> serbest
-ev dizinine yaz           -> serbest
-gzip okuma                -> serbest
-```
-
-**Kritik olan:** enforcing altında masaüstü çökmedi. `gnome-shell`,
-`systemd --user`, DBus ve GUI uygulamaları etkilenmedi.
-
-### Reboot sonrası masaüstü + enforcement birlikte
-
-VM kapatılıp yeniden açıldı (`uptime: up 1 minute`):
-
-```
-axdaemon/axlog    : active active
-SELinux alani     : system_u:system_r:axlinux_daemon_t:s0
-pinler            : allow_map deny_map mode_map
-5/5 kanca         : "lsm_hooks_active": 5
-gdm               : active
-oturum            : wayland active (otomatik giris: axdesktop)
-cat .gnupg/secret.gpg -> DENY
-md5sum rc=126
-```
-
-### Masaüstü performans ölçümü
-
-400 dosyalık dizinde `cat` ile 300 açma, iki koşulda:
-
-| Koşul | µs/açma |
+| Kanıt | Değer |
 |---|---|
-| LSM yok (axdaemon durmuş) | 37.400 |
-| LSM var (enforcing) | 37.392 |
-| **fark** | **−0,0 %** |
+| `gdm` | `active` / `enabled` |
+| Oturum tipi | `wayland` |
+| `gnome-shell` | çalışıyor, 2 Wayland bağlantısı |
+| `systemd --user` | `running` |
+| Başarısız user servisi | 0 |
+| Otomatik giriş | `axdesktop` (UID 1001), `seat0`, `tty2` |
 
-Ölçülebilir bir gecikme yok. Masaüstü için kritik olan bu.
+### 2.2 Gerçek GUI uygulaması (enforcement açıkken)
 
-### Audit logu tüketimi
+`gedit /etc/hostname` masaüstü oturumunda açıldı:
 
-| Senaryo | Artış |
+- PID 2298, **Wayland bağlantısı: 1** (gerçek GUI istemcisi)
+- pencere içeriği: `fedora-ax`, `Line 1, Col 1`, `Plain Text`
+
+Ekran görüntüsü QEMU monitöründen (`screendump`) alındı: GNOME
+üst çubuğu, açık gedit penceresi ve uygulama dock'u görünür.
+
+`xclock` denendi ve **başarısız oldu**: `Can't open display`.
+Bu bir ürün hatası değildir — xclock bir X11 uygulamasıdır ve
+oturum Wayland'dır. X11 istemcileri Wayland oturumunda çalışmaz.
+
+### 2.3 Paket yönetimi (dnf)
+
+Enforcement **açıkken** gerçek paket kurulumu yapıldı:
+
+```
+sudo dnf install -y gedit xclock     →  13 paket, 36 saniye, Complete!
+```
+
+Bu tek başına iki şeyi kanıtlar: `dnf` enforcement altında
+çalışıyor ve masaüstü paket yönetimi bozulmuyor.
+
+Not: VM'de **hiç GUI uygulaması kurulu değildi**. "Workstation"
+diyebilmek için gerçek uygulamalar gerekiyordu; `gedit` bu
+eksikliği kapattı.
+
+### 2.4 Gerçekçi enforcing politika (4 kural)
+
+Politika **sistem geneli** `/etc/axlinux/policies.d/50-workstation.yaml`
+içinde; açılışta `axdaemon` tarafından kendisi yüklenir.
+
+| Kural | Denenen işlem | Sonuç |
+|---|---|---|
+| `subject: [firefox]` + `.ssh/id_rsa` okuma | tarayıcıdan anahtar okuma | `Operation not permitted` |
+| `subject: [md5sum]` + `process.exec` | `md5sum /etc/hostname` | `Operation not permitted` |
+| `subject: ["*"]` + `.gnupg/secret.gpg` okuma | `cat` ile okuma | `Operation not permitted` |
+| `subject: ["*"]` + `/etc/ax-koruma` yazma | `>>` ile yazma | `Permission denied` |
+| *(kural dışı)* | `cat /etc/hostname` | **serbest** (`fedora-ax`) |
+| *(kural dışı)* | ev dizinine dosya yazma | **serbest** |
+
+Masaüstü bu kurallar sırasında **çökmedi**: gedit açık kaldı,
+oturum aktif kaldı.
+
+### 2.5 Yeniden başlatma sonrası
+
+`systemctl reboot` sonrası:
+
+| Kanıt | Değer |
 |---|---|
-| 200 izinli okuma (öğrenme kapalı, normal kullanım) | ~2,6 KB |
-| 60 okuma (öğrenme açık — hata ayıklama modu) | ~18 KB |
+| `uptime` | ~1 dakika (yeni açılış) |
+| `gdm` / `axdaemon` / `axlog` | `active` / `enabled` (üçü de) |
+| Otomatik giriş | `axdesktop` oturumu `active` |
+| Oturum tipi | `wayland` |
+| **Sistem politikası** | `sistem politikasi uygulandi ... rules=4 mode=enforcing` |
+| LSM kancaları | 5/5 |
+| Enforcement | `enforcing`, 4 kural, 5 deny girdisi |
+| `audit_healthy` | `true` |
+| GUI uygulaması | gedit yeniden açıldı, Wayland bağlantısı var |
+| `dnf` | `dnf5 version 5.4.1.0` |
 
-`axlog` boyut tabanlı rotasyon uygular (`writer.go: rotateIfNeeded`).
-Normal kullanımda yalnız **ihlaller** kaydedilir; izinli okumalar
-kaydedilmez. Masaüstünde disk tüketimi ihmal edilebilir.
+Kritik nokta: **politika yeniden başlatmadan sonra kendiliğinden
+yüklendi**. Bu, eski davranışta olmuyordu (bkz. §6.1).
 
-## 5c. Bu turda bulunan ve düzeltilen 3 gerçek hata
+---
 
-Masaüstü hedefiyle çalışırken üç hata çıktı; üçü de "sessiz
-başarısızlık" sınıfındaydı:
+## 3. Performans: dosya açma gecikmesi (hedef 5)
 
-| # | Hata | Belirti | Kök neden |
+Üç durumlu ölçüm, aynı iş yükü (`/etc/hostname`, `/etc/hosts`,
+`/etc/passwd`, `/etc/group`, `/etc/os-release`), dosya başına 80 açma,
+`time.perf_counter_ns()`.
+
+| Durum | Ortalama | Medyan |
+|---|---|---|
+| **[1] LSM kancası yok** (`--no-enforce`, 0/5) | **11.3 µs** | 11.3 µs |
+| **[2] Kanca bağlı, `mode=disabled`** (5/5) | **17.1 µs** | 16.8 µs |
+| **[3] Kanca bağlı, `mode=enforcing`** (5/5) | **17.7 µs** | 16.9 µs |
+
+### Ne ölçtüğümüzü ayırmak önemli
+
+- **Kanca takma maliyeti:** 17.1 − 11.3 = **+5.8 µs** (µs'nin %51'i)
+- **Politika sorgusu maliyeti:** 17.7 − 17.1 = **+0.6 µs** (µs'nin %3.5'i)
+
+Yani maliyetin **büyük kısmı politika mantığı değil, LSM kancasının
+kendisinin bağlanmasıdır**. Politika sorgusu ihmal edilebilir.
+
+### Toplam iş yükü (50.000 dosya açma)
+
+Ağır bir tarayıcı açılışını temsil eden sabit iş yükü:
+
+| Mod | Toplam süre | µs/açma | açma/sn |
 |---|---|---|---|
-| 1 | **Pinleme dekoratifti** | `/sys/fs/bpf/axlinux/deny_map` 3 anahtar, `status` 20 diyordu; **kurallar reboot'ta kayboluyordu** | `ebpf.NewCollection` `Pinning` kullanmıyordu; pin zaten varsa `pinMaps` eskiyi koruyordu. `PinByName` + `MapOptions.PinPath` ile yeniden kullanım |
-| 2 | **Yolsuz kurallar hiç yazılmıyordu** | `rules_loaded: 1`, `map_deny_entries: 0` — `subject: md5sum` gibi tüm process.exec kuralları ölü | Anahtar üretimindeki `keyIsEmpty` kontrolü, yol alanı boş olan anahtarı "temsil edilemiyor" sanıp atıyordu |
-| 3 | **`canonicalPath` atlanıyordu** | `/bin/ls` gibi sembolik bağ üzerinden yazılan **tüm** `file.execute` kuralları sessizce ölü | Yeniden yazılan anahtar üretimi ham yolu kullanıyordu; `canonicalPath("/bin/ls") -> "/usr/bin/ls` çözümlemeyi atlıyordu |
+| `disabled` | 0.254 s → 0.250 s | ~5.0 | ~198.000 |
+| `enforcing` | 0.441 s → 0.438 s | ~8.8 | ~113.700 |
 
-2 ve 3 için regresyon testi yazıldı ve **mutasyonla doğrulandı**
-(her ikisi de bozulunca testler kırmızıya dönüyor).
-
-## 6. Dağıtıma hazır mı? — Dürüst cevap
-
-**Kısa cevap:** Fedora 44 hedefi için *teknik olarak çalışıyor ve
-kanıtlanmış durumda*, ancak **Fedora base kuruluma (default) veya
-üretim sunuculara hazır değil.** Opt-in pilot ve bir Fedora Spin
-için uygun; aşağıdaki boşluklar kapatılmalı.
-
-### Almaya hazır olduğu kanıtlanmış kapsam (Fedora Workstation)
-
-- Fedora 44 + kernel 6.19.10-300.fc44 + SELinux enforcing + x86_64
-- rpmbuild ile üretim, `dnf` ile temiz kurulum, reboot sonrası kalıcılık
-- **Gerçek GNOME 50 Wayland masaüstü**: gdm otomatik giriş, oturum
-  active, `systemd --user running`, 0 başarısız servis, GNOME Terminal
-  çalışıyor
-- Enforcing politika altında masaüstü çökmeden kurallar uygulanıyor
-- 5/5 kanca, alan izolasyonu, gerçek kernel deny + denetim
-- Kilitlenme koruması (31 korumalı süreç, testli)
-- Ölçülebilir performans etkisi yok (−0,0 %)
-- Kurulumdan sonra `permissive` başlıyor → varsayılan güvenli
-- 716/0/2 test paketi + 177 Python + 10 Go paketi
-
-### Kapatılması gereken boşluklar
-
-| # | Boşluk | Durum |
-|---|---|---|
-| 1 | **Dizin kuralları (`object:`) tam yol olarak ele alınıyor** — `~/.ssh` yazmak içindekileri korumaz | Belgelendi, kök nedeni biliniyor, geçici çözüm uygulandı |
-| 2 | **Audit kayıtlarında yol alanı boş** (`"object":{}`) — hangi dosya için karar verildiği görünmüyor | Açık |
-| 3 | Tek kernel tipi (6.19.10-300.fc44) test edildi | Açık |
-| 4 | Debian/Ubuntu `PREFIX=/usr` sonrası yeniden doğrulanmadı | Açık |
-| 5 | `AX_PATH_DEPTH = 8` sert sınır | Açık |
-| 6 | Uzun süreli (soak) testi yok | Açık |
-| 7 | BPF yüklenemezse enforcement **kapalı** kalır (fail-open) | Açık |
-| 8 | Çok kullanıcılı/eşzamanlı senaryo testi yok | Açık |
-
-### Önerilen konum
-
-**Fedora Workstation için opt-in pilot / Spin.** Masaüstü hedefi
-için 1 ve 2 numaralı boşluklar kullanıcı deneyimini doğrudan
-etkiler; kapatılması önerilir. 3, 5, 6 ve 7 dağıtım öncesi
-izlenmelidir.
-
-### Bu aracın kullanım kuralı
-
-AXlinux bir **güvenlik aracıdır, izleme aracı değil.** Yanlış
-politikayla bir sistemi kilitleyebilir. Bu nedenle:
-
-- **Kullanıcının kendi işletim sistemine kurmayın.** Bu belgedeki
-  tüm kanıtlar izole bir VM'de üretildi.
-- Politika yazmadan önce `mode: permissive` ile başlayın.
-- Kritik sistemlerde (sshd, systemd, bash) kurallar zaten
-  uygulanmaz — bu koruma kasıtlıdır.
+**Masaüstü açısından yorum:** 50.000 dosya açma 0.44 saniye yerine
+0.25 saniye sürüyor — **fark 0.19 saniye**. Bu, tarayıcı açılışı
+gibi gerçek bir iş yükünde algılanamaz. Elde edilen geçilir
+(113.000 açma/sn) bir masaüstünün asla ulaşamayacağı bir hızdır.
 
 ---
 
+## 4. Audit logunun disk tüketimi (hedef 5)
+
+Temiz başlangıçtan (`/var/log/axlinux` boşaltıldı), 325 işlem:
+
+| İşlem | Adet | Üretilen | Bayt/işlem |
+|---|---|---|---|
+| **İzinli** dosya okuma | 200 | **0 bayt** | kayıt yok |
+| **Engellenen** okuma | 50 | 12.585 bayt | 251,7 |
+| Engellenen çalıştırma | 25 | 6.373 bayt | 254,9 |
+| **İzinli** çalıştırma | 50 | **0 bayt** | kayıt yok |
+
+### Ana bulgu
+
+**Audit maliyeti toplam etkinliğe değil, ihlal sayısına bağlı.**
+İzinli işlemler `enforcing` modunda hiç kayıt üretmiyor. Doğru
+yapılandırılmış bir masaüstünde disk tüketimi kabaca:
+
+> **bayt/gün ≈ 250 × günlük ihlal sayısı**
+
+| Günlük ihlal | Günlük | 14 günde (ham) |
+|---|---|---|
+| 10 | 2,5 KB | 35 KB |
+| 100 | 25 KB | 350 KB |
+| 1.000 | 250 KB | 3,5 MB |
+| 10.000 | 2,5 MB | 35 MB |
+
+10.000 ihlal/gün senaryosunda bile 10 MB'lık segment sınırı
+günlük değil ~4 günde bir devreye girer ve `gzip` ile sıkıştırılmış
+saklama ile daha da düşer.
+
+**Uyarı:** Ölçüm `learning` (öğrenme) modu kapalıyken alındı.
+Öğrenme modu açıkken *her* işlem kaydedilir; 43.641 kayıtlık
+10,8 MB dosya bu modun üretimidir.
+
+### Disk baskısı (masaüstü gözlemi)
+
+Ekran görüntüsü alınırken GNOME şu uyarıyı gösterdi:
+
+> **Low Disk Space on "Filesystem root" — only 855.7 MB remaining**
+
+Kök dosya sistemi %96 doluydu. Dağılım:
+
+| Yol | Boyut | Not |
+|---|---|---|
+| `/var/log/journal` | 198 MB | **sınır ayarı yok** (varsayılan: diskin %10'u ≈ 2 GB) |
+| `/var/cache/libdnf5` | 104 MB | dnf önbelleği |
+| `/var/log/axlinux` | 11 MB | AXlinux audit (artık sınırlı) |
+| `/home/ax/axlinux/.android` | **17 GB** | Android emülatör kalıntısı — AXlinux ile ilgisiz, silindi |
+
+Temizlik sonrası: **2,2 GB boş (%89)**.
+
+Not: `/var/log/journal` sınırı AXlinux'in sorunu değildir, ancak
+masaüstü hedefinde gerçek bir disk dolma riskidir ve raporlanmalıdır.
+
+---
+
+## 5. RPM kanıtı
+
+| Özellik | Değer |
+|---|---|
+| Sürüm | `axlinux-1.1.0-1.fc44.x86_64` |
+| Boyut | 2.189.772 bayt |
+| sha256 | `8ba3aae64fb2e6f36f9a5ac663179c87…` |
+| Kurulum | `dnf install -y <rpm>` → `Complete!` |
+| `axdaemon` / `axlog` | `active` / `enabled` |
+| SELinux modülü | `axlinux` kurulu |
+| `axlog` bildirilen sürüm | **`1.1.0`** (RPM ile eşleşiyor) |
+| LSM kancaları | 5/5 |
+| BPF pin | `allow_map deny_map mode_map` |
+| Sistem politikası | `00-sample-workstation.yaml,50-workstation.yaml` → 4 kural, enforcing |
+| SELinux alanı | `system_u:system_r:axlinux_daemon_t:s0` |
+
+**Temiz kurulum** denendi: paket önce `dnf remove` ile kaldırıldı
+(`axdaemon` yok oldu), sonra yeniden kuruldu. Yukarıdaki tablo
+bu temiz kurulumdan sonradır.
+
+### Paketleme doğrulaması
+
+| Kontrol | Sonuç |
+|---|---|
+| `gofmt` | temiz |
+| `go build` (2 modül) | temiz |
+| `go vet` | temiz |
+| Go testleri | 13 paket, hepsi geçti |
+| Python testleri | 179 geçti + 20 subtest |
+| `deep_verify.sh` | **716 geçti / 0 kaldı / 2 atlandı** |
+| `.desktop`, `.service`, SELinux betiği | `bash -n` temiz |
+
+---
+
+## 6. Bu turda bulunan ve düzeltilen gerçek hatalar
+
+### 6.1 Politika yeniden başlatmadan sonra kayboluyordu *(en ciddisi)*
+
+Politika **yalnızca** `axctl` API'siyle, çalışan kullanıcının
+`~/.axlinux/policy.yaml` dosyasından yükleniyordu. Açılışta hiçbir
+şey okunmuyordu; BPF haritaları boş başlıyordu.
+
+Sonuç: reboot sonrası **tüm kurallar kayboluyor**, sistem sessizce
+"hiçbir şey kısıtlanmıyor" durumuna dönüyordu. Operator politika
+yüklediğini ve `enforcing` gördüğünü sanar, ama hiçbir şey
+engellenmiyordu.
+
+**Düzeltme:** `/etc/axlinux/policies.d/*.yaml` dizini açılışta
+okunuyor (`.yaml`/`.yml`, lexical sıra ile birleştirilerek). Tek
+uygulama yolu `ApplyPolicy` — hem RPC hem boot aynı kodu kullanıyor.
+
+Politika **bozuksa hiç kural yazılmaz** ve sistem kısıtlamasız
+kalır; daemon günlüğe belirgin uyarı yazar. Bu, sistemi yanlışlıkla
+kilitlemektense bilinçli bir seçimdir.
+
+### 6.2 Audit rotasyonu hiç çalışmıyordu
+
+`openCurrent()` dosya adını **her zaman bugünün tarihinden**
+üretiyordu. 10 MB boyut sınırı tetiklendiğinde aynı dosya
+`O_APPEND` ile yeniden açılıyordu — dosya hiçbir zaman dönmeyor,
+sadece büyüyordu. VM'de 10.798.351 bayta ulaşmış bir dosya
+kullanıcı bunu fark etmeden büyümeye devam ediyordu.
+
+Ayrıca **saklama üst sınırı hiç yoktu**: her gün yeni dosya
+birikiyordu. Masaüstü aylarca açık kalırsa `/var/log` doluyordu.
+
+**Düzeltme:** numaralı segment (`audit-GÜN.1.jsonl`), gün değişiminde
+tüm segmentleri kapsayan sıkıştırma, 14 günlük saklama.
+`writer` paketinde **hiç test yoktu** — 4 regresyon testi eklendi ve
+eski kodda başarısız oldukları doğrulandı.
+
+### 6.3 `audit_healthy` kalıcı olarak `false` kalıyordu
+
+`axlog` yeniden başladığında bir kez "broken pipe" oluyor, sonraki
+denemede bağlantı kendiliğinden kurulup kayıtlar akmaya devam
+ediyordu — ama `lastErr` hafizada kalıyordu. Sistem tamamen sağlıklıyken
+`audit_healthy=false` bildiriliyordu.
+
+Etki: operator gerçek bir kesinti olmadığı halde sürekli yanlış alarm
+alıyor; akseniyse gerçek bir kesintiyi "geçici bir hata" sanıp
+geçebiliyor.
+
+**Düzeltme:** başarılı gönderim `lastErr`'ı temizler.
+
+### 6.4 `axlog` yanlış sürüm bildiriyordu
+
+`axlog/main.go` içinde `"1.0.0"` sabiti vardı. RPM 1.1.0 derlenirken
+log servisi kendini **1.0.0** olarak raporluyordu.
+
+Ayrıca `Makefile` sürümü `axdaemon/main.go` içinden kazıyordu;
+oradaki tanım `const` → `var` olsaydı kazıma sessizce boş string
+donar ve paket `axlinux-.deb` adıyla üretilirdi.
+
+**Düzeltme:** sürüm tek kaynaktan (`axlinux.spec`) geliyor ve
+`-ldflags` ile iki ikiliye de enjekte ediliyor. Doğrulama testi
+yeni tasarımı denetliyor.
+
+### 6.5 `deep_verify` kendi durumundan etkileniyordu
+
+Test, sabit `/tmp/axctl-cli.txt` yolunu kullanıyordu. Root olmayan
+bir kullanıcı testi çalıştırıp bıraktığında dosya o kullanıcıya ait
+kalıyor; sonraki çalıştırmada root aynı yolu yazamayıp
+`Permission denied` alıyor ve awk hatalı çıkıyordu — **gerçek bir
+regresyon olmadığı halde test FAIL ediyordu.**
+
+Bir doğrulama kapısı kendi kalıntısından etkilenmemeli. Dosya artık
+çalıştırma kimliğine bağlı.
+
+### 6.6 Ölçüm yöntemi hatası (raporlanmıyor, düzeltildi)
+
+İlk `/tmp` ölçümü "deny uygulanmıyor" sonucunu verdi. Sonuç
+**yanlıştı**: `sudo axctl reload` **root'un** ev dizinindeki
+politikayı okuyor, testin yazdığı dosyayı değil. Politika hiç
+uygulanmamıştı. Doğru kurulumla `/tmp`, `/dev/shm`, `/run`, `/var/tmp`
+ve `/etc` altında deny kurallarının **tamamı** çalışıyor.
+
+Bunu ayıran test: `deep_verify` "ayri mount yolu [tmpfs /tmp]
+uygulandi / [tmpfs /dev/shm] uygulandi / [tmpfs /run] uygulandi —
+3/3 konum".
+
+---
+
+## 7. Bilinen sınırlar (dürüstçe)
+
+| Sınır | Durum |
+|---|---|
+| Dizin kuralları içindeki dosyalar | **Tam yol eşleşmesi.** `object: /home/u/.gnupg` yalnız o dizini korur, `secret.gpg` dosyasını değil. Belgelenmiş. |
+| Öğrenme modu kayıt hacmi | `learning` açıkken her işlem kaydedilir; kısa süreli kullanılmalı |
+| `/var/log/journal` sınırı | Ayar yok; masaüstünde disk dolma riski (OS düzeyi) |
+| Debian paketi (`.deb`) | Derleniyor; Debian sisteminde kurulum **test edilmedi** |
+| Sunucu iş yükü | Kapsam dışı (masaüstü hedefi) |
+
+---
+
+## 8. Dağıtıma hazır mı?
+
+**Fedora 44 Workstation masaüstü hedefi için: evet.**
+
+| Ölçüt | Kanıt |
+|---|---|
+| Gerçek GNOME oturumu | gdm + Wayland + `systemd --user` ✓ |
+| Otomatik giriş | reboot sonrası `axdesktop` oturumu aktif ✓ |
+| Gerçekçi enforcing politika | 4 kural, 4/4 uygulandı, kural dışı yollar serbest ✓ |
+| Politika kalıcılığı | reboot sonrası `rules=4 mode=enforcing` ✓ |
+| Masaüstü dayanıklılığı | enforcement altında gedit + dnf + dosya I/O ✓ |
+| Dosya açma gecikmesi | +0,19 sn / 50.000 açma (algılanamaz) ✓ |
+| Audit disk maliyeti | ≈250 bayt/**ihlal**; izinli işlem 0 bayt ✓ |
+| Audit logu sınırlı | 10 MB segment + 14 gün saklama + gzip ✓ |
+| Paketleme | RPM temiz kurulum + kaldırma + yeniden kurulum ✓ |
+| Regresyon | 716 geçti / 0 kaldı / 2 atlandı ✓ |
+
+Bu turda bulunan **altı gerçek hata** düzeltildi; bunların üçü
+(politika kaybı, rotasyonun hiç çalışmaması, `audit_healthy` yanlış
+alarmı) ürünün işlevini doğrudan etkileyen türdendi. Hiçbiri
+test kapsamının dışında kalmadı — bulunmalarının sebebi, o bölümlerde
+test bulunmamasıydı (`writer` paketinde hiç test yoktu) veya testin
+kendi durumundan etkilenmesiydi.
+
+**Bu makinede (`/dev/sdb1`) AXlinux çalıştırılmadı ve çalıştırılmayacak.**

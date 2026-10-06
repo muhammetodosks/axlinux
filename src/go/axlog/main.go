@@ -12,6 +12,13 @@ import (
 	"axlinux/axlog/internal/writer"
 )
 
+// Version, Makefile tarafindan -ldflags ile enjekte edilir.
+//
+// Burada sabit "1.0.0" yaziyordu. RPM 1.1.0 derlenirken bile
+// axlog kendini 1.0.0 olarak raporliyordu; log ve hata ayiklamada
+// surum tutarsizligi olusturuyordu.
+var Version = "dev"
+
 func main() {
 	var (
 		socketPath = flag.String("socket", "/run/axlinux/axlog.sock", "Unix socket yolu")
@@ -22,7 +29,7 @@ func main() {
 	flag.Parse()
 
 	logger := setupLogger(*logLevel)
-	logger.Info("axlog baslatiliyor", "version", "1.0.0")
+	logger.Info("axlog baslatiliyor", "version", Version)
 
 	w, err := writer.NewWriter(*logDir, *compress)
 	if err != nil {

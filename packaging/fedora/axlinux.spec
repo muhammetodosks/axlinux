@@ -103,6 +103,14 @@ cp docs/*.md %{buildroot}%{_docdir}/%{name}/docs/ 2>/dev/null || :
 install -Dm 0644 README.md DAGITIM.md CHANGELOG.md \
     %{buildroot}%{_docdir}/%{name}/ 2>/dev/null || :
 
+# --- Sistem geneli politika dizini ---
+# Boot aninda axdaemon buradaki *.yaml dosyalarini okuyup map'lere
+# yazar. Once bu dizin HIC YOKTU: politika yalnizca axctl API'si
+# uzerinden yukleniyordu, reboot sonrasi tum kurallar kayboluyordu.
+install -d -m 0750 %{buildroot}%{_sysconfdir}/axlinux/policies.d
+install -Dm 0644 packaging/fedora/axlinux-sample-workstation.yaml \
+    %{buildroot}%{_sysconfdir}/axlinux/policies.d/00-sample-workstation.yaml
+
 # --- SELinux ---
 # Politika modulunun KURULMASI burada yapilmaz; kurulum sonrasi
 # betiginde (selinux-setup.sh) yapilir. install.sh ile ayni betik.
@@ -230,6 +238,10 @@ fi
 %{_usr}/lib/axlinux/axctl/
 %dir %{_sysconfdir}/axlinux
 %config(noreplace) %{_sysconfdir}/axlinux/*.yaml
+# Politika dizini ve ornek. %config(noreplace): yonetici
+# duzenlediginde rpm guncellemesi dosyayi EZMEZ.
+%dir %{_sysconfdir}/axlinux/policies.d
+%config(noreplace) %{_sysconfdir}/axlinux/policies.d/*.yaml
 %{_unitdir}/axdaemon.service
 %{_unitdir}/axlog.service
 %{_unitdir}/axdaemon.service.d/10-selinux.conf

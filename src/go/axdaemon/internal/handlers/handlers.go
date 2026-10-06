@@ -105,26 +105,35 @@ func (h *Handler) handleReloadPolicy(req protocol.Request) protocol.Response {
 		return protocol.NewErrorResponse(req.ID, -32602, "gecersiz params: "+err.Error())
 	}
 
-	snap, err := h.policy.Load(params.Policy)
+	snap, rulesLoaded, err := h.ApplyPolicy(params.Policy)
 	if err != nil {
 		return protocol.NewErrorResponse(req.ID, -32000, "policy yukleme hatasi: "+err.Error())
 	}
 
-	// Kurallar ONCE dogrulanir; map'lere ve moda YAZILMADAN.
-	//
-	// Siranin onemi: Clear() once cagriliyordu ve bir kural
-	// yazilamazsa hata donuluyordu. Bu durumda kullanici kuralsiz
-	// (hicbir sey engellemeyen) bir sistemde kalirdi ve hata
-	// mesaji "kural yazilamadi" ile gecildigi icin nedenini
-	// anlamasi zor olurdu. Simdi once butun kurallar hazirlanir,
-	// herhangi biri reddedilirse hicbiri yazilmaz ve hicbir sey
-	// degistirilmez; boylece ya tam uygulama olur ya hicbiri.
-	//
-	// Dogrulama MODE YAZILMADAN da olmalidir. Once mod degistirilir,
-	// sonra kural reddedilirse sistem, hicbir kurali olmayan yeni
-	// bir modda birakilir: kullanici "enforcing aktif" gorur ama
-	// hicbir sey engellenmez. Bu yuzden asagidaki dogrulama,
-	// mode yazmadan ONCE calisir.
+	result := map[string]interface{}{
+		"status":       "ok",
+		"rules_loaded": rulesLoaded,
+		"loaded_at":    snap.LoadedAt.Format(time.RFC3339),
+	}
+	return protocol.NewResponse(req.ID, result)
+}
+
+// ApplyPolicy validates and applies a compiled policy to the maps and the
+// mode map. It is the SINGLE implementation shared by the RPC reload path
+// and the boot-time /etc/axlinux/policies.d loader, so both apply a policy
+// identically.
+//
+// Atomiklik gerekce: butun kurallar ONCE dogrulanir; herhangi biri
+// reddedilirse hicbiri yazilmaz ve hicbir sey degistirilmez. Boylece ya
+// tam uygulama olur ya hicbiri. Kismi uygulama, operatorun "enforcing
+// aktif" gorup hicbir seyin engellenmediigi bir sistemde birakilmasina
+// yol acar.
+func (h *Handler) ApplyPolicy(policyJSON json.RawMessage) (policy.Snapshot, int, error) {
+	snap, err := h.policy.Load(policyJSON)
+	if err != nil {
+		return policy.Snapshot{}, 0, err
+	}
+
 	type pending struct {
 		comm, path, action string
 		port               int
@@ -134,7 +143,6 @@ func (h *Handler) handleReloadPolicy(req protocol.Request) protocol.Response {
 
 	if h.maps != nil {
 		for _, rule := range snap.Policy.Rules {
-			// effect constants live in the maps package and mirror axbpf.h
 			effect := uint32(maps.EffectAllow)
 			if rule.Effect == policy.EffectDeny {
 				effect = maps.EffectDeny
@@ -151,12 +159,9 @@ func (h *Handler) handleReloadPolicy(req protocol.Request) protocol.Response {
 			}
 		}
 
-		// Asama 1: dogrulama (ne map'e ne moda yazmadan)
 		for _, p := range batch {
 			if err := maps.ValidateRule(p.comm, p.path, p.action, p.port); err != nil {
-				return protocol.NewErrorResponse(req.ID, -32000,
-					"politika uygulanamadi, hicbir kural yazilmadi: "+
-						err.Error())
+				return snap, 0, fmt.Errorf("politika uygulanamadi, hicbir kural yazilmadi: %w", err)
 			}
 		}
 	}
@@ -165,32 +170,24 @@ func (h *Handler) handleReloadPolicy(req protocol.Request) protocol.Response {
 	// dogrulama BASARILI olduktan SONRA gelir.
 	if snap.Policy.Mode != "" {
 		if err := h.mode.Set(mode.Mode(snap.Policy.Mode)); err != nil {
-			return protocol.NewErrorResponse(req.ID, -32000,
-				"policy mode gecersiz: "+err.Error())
+			return snap, 0, fmt.Errorf("policy mode gecersiz: %w", err)
 		}
 		if h.maps != nil {
 			h.maps.SetMode(modeNumeric(h.mode.Get()))
 		}
 	}
 
-	// Asama 2: yazma (dogrulama gecti, sistem degistirilebilir)
 	if h.maps != nil {
 		_ = h.maps.Clear()
 		for _, p := range batch {
 			if err := h.maps.WriteRule(p.comm, p.path, p.action,
 				p.port, p.ruleID, p.effect); err != nil {
-				return protocol.NewErrorResponse(req.ID, -32000,
-					"kural yazilamadi: "+err.Error())
+				return snap, 0, fmt.Errorf("kural yazilamadi: %w", err)
 			}
 		}
 	}
 
-	result := map[string]interface{}{
-		"status":       "ok",
-		"rules_loaded": snap.RulesLoaded,
-		"loaded_at":    snap.LoadedAt.Format(time.RFC3339),
-	}
-	return protocol.NewResponse(req.ID, result)
+	return snap, snap.RulesLoaded, nil
 }
 
 // modeNumeric maps a mode.Manager value to the numeric constant that

@@ -83,6 +83,16 @@ func (s *UnixSender) Send(e Event) error {
 		return err
 	}
 	s.sent++
+	// Basarili gonderimden sonra saglik durumu TEMIZLENIR.
+	//
+	// lastErr onceki hatanin kalici hatasi olarak tutuluyordu:
+	// axlog yeniden baslatildiginda bir kez "broken pipe" olusuyor,
+	// bir sonraki denemede baglanti kendiliginden kuruluyor ve
+	// kayitlar tekrar akmaya basliyordu - ama lastErr HAFIZADA
+	// kalirdi. Sistem saglikliyken audit_healthy=false bildirirdi,
+	// yani operatora surekli yanlis alarm giderdi. Gonderim dogrusu
+	// gosteriyorsa hata yoktur.
+	s.lastErr = nil
 	return nil
 }
 

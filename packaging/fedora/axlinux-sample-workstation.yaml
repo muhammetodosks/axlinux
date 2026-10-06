@@ -1,0 +1,64 @@
+# AXlinux sistem geneli politika ornegi
+#
+# BU DOSYA KURULUMDA GELIR VE HICBIR KISITLAMA ICERMEZ.
+# rules: [] oldugu icin sistem "hicbir sey engellenmiyor" durumunda
+# baslar. Yonetici kendi kurallarini ekleyip dosyayi duzenlediginde
+# reboot sonrasi da gecerli olur.
+#
+# Bu dosyanin var olma sebebi yalnizca yolu gostermek: politika
+# yazimi icin gereken alanlari (subject, object, action, effect)
+# calisan bir ornek. Butun alanlarin tam listesi icin:
+#
+#   docs/policy-language.md
+#
+# YUKLEME DAVRANISI
+#   - axdaemon acilirken /etc/axlinux/policies.d altindaki tum
+#     *.yaml dosyalarini lexical sirayla (10-, 20-, 50- ...) okur,
+#     birlestirir ve map'lere yazar.
+#   - Bir dosya bozuksa HICBIR kural yazilmaz; sistem kisitlamasiz
+#     kalir ve axdaemon gunluge belirgin bir uyari yazar. Sistem
+#     yanlislikla kilitlenmez.
+#   - Politika degistirmek icin: dosyayi duzenle, sonra
+#     systemctl restart axdaemon
+#
+# DIKKAT: Bu bir MAC (zorunlu erisim kontrolu). "deny" kurallari
+# kernel seviyesinde uygulanir. Sisteminizi kilitlememek icin once
+# "mode: permissive" ile baslayip denetleyin, sonra enforcing'e
+# gecin.
+
+version: 1
+
+# disabled | permissive | enforcing
+mode: permissive
+
+# subject: surec adi veya etiket listesi
+# object:  tam yol (onek/glob DEGIL, tam yol kullanilir)
+# action:  file.read | file.write | file.execute | process.exec | net.connect
+# effect:  deny | allow
+#
+# Ornek (asagidaki iki kural varsayilan olarak KAPALI yorumlanir,
+# yorum satirindan cikarilip kullanilmalidir):
+#
+# rules:
+#   - id: R001
+#     name: ssh-anahtari-okuma
+#     subject: ["firefox", "org.mozilla.firefox"]
+#     object: /home/axdesktop/.ssh/id_rsa
+#     action: file.read
+#     effect: deny
+#
+#   - id: R002
+#     name: karartilmis-arac
+#     subject: ["md5sum"]
+#     action: process.exec
+#     effect: deny
+#
+#   - id: R003
+#     name: gizli-dosya-yazma
+#     object: /etc/ax-koruma
+#     action: file.write
+#     effect: deny
+
+# Onerilen masaustu baslangic politikasi: hicbir sey kisitlamaz.
+# Gercek kurallari asagidaki 'rules' listesine ekleyin.
+rules: []

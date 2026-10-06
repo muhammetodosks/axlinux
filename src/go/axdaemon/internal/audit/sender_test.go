@@ -265,3 +265,75 @@ func TestNameMappingsMatchKernelConstants(t *testing.T) {
 			DecisionName(0), DecisionName(1))
 	}
 }
+
+// TestHealthClearsAfterRecovery, gonderim yeniden calistiktan sonra
+// saglik bildiriminin TEMIZLENDIGINI dogrular.
+//
+// Gercek masaustu hatasi: axlog yeniden baslatildiginda axdaemon
+// bir kez "broken pipe" yiyor, sonraki denemede baglanti kendiliginden
+// kuruluyor ve kayitlar tekrar akmaya basliyordu. Ama lastErr hafizada
+// kaliyordu; audit_healthy=0 surekli FALSE bildiriyordu. Sistem
+// saglikliyken kalici yanlis alarm: operator gercek bir kesinti
+// olmadigi halde denetim kaybi sanardi.
+func TestHealthClearsAfterRecovery(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "axlog.sock")
+
+	// Soket DOSYASI var ama dinleyici yok: Dial basarisiz olur.
+	if err := os.WriteFile(sock, nil, 0600); err != nil {
+		t.Fatalf("sahte soket olusturulamadi: %v", err)
+	}
+
+	s := NewUnixSender(sock)
+	defer s.Close()
+
+	if err := s.Send(event()); err == nil {
+		t.Fatal("dinleyici yokken gonderim basarili oldu, beklenmedi")
+	}
+	if s.Health() == "" {
+		t.Error("basarisiz gonderimden sonra Health() bos olmali")
+	}
+
+	// axlog ayaga kalkiyor.
+	_ = os.Remove(sock)
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("axlog dinlenemedi: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				r := bufio.NewReader(c)
+				for {
+					line, err := r.ReadString('\n')
+					if err != nil {
+						return
+					}
+					_ = line
+				}
+			}(c)
+		}
+	}()
+
+	// Baglanti kendiliginden kurulmali.
+	if err := s.Send(event()); err != nil {
+		t.Fatalf("kurtarma sonrasi gonderim basarisiz: %v", err)
+	}
+
+	if h := s.Health(); h != "" {
+		t.Errorf("kurtarma sonrasi Health() temizlenmedi, hata kaliyor: %q", h)
+	}
+
+	sent, failed := s.Stats()
+	if sent == 0 {
+		t.Error("basarili gonderim sayilmadi")
+	}
+	if failed == 0 {
+		t.Error("basarisiz gonderim sayilmadi")
+	}
+}

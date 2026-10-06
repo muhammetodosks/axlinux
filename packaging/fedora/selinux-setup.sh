@@ -184,5 +184,37 @@ if [ -r /sys/kernel/security/lsm ]; then
     esac
 fi
 
+# 6) Alan gecisi dogrulaması
+#
+# axdaemon'in ayri bir alanda calistigini DOGRULAMAK icin.
+# Burada "semanage login -a -t ..." KULLANILMAZ: Fedora 44'teki
+# semanage bu secenegi saglamiyor ve alan gecisi zaten calisiyor.
+#
+# Alan gecisi systemd servisleri icin LOGIN eslemesinden degil,
+# calistirilabilir dosyanin ETIKETINDEN olusur:
+#   /usr/bin/axdaemon -> axlinux_daemon_exec_t
+#   init_system_domain() bu etiketi baslatan domain_auto_trans
+#   kuralini kurar.
+#
+# Buraya daha once bir "semanage login" adimi eklenmisti; o adim
+# her kurulumda basarisiz oluyor ve calismayan bir sistemi
+# varsaydi. Gercek dogrulama asagidakidir: ayakta olan daemon'in
+# gercek baglami okunur.
+_axd=$(pgrep -x axdaemon 2>/dev/null | head -1)
+if [ -n "$_axd" ] && [ -r "/proc/$_axd/attr/current" ]; then
+    _axctx=$(tr -d '\000' < "/proc/$_axd/attr/current" 2>/dev/null)
+    case "$_axctx" in
+        *axlinux_daemon_t*)
+            echo "  alan dogrulandi: $_axctx" ;;
+        unconfined*)
+            echo "  UYARI: axdaemon unconfined alanda calisiyor" >&2
+            echo "         ($_axctx). LSM kancalarina disaridan" >&2
+            echo "         mudahale edilebilir." >&2 ;;
+        *)
+            echo "  axdaemon alani: $_axctx" ;;
+    esac
+    unset _axd _axctx
+fi
+
 echo "  SELinux hazir"
 exit 0

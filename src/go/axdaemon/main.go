@@ -23,7 +23,10 @@ import (
 )
 
 // Version is the daemon version. Keep in sync with axctl's __version__.
-const Version = "1.1.0"
+// Version, Makefile tarafindan -ldflags ile enjekte edilir.
+// Elle yazilan sabit bir surum, RPM surumuyle ayrisip sessizce
+// yanlis surum bildiririne yol acardi; bu yuzden varsayilan "dev".
+var Version = "dev"
 
 func main() {
 	var (
@@ -39,6 +42,8 @@ func main() {
 			"LSM kancalarini baglama, yalnizca RPC calistir")
 		axlogSocket = flag.String("axlog-socket", "/run/axlinux/axlog.sock",
 			"axlog Unix socket yolu (audit kayitlari buraya yazilir)")
+		policyDir = flag.String("policy-dir", policy.SystemPolicyDir,
+			"Sistem geneli politika dizini (boot aninda yuklenir)")
 	)
 	flag.Parse()
 
@@ -124,6 +129,18 @@ func main() {
 				logger.Info("mount noktasi onekleri", "count", len(mps))
 			}
 
+			// Sistem geneli politika (/etc/axlinux/policies.d).
+			//
+			// Buraya kadar politika YALNIZCA axctl API'siyle,
+			// calisan kullanicinin ev dizininden yukleniyordu.
+			// Boot sirasinda hicbir sey yuklenmedigi icin reboot
+			// sonrasi tum kurallar KAYBOLUYOR, sistem sessizce
+			// "kisitlama yok" durumuna donuyordu.
+			//
+			// Siralama: once map'ler ve mount kozlari hazirlanir,
+			// SONRA politika yuklenir. Aksi halde policy yukleme
+			// sirasinda mount noktasi onekleri haritada
+			// bulunamaz ve /tmp gibi yollar sessizce tutmaz.
 			if err := mapsMgr.SetLearning(false); err != nil {
 				logger.Warn("ogrenme bayragi sifirlanamadi",
 					"error", err)
@@ -253,6 +270,14 @@ func main() {
 	if mapsMgr != nil {
 		handler.Attach(lsmMgr, auditMgr)
 	}
+
+	// Boot aninda sistem geneli politika (/etc/axlinux/policies.d).
+	// Handler burada OLUSTURULDUKTAN SONRA cagrilir: politikayi
+	// map'lere yazan tek yol ApplyPolicy'dir ve o bir Handler'a
+	// baglidir. Burada ayri bir kopya yazilsaydi iki uygulama
+	// yolu zamanla ayrisir.
+	loadSystemPolicy(*policyDir, handler, logger)
+
 	srv := server.NewServer(*socketPath, handler, logger)
 
 	go func() {
@@ -267,6 +292,55 @@ func main() {
 
 	_ = srv.Stop()
 	logger.Info("axdaemon kapandi")
+}
+
+// loadSystemPolicy reads the administrator's policies from dir and applies
+// them at boot.
+//
+// NEDEN: politika daha once yalnizca axctl API'siyle, calisan
+// kullanicinin ev dizininden yukleniyordu. Boot sirasinda hicbir sey
+// yuklenmedigi icin reboot sonrasi tum kurallar kayboluyor ve sistem
+// sessizce "kisitlama yok" durumuna donuyordu. Operator politika
+// yuklemis, "enforcing" goruyor, ama sonraki acilista hicbir sey
+// engellenmiyor.
+//
+// Politika YOKSA veya bozulsa davranis:
+//   - dizin yok / hic dosya yok: sessiz devam. Bu normal bir
+//     kurulumdur (paket yeni kurulmus olabilir).
+//   - politika bozuk: ETKILEŞIMLI KULLANICIYA hata verilmez, ama
+//     daemon cok goruslu bir uyari yazar ve PERMISSIVE kalir.
+//     Bozuk politika nedeniyle sistemi kilitlemek de makul degildir;
+//     operatora "kurallar uygulanmadi" diyen acik bir uyari daha
+//     guvenli secimdir.
+func loadSystemPolicy(dir string, h *handlers.Handler, logger *slog.Logger) {
+	data, sources, err := policy.LoadSystem(dir)
+	if err != nil {
+		logger.Error("sistem politikasi yuklenemedi; sistem KISITLAMASIZ "+
+			"kaliyor (permissive)", "dir", dir, "error", err)
+		return
+	}
+	if len(sources) == 0 {
+		logger.Info("sistem politikasi yok", "dir", dir)
+		return
+	}
+
+	// Mode yazimi burada YAPILMAZ. Politikada "mode" tanimli olabilir
+	// ama yazma islemi ApplyPolicy icinde dogrulama gecdikten sonra
+	// olur; boylece hatali kural sistemi kilitleyemez.
+	snap, rules, err := h.ApplyPolicy(data)
+	if err != nil {
+		logger.Error("sistem politikasi UYGULANAMADI; hicbir kural "+
+			"yazilmadi, sistem kisitlamasiz kaliyor",
+			"dir", dir, "sources", strings.Join(sources, ","),
+			"error", err)
+		return
+	}
+
+	logger.Info("sistem politikasi uygulandi",
+		"dir", dir,
+		"sources", strings.Join(sources, ","),
+		"rules", rules,
+		"mode", snap.Policy.Mode)
 }
 
 // pinMaps pins the maps so a restarted daemon finds the same objects
