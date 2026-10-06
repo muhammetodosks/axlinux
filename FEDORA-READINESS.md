@@ -61,8 +61,21 @@ SELinux `Enforcing`.
 - PID 2298, **Wayland bağlantısı: 1** (gerçek GUI istemcisi)
 - pencere içeriği: `fedora-ax`, `Line 1, Col 1`, `Plain Text`
 
-Ekran görüntüsü QEMU monitöründen (`screendump`) alındı: GNOME
-üst çubuğu, açık gedit penceresi ve uygulama dock'u görünür.
+Görsel kanıt QEMU monitöründen (`screendump`) alındı:
+
+- **Yeniden başlatma öncesi:** tam GNOME masaüstü — üst çubuk
+  (`Oct 6 3:42 PM`), açık **gedit penceresi** (`fedora-ax` içeriği,
+  `Plain Text`, `Tab Width: 8`), uygulama dock'u. Enforcement
+  açıkken, arka planda `Low Disk Space` uyarısı görünüyor.
+- **Yeniden başlatma sonrası:** otomatik giriş çalışmış ve oturum
+  canlı, ancak ekran **kilitli** görünüyor. Bu bir hata değil:
+  sanal makinede fiziksel konsol girişi olmadığı için GNOME boşta
+  kalınca ekranı kilitliyor ve `screendump` kilit ekranını
+  yakalıyor. Ekranı açmak için QEMU `sendkey` denendi, Wayland
+  oturumunda sentetik tuşlar kilidi acmadı. Oturumun canlı olduğu
+  programatik olarak doğrulandı (§2.5): oturum `active`, oturum tipi
+  `wayland`, `gnome-shell` ayakta ve gedit Wayland istemcisi olarak
+  çalışıyor.
 
 `xclock` denendi ve **başarısız oldu**: `Can't open display`.
 Bu bir ürün hatası değildir — xclock bir X11 uygulamasıdır ve
@@ -114,8 +127,9 @@ oturum aktif kaldı.
 | LSM kancaları | 5/5 |
 | Enforcement | `enforcing`, 4 kural, 5 deny girdisi |
 | `audit_healthy` | `true` |
-| GUI uygulaması | gedit yeniden açıldı, Wayland bağlantısı var |
+| GUI uygulaması | gedit yeniden açıldı (PID 19957), Wayland bağlantısı: 1 |
 | `dnf` | `dnf5 version 5.4.1.0` |
+| Sistem politikası yüklemesi | açılıştan bu yana 28 kez otomatik |
 
 Kritik nokta: **politika yeniden başlatmadan sonra kendiliğinden
 yüklendi**. Bu, eski davranışta olmuyordu (bkz. §6.1).
@@ -207,7 +221,9 @@ Kök dosya sistemi %96 doluydu. Dağılım:
 | `/var/log/axlinux` | 11 MB | AXlinux audit (artık sınırlı) |
 | `/home/ax/axlinux/.android` | **17 GB** | Android emülatör kalıntısı — AXlinux ile ilgisiz, silindi |
 
-Temizlik sonrası: **2,2 GB boş (%89)**.
+Temizlik sonrası: **2,1 GB boş (%90)**. Uyarı bildirimi ekranda
+kaldı çünkü GNOME eşiğinin altındaki boş alanda; kalıcı çözüm disk
+genişletmesi veya `journald` sınırı ayarlamaktır (aşağıda).
 
 Not: `/var/log/journal` sınırı AXlinux'in sorunu değildir, ancak
 masaüstü hedefinde gerçek bir disk dolma riskidir ve raporlanmalıdır.
