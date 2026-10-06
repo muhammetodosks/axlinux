@@ -1,5 +1,9 @@
 # AXlinux — Sen YAML yaz, AXlinux uygulasın.
 
+> **Fedora 44 hazırlık ve kanıt raporu:** [`FEDORA-READINESS.md`](FEDORA-READINESS.md)
+> 716/0/2 test kanıtları, RPM kanıtı, gerçek enforcement çıktıları ve
+> dağıtıma hazırlık için açık boşluk listesi.
+
 Kullanıcı odaklı, YAML tabanlı Mandatory Access Control sistemi.
 Milyonlarca satır hazır politika yok: **politika senin, tek
 gerçek kaynak `~/.axlinux/policy.yaml`.**
