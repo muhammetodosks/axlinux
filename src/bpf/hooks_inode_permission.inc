@@ -96,22 +96,42 @@ int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 		return 0;
 	}
 
-	/* Izin verilen erisim yalnizca ogrenme modunda gozlem uretir.
+	/* Izin verilen erisim icin ogrenme gozlemi.
 	 *
-	 * Buraya kadar yalnizca DENY kurali eslesen operasyonlar
-	 * olay uretiyordu. Ogrenme modunun amaci ise tam tersidir:
-	 * "normalde ne yapiyorsun" gozlemi. Normal isler tanim
-	 * geregi IZIN VERILEN operasyonlardir, yani hicbiri olay
-	 * uretmiyordu. Sonuc: ogrenme modu AÇILSA BILE sifir
-	 * gozlem toplaniyordu; kullaniciya "3 gun kayit tutulacak"
-	 * yazilip hicbir sey toplanmiyordu.
+	 * Buraya kadar yalnizca DENY kurali eslesen operasyonlar olay
+	 * uretiyordu; ogrenme modunun amaci ise tam tersidir ("normalde
+	 * ne yapiyorsun"). Duzeltildi.
 	 *
-	 * Yalnizca ogrenme ACIKKEN: her izinli dosya okumasini
-	 * surekli audit etmek sistemde gereksiz yuk olusturur.
+	 * SONRA BIR DUZELTME DAHA: bu kancadan ogrenme gozlemi
+	 * uretilmez.
+	 *
+	 * NEDEN: LSM imzasi yapici olarak `struct inode *inode` alir,
+	 * `struct file *` DEGIL:
+	 *
+	 *   security_inode_permission(struct inode *inode, int mask)
+	 *
+	 * Dogrulama: /sys/kernel/btf/vmlinux -> FUNC 'security_inode_
+	 * permission' proto: 'inode' type_id=1086 (struct inode).
+	 *
+	 * inode'in dentry'ye GERI isaretcisi YOKTUR (yön tek yönlüdur:
+	 * dentry -> inode). Bu yuzden bu kancada dosya yolu CozULEMEZ.
+	 * Zaten yukarida ax_clear_path(key) ile yol bilerek siliniyor.
+	 *
+	 * Ogrenme gozlemi ise kurallar URETMEK icin vardir ve bir kural
+	 * mutlaka `object` (yol) alani icerir. Yolsuz bir gozlemden
+	 * kural uretilemez. O yuzden bu kayitlar:
+	 *   - bilgi tasimiyor (operator hangi dosya oldugunu goremez)
+	 *   - kural uretmiyor
+	 *   - ama 10 dakikada 43.641 kayit uretip 10 MB dosyayi dolduruyor
+	 *
+	 * Yani saf gurultu + disk maliyeti. Uretilmiyor.
+	 *
+	 * DENY kayitlari ETKILENMEZ: onlar policy kuralinin kendisidir
+	 * (ornegin subject=md5sum), yola ihtiyaci yoktur ve operator
+	 * icin anlamlidir.
+	 *
+	 * Yola ihtiyaci olan butun durumlar zaten file_open ve
+	 * bprm_check_security kancalarinda, yol COZULMUŞ halde kaydedilir.
 	 */
-	if (ax_learning()) {
-		event->decision = DECISION_ALLOWED;
-		ax_audit(ctx, event);
-	}
 	return 0;
 }
