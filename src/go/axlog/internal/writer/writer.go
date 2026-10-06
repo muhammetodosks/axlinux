@@ -18,6 +18,23 @@ import (
 	"axlinux/axlog/internal/models"
 )
 
+// maxTotalBytes, tum audit dosyalarinin (sikistirilmis dahil)
+// toplam ust siniridir.
+//
+// NEDEN retentionDays YETMEZ: gun sayisi sinirli olsa bile bir gun
+// icindeki ihlal sayisi sinirsizdir. Masaustunde bir surec dongusu
+// (orn. hatali bir betik) dakikada binlerce ihlal uretebilir;
+// 14 gun x 10 MB = 140 MB. Daha kotu senaryoda sinir asilir.
+// Toplam boyut siniri HER ZAMAN gecerlidir.
+//
+// 200 MB: Fedora Workstation'in /var icin ayirdigi tipik alanin
+// altinda kalir ve /var/log/journal + /var/log/audit ile birlikte
+// sorun yaratmaz.
+//
+// const DEGIL var: testler gercek 200 MB disk yazmak zorunda
+// kalmasin diye kucultebiliyor. Uretimde degistirilmez.
+var maxTotalBytes int64 = 200 * 1024 * 1024
+
 const (
 	maxFileSize = 10 * 1024 * 1024
 	timeFormat  = "2006-01-02"
@@ -241,41 +258,129 @@ func (w *Writer) compressDay(date string) {
 // Audit logu kanittir; bu yuzden yalnizca belirtilen gun esiginin
 // OTESINDEKI dosyalar silinir. Aktif gunun segmentlerine dokunulmaz.
 func (w *Writer) prune() {
+	w.pruneByAge()
+	w.pruneBySize()
+}
+
+// pruneByAge siler: retentionDays esigini asan gunler.
+func (w *Writer) pruneByAge() {
 	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
 
-	entries, err := os.ReadDir(w.dir)
-	if err != nil {
+	for _, f := range w.auditFiles() {
+		if f.day.Format(timeFormat) == w.today() {
+			continue // aktif gun: dokunma
+		}
+		if f.day.After(cutoff) {
+			continue
+		}
+		_ = os.Remove(f.path)
+	}
+}
+
+// pruneBySize siler: toplam boyut maxTotalBytes'i asarsa EN ESKI
+// dosyalardan baslayarak sinirin altina iner.
+//
+// Audit logu kanittir; bu yuzden AKTIF gunun dosyalari HER ZAMAN
+// korunur. Once sikistirilmis en eski gunler silinir.
+func (w *Writer) pruneBySize() {
+	files := w.auditFiles()
+	if len(files) == 0 {
 		return
 	}
 
-	today := time.Now().UTC().Format(timeFormat)
+	// En eskiden yeniye sirala: ayni gunun segmentleri icinde de
+	// segment numarasi kucukten buyuge dogru (eski segment_once).
+	sort.Slice(files, func(i, j int) bool {
+		if !files[i].day.Equal(files[j].day) {
+			return files[i].day.Before(files[j].day)
+		}
+		return files[i].seq < files[j].seq
+	})
 
+	total := int64(0)
+	for _, f := range files {
+		total += f.size
+	}
+
+	today := w.today()
+	for _, f := range files {
+		if total <= maxTotalBytes {
+			return
+		}
+		// Aktif gunun dosyalari silinmez. Kanit kaybi, disk
+		// dolmasindan iyidir; ama aktif gun zaten segment
+		// siniriyla (10 MB) sinirlidir.
+		if f.day.Format(timeFormat) == today {
+			continue
+		}
+		if os.Remove(f.path) == nil {
+			total -= f.size
+		}
+	}
+}
+
+func (w *Writer) today() string {
+	return time.Now().UTC().Format(timeFormat)
+}
+
+// auditFile, diskteki tek bir audit dosyasinin cozulmus bilgisi.
+type auditFile struct {
+	path string
+	day  time.Time
+	seq  int
+	size int64
+}
+
+// auditFiles, dizindeki tum audit dosyalarini gun + segment sirasiyla
+// dondurur. Hicbir sey okunamazsa bos liste doner (prune sessiz).
+func (w *Writer) auditFiles() []auditFile {
+	entries, err := os.ReadDir(w.dir)
+	if err != nil {
+		return nil
+	}
+
+	var out []auditFile
 	for _, e := range entries {
 		name := e.Name()
 		if !strings.HasPrefix(name, "audit-") {
 			continue
 		}
 
-		rest := strings.TrimSuffix(strings.TrimPrefix(name, "audit-"), ".jsonl.gz")
-		rest = strings.TrimSuffix(strings.TrimPrefix(rest, "audit-"), ".jsonl")
-		if len(rest) < len(timeFormat) {
+		body := strings.TrimPrefix(name, "audit-")
+		body = strings.TrimSuffix(body, ".gz")
+		if !strings.HasSuffix(body, ".jsonl") {
 			continue
 		}
+		body = strings.TrimSuffix(body, ".jsonl")
 
-		day, err := time.Parse(timeFormat, rest[:len(timeFormat)])
+		if len(body) < len(timeFormat) {
+			continue
+		}
+		day, err := time.Parse(timeFormat, body[:len(timeFormat)])
 		if err != nil {
 			continue
 		}
 
-		if day.Format(timeFormat) == today {
-			continue
-		}
-		if day.After(cutoff) {
-			continue
+		seq := 0
+		if rest := strings.TrimPrefix(body[len(timeFormat):], "."); rest != "" {
+			if n, err := strconv.Atoi(rest); err == nil {
+				seq = n
+			}
 		}
 
-		_ = os.Remove(filepath.Join(w.dir, name))
+		size := int64(0)
+		if info, err := e.Info(); err == nil {
+			size = info.Size()
+		}
+
+		out = append(out, auditFile{
+			path: filepath.Join(w.dir, name),
+			day:  day,
+			seq:  seq,
+			size: size,
+		})
 	}
+	return out
 }
 
 func (w *Writer) compressFile(src string) {

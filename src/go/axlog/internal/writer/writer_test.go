@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"testing"
 	"time"
 
@@ -227,5 +229,149 @@ func TestCompressDayAllSegments(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
 			t.Errorf("kaynak silinmedi: %s", name)
 		}
+	}
+}
+
+// TestPruneBySizeCapsTotal, toplam boyut maxTotalBytes'i asarsa
+// en eski dosyalar silinir ve AKTIF gun korunur.
+//
+// NEDEN Gerekli: retentionDays gun sayisini sinirliyor ama bir gun
+// icindeki ihlal sayisini DEGIL. Masaustunde hatali bir betik
+// dakikada binlerce ihlal uretip 14 gun x 10 MB uretebilir; bu
+// 140 MB'dir. Daha kotu senaryoda sinir asilir. Toplam boyut
+// siniri her zaman gecerli.
+func TestPruneBySizeCapsTotal(t *testing.T) {
+	dir := t.TempDir()
+
+	// Gercek 200 MB yazmak testi hem yavas hem de gecici dosya
+	// sisteminde basarisiz kilardi (720 MB yazma denendi, WriteFile
+	// sessizce kismi basarisiz oldu). Bu yuzden esik kucultulur.
+	orig := maxTotalBytes
+	maxTotalBytes = 4 * 1024 * 1024
+	defer func() { maxTotalBytes = orig }()
+
+	// 14 gunluk esik icinde 30 gunluk veri uret: gun siniri SILMEZ,
+	// toplam boyut siniri SILMELI.
+	now := time.Now().UTC()
+	var written int64
+	for d := 29; d >= 0; d-- {
+		day := now.AddDate(0, 0, -d).Format(timeFormat)
+		// Her gun 3 x 1 MB segment = 3 MB/gun -> ~90 MB toplam
+		for seg := 0; seg < 3; seg++ {
+			name := "audit-" + day + ".jsonl"
+			if seg > 0 {
+				name = "audit-" + day + "." + strconv.Itoa(seg) + ".jsonl"
+			}
+			data := make([]byte, 1024*1024)
+			for i := range data {
+				data[i] = 'x'
+			}
+			if err := os.WriteFile(filepath.Join(dir, name), data, 0640); err != nil {
+				t.Fatal(err)
+			}
+			written += int64(len(data))
+		}
+	}
+	if written <= maxTotalBytes {
+		t.Fatalf("test verisi yetersiz: %d <= %d", written, maxTotalBytes)
+	}
+
+	w, err := NewWriter(dir, false)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	defer w.Close()
+
+	w.pruneBySize()
+
+	var total int64
+	for _, f := range w.auditFiles() {
+		total += f.size
+	}
+
+	if total > maxTotalBytes {
+		t.Errorf("toplam boyut sinirini asiyor: %d > %d", total, int64(maxTotalBytes))
+	}
+
+	// Aktif gun SILINMEMELI: bugunun tum segmentleri durmali.
+	// (Onceki yazimda mantik TERSI'ydi: dosya VARSA hata veriyordu.)
+	today := now.Format(timeFormat)
+	todayFound := 0
+	for _, f := range w.auditFiles() {
+		if f.day.Format(timeFormat) == today {
+			todayFound++
+		}
+	}
+	if todayFound == 0 {
+		t.Fatalf("aktif gunun tum dosyalari silindi (toplam %d bayt kaldi, "+
+			"sinir %d)", total, int64(maxTotalBytes))
+	}
+
+	// Yeni dosyalar (en eski) silinmis, yeni dosyalar kalmis olmali
+	oldest := now.AddDate(0, 0, -29).Format(timeFormat)
+	if _, err := os.Stat(filepath.Join(dir, "audit-"+oldest+".jsonl")); err == nil {
+		t.Errorf("en eski dosya silinmedi: audit-%s.jsonl", oldest)
+	}
+}
+
+// TestAuditFilesParsesGzipNames, .gz ve numarali segment adlari
+// dogru cozulur. Isim cozumlemesi yanlis olursa prune HICBIR seyi
+// silmez (gulerekce sinir asilir).
+func TestAuditFilesParsesGzipNames(t *testing.T) {
+	dir := t.TempDir()
+	names := []string{
+		"audit-2026-10-01.jsonl",
+		"audit-2026-10-02.jsonl.gz",
+		"audit-2026-10-03.1.jsonl",
+		"audit-2026-10-03.12.jsonl",
+		"audit-2026-10-04.2.jsonl.gz",
+		"derisk.log",
+		"okunmayan.txt",
+	}
+	for _, n := range names {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte("x"), 0640); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	w, err := NewWriter(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	// NewWriter bugunun dosyasini kendisi acar; 5 test dosyasi +
+	// 1 yeni = 6.
+	files := w.auditFiles()
+	if len(files) != 6 {
+		t.Fatalf("cozulen dosya = %d, 6 bekleniyordu", len(files))
+	}
+	files = files[:5] // yalnizca test icin yazilanlari dogrula
+
+	want := map[string]string{
+		"audit-2026-10-01.jsonl":      "2026-10-01",
+		"audit-2026-10-02.jsonl.gz":   "2026-10-02",
+		"audit-2026-10-03.1.jsonl":    "2026-10-03",
+		"audit-2026-10-03.12.jsonl":   "2026-10-03",
+		"audit-2026-10-04.2.jsonl.gz": "2026-10-04",
+	}
+	for _, f := range files {
+		got := f.day.Format(timeFormat)
+		base := filepath.Base(f.path)
+		if w2, ok := want[base]; !ok || w2 != got {
+			t.Errorf("%s -> gun %q", base, got)
+		}
+	}
+
+	// Segment siralamasi: 1'den 12'ye dogru
+	var seqs []int
+	for _, f := range files {
+		if f.day.Format(timeFormat) == "2026-10-03" {
+			seqs = append(seqs, f.seq)
+		}
+	}
+	sort.Ints(seqs)
+	if len(seqs) != 2 || seqs[0] != 1 || seqs[1] != 12 {
+		t.Errorf("segment numaralari = %v, [1 12] bekleniyordu", seqs)
 	}
 }
