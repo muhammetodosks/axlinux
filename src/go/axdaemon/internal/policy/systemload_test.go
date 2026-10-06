@@ -215,3 +215,54 @@ rules:
 		t.Fatal("bozuk YAML hatasi donmedi")
 	}
 }
+
+// TestHealthSurfacesLoadFailure, bozuk politika "sessizce basarisiz"
+// olmamalidir: hata axctl status'a tasinir.
+//
+// GERCEK BOSLUK: sistem geneli politika acilista yuklenir ve
+// bozuksa hicbir kural yazilmaz (guvenli davranis). Ama bu durum
+// YALNIZCA daemon gunlugunde gorunuyordu. `axctl status` sadece
+// "mode=permissive, rules=0" diyordu; operator sebebini ogrenemiyor
+// ve "reboot sonrasi politika gitti" saniyordu.
+//
+// Bir MAC sessizce kisitlamaz. Bu test o sessizligin geri
+// gelmedigini garanti eder.
+func TestHealthSurfacesLoadFailure(t *testing.T) {
+	m := NewManager()
+
+	// Hic yukleme denenmedi: hata DEGIL (yeni kurulum).
+	if why, healthy := m.Health(); !healthy || why != "" {
+		t.Errorf("hic denenmemisken sagliksiz: healthy=%v why=%q", healthy, why)
+	}
+
+	// Basarisiz yukleme.
+	bad := []byte(`{"version":1}`) // 'rules' anahtari eksik
+	if _, err := m.Load(bad); err == nil {
+		t.Fatal("rules anahtari eksik politika kabul edildi")
+	}
+	why, healthy := m.Health()
+	if healthy {
+		t.Error("basarisiz yuklemeden sonra saglikli görünüyor (SESSIZ KISITLAMA)")
+	}
+	if why == "" {
+		t.Error("hata metni bos; operator sebebi göremez")
+	}
+
+	// Basarili yukleme hatayi TEMIZLEMELI (yapisal).
+	good := []byte(`{"version":1,"rules":[],"mode":"enforcing"}`)
+	if _, err := m.Load(good); err != nil {
+		t.Fatalf("gecerli politika reddedildi: %v", err)
+	}
+	if why, healthy := m.Health(); !healthy || why != "" {
+		t.Errorf("basarili yuklemeden sonra hata kaldi: healthy=%v why=%q",
+			healthy, why)
+	}
+
+	// Yeniden bozulunca tekrar gorunur.
+	if _, err := m.Load(bad); err == nil {
+		t.Fatal("tekrar hata bekleniyordu")
+	}
+	if _, healthy := m.Health(); healthy {
+		t.Error("ikinci hata sonrasi saglikli görünüyor")
+	}
+}

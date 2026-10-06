@@ -150,6 +150,26 @@ def print_status(status: dict) -> None:
     # oldugunda "hicbir olay olmadi" ile "dongu oldu" ayirt
     # edilemez; enforcement calisiyor olsa bile audit olmus
     # durumda operator korundugunu sanar.
+    # Politika sagligi: politika UYGULANAMADIGINDA sistem sessizce
+    # kisitlamasiz kalir. "mode=permissive" tek basina sebebi
+    # anlatmaz; operator kurallarinin neden yuklenmedigini bilmez.
+    if status.get("policy_healthy") is False:
+        pnotice = status.get("policy_notice", "")
+        console.print()
+        console.print(Panel(
+            "[bold red]POLİTİKA UYGULANAMADI[/bold red]\n\n"
+            "Politika yüklenemediği için [bold]hiçbir kural "
+            "uygulanmıyor[/bold] ve sistem kısıtlamasız durumda.\n\n"
+            f"{pnotice}\n\n"
+            "[dim]Politikayı düzeltin ve 'sudo systemctl restart "
+            "axdaemon' ile yeniden yükleyin. Yükleme başarısız "
+            "olduğunda hiçbir kural yazılmaz; sistem yanlışlıkla "
+            "kilitlememek için bilinçli olarak kısıtlamasız bırakılır."
+            "[/dim]",
+            title="[bold red]ENFORCEMENT ETKİSİZ[/bold red]",
+            border_style="red",
+        ))
+
     if status.get("audit_healthy") is False:
         notice = status.get("audit_notice", "")
         # Kalici olarak yazilamayan kayitlar varsa onlari ayrica

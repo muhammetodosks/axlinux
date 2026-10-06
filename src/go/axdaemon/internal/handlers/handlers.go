@@ -333,6 +333,19 @@ func (h *Handler) handleGetStatus(req protocol.Request) protocol.Response {
 		result["audit_notice"] = "perf buffer acilmadi; audit kaydi alinmiyor"
 	}
 
+	// Politika sagligi: acilista yuklenen sistem politikasi bozuksa
+	// hicbir kural yazilmaz ve sistem kisitlamasiz kalir. Bu durum
+	// YALNIZCA gunlukte gorunuyordu; `axctl status` sadece
+	// "mode=permissive" diyordu ve operator sebebini ogrenemiyordu.
+	// Bir MAC sessizce kisitlamaz.
+	if h.policy != nil {
+		why, healthy := h.policy.Health()
+		result["policy_healthy"] = healthy
+		if !healthy {
+			result["policy_notice"] = "politika UYGULANAMADI, sistem kisitlamasiz: " + why
+		}
+	}
+
 	if h.learning != nil {
 		result["learning_active"] = h.learning.IsActive()
 		result["learning_observations"] = h.learning.ObservationCount()

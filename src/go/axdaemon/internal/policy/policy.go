@@ -62,6 +62,25 @@ type Snapshot struct {
 type Manager struct {
 	mu       sync.RWMutex
 	snapshot Snapshot
+
+	// lastErr, en son BASARISIZ yukleme denemesinin nedenini tutar.
+	//
+	// NEDEN: sistem geneli politika acilista yuklenir ve BOZUK
+	// politika hicbir kural yazmadan birakilir (guvenli davranis:
+	// sistem kilitlenmez). Ama bu durum YALNIZCA daemon gunlugunde
+	// gorunuyordu. `axctl status` sadece "mode=permissive,
+	// rules=0" diyordu; operator kurallarinin NEDEN uygulanmadigini
+	// ogrenemiyor, hatta "reboot sonrasi politika gitti" saniyordu.
+	//
+	// Bir MAC'te sessizce kisitlamamak, acikca kisitlamamaktan
+	// kotudur: kullanici guvendiğini sanir. Bu yuzden hata
+	// axctl status'a tasinir.
+	//
+	// Yapisal: basarili bir yukleme hatayi TEMIZLER.
+	lastErr error
+	// loadedOnce, hic yukleme denenmedi mi. Sistemin hic kural
+	// yuklemediyse "hatasiz" degil " hic denenmedi" demektir.
+	loadedOnce bool
 }
 
 // NewManager creates an empty policy manager.
@@ -69,8 +88,34 @@ func NewManager() *Manager {
 	return &Manager{}
 }
 
+// Health reports the last policy load failure.
+//
+// Returns ("", true) when the most recent load succeeded.
+func (m *Manager) Health() (why string, healthy bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if !m.loadedOnce {
+		return "", true // hic yukleme denenmedi: hata degil
+	}
+	if m.lastErr != nil {
+		return m.lastErr.Error(), false
+	}
+	return "", true
+}
+
 // Load parses and validates a new policy, then stores it.
 func (m *Manager) Load(data []byte) (Snapshot, error) {
+	// Basarisiz denemede hatayi YAZ; basarida TEMIZLE.
+	snap, err := m.load(data)
+	m.mu.Lock()
+	m.loadedOnce = true
+	m.lastErr = err
+	m.mu.Unlock()
+	return snap, err
+}
+
+func (m *Manager) load(data []byte) (Snapshot, error) {
 	var p Policy
 	if err := json.Unmarshal(data, &p); err != nil {
 		return Snapshot{}, fmt.Errorf("policy JSON parse hatasi: %w", err)

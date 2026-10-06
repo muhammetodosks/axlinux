@@ -110,6 +110,16 @@ install -Dm 0644 README.md DAGITIM.md CHANGELOG.md \
 # Boot aninda axdaemon buradaki *.yaml dosyalarini okuyup map'lere
 # yazar. Once bu dizin HIC YOKTU: politika yalnizca axctl API'si
 # uzerinden yukleniyordu, reboot sonrasi tum kurallar kayboluyordu.
+# journald ust siniri (drop-in).
+#
+# journald varsayilani kotu dosya sisteminin %10'u (en fazla 4G);
+# 20 GB'lik bir Workstation kurulumunda 2 GB. AXlinux'in kendi audit
+# logu sinirli olsa bile isletim sistemi gunlugu sinirsiz kalirsa
+# o sinir anlamsizlasir. Ana journald.conf DEGISTIRILMEZ; standart
+# drop-in dizini kullanilir, yonetici dosyayi silerek geri alabilir.
+install -Dm 0644 packaging/journald/10-axlinux.conf \
+    %{buildroot}%{_sysconfdir}/systemd/journald.conf.d/10-axlinux.conf
+
 install -d -m 0750 %{buildroot}%{_sysconfdir}/axlinux/policies.d
 install -Dm 0644 packaging/fedora/axlinux-sample-workstation.yaml \
     %{buildroot}%{_sysconfdir}/axlinux/policies.d/00-sample-workstation.yaml
@@ -158,6 +168,17 @@ install -Dm 0644 packaging/fedora/axlinux.if \
 if [ -x %{_prefix}/share/axlinux/selinux-setup.sh ]; then
     PREFIX=%{_prefix} %{_prefix}/share/axlinux/selinux-setup.sh || \
         echo "AXlinux: SELinux kurulumu basarisiz; enforcement etkisiz."
+fi
+
+# journald ust sinirini uygula.
+#
+# Burada sessizce sistem ayari degistirilmiyor: drop-in dosyasi
+# paketle gelir, %config(noreplace) ile etiketlidir, operator
+# gormesi icin mesal basildi ve istedigi an dosyayi silebilir.
+if [ -f /etc/systemd/journald.conf.d/10-axlinux.conf ]; then
+    systemctl restart systemd-journald 2>/dev/null || true
+    echo "AXlinux: journald ust siniri etkin (200M / 1G bos birak)."
+    echo "  geri almak icin: rm /etc/systemd/journald.conf.d/10-axlinux.conf"
 fi
 
 # Servisleri etkinlestir ve BASLAT. Sira onemli: SELinux modulu
@@ -243,6 +264,8 @@ fi
 %config(noreplace) %{_sysconfdir}/axlinux/*.yaml
 # Politika dizini ve ornek. %config(noreplace): yonetici
 # duzenlediginde rpm guncellemesi dosyayi EZMEZ.
+%dir %{_sysconfdir}/systemd/journald.conf.d
+%config(noreplace) %{_sysconfdir}/systemd/journald.conf.d/10-axlinux.conf
 %dir %{_sysconfdir}/axlinux/policies.d
 %config(noreplace) %{_sysconfdir}/axlinux/policies.d/*.yaml
 %{_unitdir}/axdaemon.service

@@ -1911,6 +1911,36 @@ for f in $(sudo ls "$LOGDIR"/audit-*.jsonl 2>/dev/null); do
     esac
 done
 
+# --- journald UST SINIRI ---
+#
+# Sorun: journald varsayilani kotu dosya sisteminin %10'u (en fazla
+# 4G). 20 GB'lik bir Workstation kurulumunda 2 GB ve hic kurulmamis
+# olabilir. /var/log/journal sessizce buyup diski doldurur; GNOME
+# "Low Disk Space" uyarisi verir. AXlinux'in kendi audit logu sinirli
+# olsa bile isletim sistemi gunlugu sinirsiz kalirsa o sinir
+# anlamsizlasir.
+#
+# Bu kontrol SUREKLI etkin bir sinirin varligini dogrular.
+JOURNALD_EFF="$(systemd-analyze cat-config systemd/journald.conf 2>/dev/null \
+    | sed -n 's/^[[:space:]]*\(SystemMaxUse\|SystemKeepFree\|MaxRetentionSec\)=/\1/p' \
+    | sort -u | tr '\n' ' ')"
+if [ -n "$JOURNALD_EFF" ]; then
+    ok "journald ust siniri etkin: $JOURNALD_EFF"
+else
+    no "journald ust siniri YOK; /var/log/journal sinirsiz buyebilir"
+    no "  duzeltme: make journald-limit  (veya sudo make install-journald)"
+fi
+
+# Sinir gercekten uygulaniyor mu: kotu bos alanda journald YAZMAYI
+# BIRAKIR. Burada sadece ayarin okundugunu dogrulariz; etkin
+# kisisini journald kendisi uygular.
+JOURNALD_SIZE="$(journalctl --disk-usage 2>/dev/null | grep -oE '[0-9.]+[KMG]' | head -1)"
+JOURNALD_KEEPFREE="$(systemd-analyze cat-config systemd/journald.conf 2>/dev/null \
+    | sed -n 's/^[[:space:]]*SystemKeepFree=\([0-9.]*[KMG]\).*/\1/p' | head -1)"
+if [ -n "$JOURNALD_SIZE" ] && [ -n "$JOURNALD_KEEPFREE" ]; then
+    ok "journald: kullanilan=$JOURNALD_SIZE, bos birakilacak=$JOURNALD_KEEPFREE"
+fi
+
 # --- Log rotasyonu ---
 #
 # Onceki test ANLAMI OLMAYAN bir sey olcuyordu: 1999 tarihli bir

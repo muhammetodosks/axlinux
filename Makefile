@@ -272,6 +272,38 @@ endif
 #
 # GPG anahtari uretir. Idempotent DEGILDIR: anahtar zaten varsa
 # dokunulmaz (yeniden uretmek eski imzalari koparirdi).
+# --- journald ust siniri ---
+#
+# journald varsayilani kotu dosya sisteminin %10'u (en fazla 4G).
+# 20 GB'lik bir Workstation kurulumunda 2 GB. AXlinux'in kendi
+# audit logu sinirli olsa bile isletim sistemi gunlugu sinirsiz
+# kalirsa o sinir anlamsizlasir.
+#
+# Ana journald.conf DEGISTIRILMEZ; standart drop-in dizini
+# kullanilir (systemd oncelik sirasi: drop-in > ana dosya).
+# Yonetici dosyayi silerek ayari geri alabilir.
+.PHONY: journald-limit journald-show journald-revert
+JOURNALD_DROPIN := /etc/systemd/journald.conf.d/10-axlinux.conf
+
+journald-limit:
+	@echo "== journald ust siniri =="
+	@install -d -m 0755 /etc/systemd/journald.conf.d
+	@install -m 0644 packaging/journald/10-axlinux.conf $(JOURNALD_DROPIN)
+	@systemctl restart systemd-journald 2>/dev/null || true
+	@systemd-analyze cat-config systemd/journald.conf 2>/dev/null | \
+	    grep -E "SystemMaxUse|SystemKeepFree|MaxRetentionSec" | sed 's/^/    /'
+	@echo "  kuruldu: $(JOURNALD_DROPIN)"
+
+journald-show:
+	@echo "== etkin journald ayarlari =="
+	@systemd-analyze cat-config systemd/journald.conf 2>/dev/null | \
+	    grep -E "^#?\s*(SystemMaxUse|SystemMaxFileSize|SystemKeepFree|MaxRetentionSec)=" | sed 's/^/  /'
+
+journald-revert:
+	@rm -f $(JOURNALD_DROPIN)
+	@systemctl restart systemd-journald 2>/dev/null || true
+	@echo "  geri alindi: $(JOURNALD_DROPIN)"
+
 .PHONY: rpm-gpg-key rpm-sign rpm-verify-sign rpm-export-key rpm
 
 rpm-gpg-key:

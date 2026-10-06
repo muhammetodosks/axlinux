@@ -851,6 +851,31 @@ fi
 # ------------------------------------------------------------------ 9 ilk politika
 begin "Ilk politika"
 
+# journald UST SINIRI
+#
+# journald varsayilani kotu dosya sisteminin %10'u (en fazla 4G).
+# 20 GB'lik bir Workstation kurulumunda 2 GB ve hic kurulmamis
+# olabilir; /var/log/journal sessizce buyup diski doldurur. AXlinux'in
+# kendi audit logu sinirli (10 MB segment + 14 gun + 200 MB toplam)
+# olsa bile isletim sistemi gunlugu sinirsiz kalirsa o sinir
+# anlamsizlasir.
+#
+# Ana journald.conf DEGISTIRILMEZ. Standart drop-in dizini
+# kullanilir; operator istedigi an dosyayi silerek geri alabilir.
+JOURNALD_DROPIN=/etc/systemd/journald.conf.d/10-axlinux.conf
+if [ -f packaging/journald/10-axlinux.conf ]; then
+    if install -d -m 0755 /etc/systemd/journald.conf.d 2>/dev/null \
+        && install -m 0644 packaging/journald/10-axlinux.conf "$JOURNALD_DROPIN" 2>/dev/null; then
+        systemctl restart systemd-journald 2>/dev/null || true
+        ok "journald ust siniri etkin (200M / 1G bos birak)"
+        info "geri almak icin: rm $JOURNALD_DROPIN"
+    else
+        warn "journald ust siniri kurulamadi: $JOURNALD_DROPIN"
+    fi
+else
+    warn "journald drop-in kaynak dosyasi bulunamadi"
+fi
+
 # SISTEM GENELI POLITIKA DIZINI
 #
 # RPM yolu bu dizini spec'te kuruyor; install.sh YOLU KURMUYORDU.
