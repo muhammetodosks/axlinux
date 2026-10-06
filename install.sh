@@ -850,10 +850,61 @@ fi
 
 # ------------------------------------------------------------------ 9 ilk politika
 begin "Ilk politika"
+
+# SISTEM GENELI POLITIKA DIZINI
+#
+# RPM yolu bu dizini spec'te kuruyor; install.sh YOLU KURMUYORDU.
+# Sonuc: install.sh ile kurulan sistemde politika reboot sonrasi
+# kayboluyordu (axdaemon acilista bu dizini okuyor, dizin yoksa
+# hicbir sey yuklemiyor) ve kullanici kalici politika yazamiyordu.
+# Iki kurulum yolu ayni sistemi kurmamis oluyordu.
+#
+# Dizin 0750 root:root ve dosyalar 0640: politika yalnizca root
+# tarafindan degistirilebilir. SELinux baglami /etc/axlinux(/.*)?
+# kuraliyla zaten axlinux_etc_t.
+POLICY_D=/etc/axlinux/policies.d
+if install -d -m 0750 "$POLICY_D" 2>/dev/null; then
+    ok "sistem politikasi dizini: $POLICY_D"
+else
+    warn "sistem politikasi dizini kurulamadi: $POLICY_D"
+    warn_step "kalici politika yazamazsiniz; politika reboot sonrasi kaybolur"
+fi
+
+# Ornek politika. RPM spec'i 00-sample-workstation.yaml kuruyor;
+# ayni dosya install.sh icinde de gomuluyor ki iki yol ayni
+# icerigi versin. Icerik: hicbir sey kisitlamayan, uygulanmis ve
+# calisilmis ornek (rules: []).
+if [ -d "$POLICY_D" ]; then
+    if [ ! -f "$POLICY_D/00-sample-workstation.yaml" ]; then
+        cat >"$POLICY_D/00-sample-workstation.yaml" <<'AXYAML'
+# AXlinux sistem geneli politika ornegi (install.sh ile kuruldu)
+#
+# BU DOSYA HICBIR KISITLAMA ICERMEZ (rules: []). Sistem
+# "hicbir sey engellenmiyor" durumunda baslar.
+#
+# Politika YAZMAK: bu dizindeki bir .yaml dosyasina kurallarinizi
+# ekleyin, sonra  sudo systemctl restart axdaemon
+#
+# Bu dizindeki TUM *.yaml dosyalari lexical sirayla (00-, 50-, ...)
+# okunur ve birlestirilir. Politika bozuksa hicbir kural yazilmaz;
+# sistem kisitlamasiz kalir ve axdaemon gunluge uyari yazar.
+#
+# Alanlarin tam listesi: docs/policy-language.md
+version: 1
+
+# disabled | permissive | enforcing
+# Once permissive ile baslayip denetleyin, sonra enforcing'e gecin.
+mode: permissive
+
+rules: []
+AXYAML
+        chmod 0640 "$POLICY_D/00-sample-workstation.yaml" 2>/dev/null || :
+        ok "ornek sistem politikasi yazildi"
+    fi
+fi
+
 if [ -f /etc/axlinux/minimal.yaml ]; then
     ok "ornek politikalar: /etc/axlinux/"
-else
-    warn "ornek politika bulunamadi"
 fi
 if [ -f "$HOME/.axlinux/policy.yaml" ] || [ -f /root/.axlinux/policy.yaml ]; then
     ok "kullanici politika dosyasi mevcut"
