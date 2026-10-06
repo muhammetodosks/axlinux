@@ -1941,31 +1941,101 @@ if [ -n "$JOURNALD_SIZE" ] && [ -n "$JOURNALD_KEEPFREE" ]; then
     ok "journald: kullanilan=$JOURNALD_SIZE, bos birakilacak=$JOURNALD_KEEPFREE"
 fi
 
-# --- Log rotasyonu ---
+# --- Log rotasyonu: BELIRLENIMCI ---
 #
-# Onceki test ANLAMI OLMAYAN bir sey olcuyordu: 1999 tarihli bir
-# dosya yaziyor ve "silinmis mi" diye bakiyordu. axlog o dosyayi
-# acmaz; dosya orada kalir ve test HER KOSUDA "skip" doner.
-# Yani rotasyon HICBIR ZAMAN dogrulanmamiyordu.
+# Onceki test ANLAMI OLMAYAN bir sey olcuyordu:
 #
-# Gercek test, writer'in numarali segmentlerini dogrudan okur: ayni
-# gun icinde 1'den fazla audit dosyasi varsa segment uretilmis
-# demektir. Bu bicim, canli sistemde tespit edilen hatayi yakalar
-# (openCurrent her zaman bugunun tarihiyle ad uretiyordu; boyut
-# siniri tetiklendiginde ayni dosya O_APPEND ile yeniden aciliyor,
-# hicbir zaman donmuyordu).
-SEGN="$(sudo ls "$LOGDIR" 2>/dev/null | grep -c 'audit-[0-9-]*\.[0-9]*\.jsonl')"
-ALLN="$(sudo ls "$LOGDIR" 2>/dev/null | grep -c 'audit-.*\.jsonl')"
-if [ "${ALLN:-0}" -gt 0 ]; then
-    ok "audit dosyalari okunabilir (toplam $ALLN)"
+#   sudo sh -c 'echo "{}" > /var/log/axlinux/audit-1999-01-01.jsonl'
+#   [ -f ... ] && skip "rotasyon yok (dosya yazildi)"
+#
+# axlog o dosyayi acmaz; dosya orada kalir ve test HER KOSUDA
+# "skip" doner. Yani rotasyon HICBIR ZAMAN dogrulanmiyordu.
+#
+# BU TEST BELIRLENIMCI: 10 MB sinirinin tam sinirinda bir dosya
+# ONCEDEN yerlestirilir, sonra tek bir yazma yapilir. Writer
+# dosyayi AÇILIRKEN olcer (stat) ve ilk yazmada siniri gorup
+# NUMARALI SEGMENT olusturur. Gercek uretim hatasinin (acilan
+# dosya 10 MB'yi gectigi halde rotasyon tetiklenmiyordu) tam
+# tersi: burada tetiklenmemESI bekleniyor.
+#
+# Neden 10 MB dolulugunu beklemiyoruz: 42.500 deny uretmek 2.6
+# dakika suruyor. Dosya onceden olusturuldugu icin test saniyeler
+# icinde biter ve KESINDIR (birikmis duruma bagli degil).
+ROT_DIR="$LOGDIR"
+ROT_DAY="$(date -u +%F)"
+ROT_SEED="$ROT_DIR/audit-$ROT_DAY.jsonl"
+
+sudo systemctl stop axlog 2>/dev/null
+sudo rm -f "$ROT_DIR"/audit-* 2>/dev/null
+# Tam 10 MB (10485760) = writer'in maxFileSize degeri.
+sudo truncate -s 10485760 "$ROT_SEED" 2>/dev/null
+sudo systemctl start axlog 2>/dev/null
+sleep 2
+
+ROT_SEED_SZ="$(sudo stat -c %s "$ROT_SEED" 2>/dev/null)"
+ok "rotasyon tohum dosyasi: ${ROT_SEED_SZ:-0} bayt (sinir 10485760)"
+
+# En az bir kayit YAZILMALI, yoksa Write hic cagrilmaz ve
+# rotasyon TETIKLENMEZ.
+#
+# Ilk denemede test iki cat komutu calistiriyordu ve ikisinin de
+# kayit uretmedigi goruldu: izinli islemler kayit URETMEZ (bu
+# bilincli bir ozellik - audit maliyeti ihlalle orantili), ve o
+# anda yuklu politika /etc/ax-secret'i reddetmiyordu. Sonuc:
+# sifir yazma, sifir rotasyon, ve test "rotasyon bozuk" dedi.
+#
+# Cozum: test KENDI deny politikasini yukler. Bu hem bir kayit
+# uretir hem de rotasyonun gercekten calistigini gosterir.
+ROT_SAVED="/tmp/ax-polko-rotasyon-$$.yaml"
+cp "$POLICY_PATH" "$ROT_SAVED" 2>/dev/null || : >"$ROT_SAVED"
+sudo sh -c 'echo x > /tmp/ax-rot-hedef.txt' 2>/dev/null
+sudo chmod 0644 /tmp/ax-rot-hedef.txt 2>/dev/null
+cat >/tmp/ax-rotation.yaml <<YAML
+version: 1
+mode: enforcing
+rules:
+  - id: rot1
+    name: "rotasyon testi icin tek kayit"
+    subject: ["*"]
+    object: /tmp/ax-rot-hedef.txt
+    action: file.read
+    effect: deny
+YAML
+apply_policy /tmp/ax-rotation.yaml
+sleep 1
+
+# Birden fazla kayit yaz: segmentin olustugunu ve buyudugunu
+# dogrulamak icin.
+sudo sh -c 'for i in $(seq 1 20); do cat /tmp/ax-rot-hedef.txt >/dev/null 2>&1; done' 2>/dev/null
+sleep 2
+
+ROT_NOW="$(sudo ls "$ROT_DIR" 2>/dev/null | grep -c "audit-$ROT_DAY\.1\.jsonl")"
+ROT_SEGN="$(sudo ls "$ROT_DIR" 2>/dev/null | grep -c 'audit-[0-9-]*\.[0-9]*\.jsonl')"
+
+if [ "${ROT_SEED_SZ:-0}" -ge 10485760 ] && [ "${ROT_NOW:-0}" -ge 1 ]; then
+    ok "rotasyon: 10 MB sinirinda dosya yazilca numarali segment OLUSTU"
+    ok "rotasyon segment sayisi: $ROT_SEGN"
+elif [ "${ROT_SEED_SZ:-0}" -lt 10485760 ]; then
+    skip "rotasyon testi: tohum dosyasi olusturulamadi"
 else
-    ok "audit dizini bos"
+    no "rotasyon TETIKLENMEDI: 10 MB dosya yazildi ama numarali segment yok"
+    no "  rotasyon yeniden calismiyor (10 MB siniri gecersiz)"
 fi
-if [ "${SEGN:-0}" -ge 1 ]; then
-    ok "audit segmentleri uretildi (numarali dosya: $SEGN)"
+
+# Politika DURUMUNU GERI AL
+if [ -s "$ROT_SAVED" ]; then
+    apply_policy "$ROT_SAVED" || true
 else
-    ok "audit segmenti yok (10 MB siniri henuz dolmadi; Go testleri dogruluyor)"
+    cp /dev/null "$POLICY_PATH" 2>/dev/null || :
+    axctl reload --mode enforcing >/dev/null 2>&1 || :
 fi
+rm -f "$ROT_SAVED" /tmp/ax-rotation.yaml 2>/dev/null
+sudo rm -f /tmp/ax-rot-hedef.txt 2>/dev/null
+
+sudo systemctl stop axlog 2>/dev/null
+sudo rm -f "$ROT_DIR"/audit-* 2>/dev/null
+sudo systemctl start axlog 2>/dev/null
+sleep 1
 
 # --- COK KULLANICILI SENARYO ---
 #
