@@ -33,6 +33,9 @@ BuildRequires:  clang
 BuildRequires:  llvm
 BuildRequires:  bpftool
 BuildRequires:  make
+# rpm-sign: rpmsign komutunu icerir. Fedora 44'te ayri paket;
+# imzalama yapilacaksa kurulu olmali.
+BuildRequires:  rpm-sign
 BuildRequires:  python3-devel
 BuildRequires:  python3-setuptools
 BuildRequires:  selinux-policy-devel

@@ -227,6 +227,81 @@ test-integration:
 # --- RPM (Fedora / RHEL / openSUSE) ---
 SELINUX_DIR = packaging/fedora
 
+# --- RPM IMZASI ---
+#
+# Gercek bir depoda dagitilan her paket imzali olmak ZORUNDADIR.
+# Imzasiz paket dnf tarafindan uyarilir ve Fedora'nin sertlastirilmis
+# politikasinda kurulum reddedilir.
+#
+# Anahtar repoda TUTULMAZ. Anahtar uretimi ve kullaniciya aktarimi
+# gelistiricinin sorumlulugundadir; depo gizli anahtari private
+# tutar ve sadece AYRI bir public key yayinlar.
+#
+#   make rpm-gpg-key    -> anahtari uretir (gpg --gen-key)
+#   make rpm            -> anahtar varsa otomatik imzalar
+#   make rpm-sign GPGKEY=... -> belirtilen anahtarla imzalar
+#
+# Anahtar YOKSA rpmbuild SESSIZCE imzasiz uretir ve ekrana bir
+# uyari basar; hata vermez. Boylece gelistirici anahtari olmadan da
+# paket uretebilir (imzasiz paket yalnizca test icin gecerlidir).
+GPGKEY ?= $(HOME)/.gnupg/axlinux-signing-key
+GPG_NAME := AXlinux Packaging
+GPG_EMAIL := packaging@axlinux.invalid
+
+# Anahtar gercekten var mi? (sadece public yeterli imzalamaya)
+GPG_AVAILABLE := $(shell gpg --list-secret-keys --keyid-format=long 2>/dev/null | grep -q . && echo yes || echo no)
+
+# _gpg_name bir ANAHTAR SECICI alir: e-posta, kullanici adi veya
+# parmak izi. Dosya YOLU degil.
+#
+# Ilk denemede _gpg_name $(GPGKEY) verilmisti; $(GPGKEY) bir yol
+# (/home/ax/.gnupg/axlinux-signing-key). rpmbuild bunu anahtar
+# olarak cozemedigi icin paket IMZASIZ uretildi:
+#   Header SHA256 digest: OK
+#   Payload SHA256 digest: OK
+#   (Signature satiri YOK)
+# rpm -Kv ciktisinda digest'ler gecerli ama imza satiri hic yok;
+# yani paket dogrulanmis DEGIL, sadece icerigi tutarli.
+ifeq ($(GPG_AVAILABLE),yes)
+RPMBUILD_GPG := --define "_gpg_name $(GPG_EMAIL)"
+else
+RPMBUILD_GPG :=
+endif
+
+# --- RPM imza anahtari ---
+#
+# GPG anahtari uretir. Idempotent DEGILDIR: anahtar zaten varsa
+# dokunulmaz (yeniden uretmek eski imzalari koparirdi).
+.PHONY: rpm-gpg-key rpm-sign rpm-verify-sign rpm-export-key rpm
+
+rpm-gpg-key:
+	@echo "== RPM imza anahtari =="
+	@if gpg --list-secret-keys --keyid-format=long 2>/dev/null | grep -q .; then \
+	    echo "  Secret anahtar zaten var, dokunulmuyor."; \
+	else \
+	    mkdir -p "$(dir $(GPGKEY))"; \
+	    gpg --batch --yes --pinentry-mode loopback --passphrase "" \
+	        --quick-generate-key "$(GPG_NAME) <$(GPG_EMAIL)>" rsa4096 sign never; \
+	    echo "  Anahtar uretildi."; \
+	fi
+	@echo "  PUBLIC anahtari disari aktar (depo icin): make rpm-export-key"
+
+rpm-export-key:
+	@mkdir -p dist
+	@gpg --armor --export "$(GPG_EMAIL)" > dist/axlinux-signing-key.asc
+	@echo "  dist/axlinux-signing-key.asc uretildi"
+	@echo "  Kullanicilar: rpm --import dist/axlinux-signing-key.asc"
+
+# Uretilen RPM'i imzala
+rpm-sign:
+	@test -n "$(RPMFILE)" || { echo "HATA: RPMFILE=<yol> verin"; exit 1; }
+	@rpmsign --addsign "$(RPMFILE)" --define "_gpg_name $(GPG_EMAIL)"
+	@echo "  imzalandi: $(RPMFILE)"
+
+rpm-verify-sign:
+	@test -n "$(RPMFILE)" || { echo "HATA: RPMFILE=<yol> verin"; exit 1; }
+	@rpm -Kv "$(RPMFILE)"
+
 rpm: all
 	@echo "== RPM: SELinux modulu =="
 	@$(MAKE) -C $(SELINUX_DIR) 2>/dev/null \
@@ -244,6 +319,7 @@ rpm: all
 	@rpmbuild --define "_topdir $(CURDIR)/.rpmbuild" \
 	    --define "_sourcedir $(CURDIR)/.rpmbuild/SOURCES" \
 	    --define "_build_id_links none" \
+	    $(RPMBUILD_GPG) \
 	    -bb $(SELINUX_DIR)/axlinux.spec 2>&1 | tail -20
 	@RPM=$$(ls -t $(CURDIR)/.rpmbuild/RPMS/*/axlinux-*.rpm 2>/dev/null | head -1); \
 	 if [ -z "$$RPM" ]; then echo "HATA: RPM uretilemedi"; exit 1; fi; \
