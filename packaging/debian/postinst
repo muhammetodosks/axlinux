@@ -49,6 +49,26 @@ fi
 
 # Surum bilgisini yaz: hangi surumun kuruldugunu belgelemek icin
 # (paket yoneticisi de yazar, ama kaynak kurulumda olmayabilir)
-echo "1.0.0" > /var/lib/axlinux/version 2>/dev/null || true
+#
+# IKI HATA BURADA:
+#  1) "1.0.0" SABIT yaziliyordu; paket 1.2.0 iken dosyaya 1.0.0
+#     yaziliyordu. Surum bilgisi olan tek dosya yanlis surumu
+#     gosteriyordu - hata ayiklamada yanlis yere goturuyordu.
+#     Simdi paket yoneticisinin $1 parametresinden okunur.
+#  2) /var/lib/axlinux dizini YAZILMADAN once surum yaziliyordu.
+#     systemd-tmpfiles kurulu degilse dizin hiç olusmuyor ve
+#     "Directory nonexistent" hatasi veriyordu (Debian 12
+#     konteynerinde gozlemlendi).
+install -d -m 0755 /var/lib/axlinux
+# dpkg postinst imzasi:  postinst configure <onceki-surum>
+# $1 "configure"dir, $2 onceki surumdur ve ILK KURULUMDA BOStur.
+# Bu yuzden $1/$2 den surum almak calismiyordu (dosyaya
+# "bilinmiyor" yazildi). Guvenilir kaynak dpkg'nin kendi
+# veritabanidir.
+PKG_VER="$(dpkg-query -W -f='${Version}' axlinux 2>/dev/null || true)"
+if [ -z "$PKG_VER" ]; then
+    PKG_VER="${2:-bilinmiyor}"
+fi
+echo "$PKG_VER" > /var/lib/axlinux/version 2>/dev/null || true
 
 exit 0

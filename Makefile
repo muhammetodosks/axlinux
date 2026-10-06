@@ -372,6 +372,34 @@ package: all
 	@# Ornek politikalar
 	@install -d $(STAGE)/etc/axlinux
 	@for f in examples/*.yaml; do install -m 0644 $$f $(STAGE)/etc/axlinux/; done
+	# SISTEM GENELI POLITIKA DIZINI
+	#
+	# RPM yolu bu dizini spec'te kuruyor; .deb yolu KURMUYORDU.
+	# Sonuc: dpkg ile kurulan Debian/Ubuntu sisteminde politika
+	# reboot sonrasi kayboluyor ve kalici politika yazilamiyordu
+	# (install.sh yolunda da ayni eksik vardi, dort kurulum yolundan
+	# ucu birbirinden farkli sistem kuruyordu).
+	@install -d -m 0750 $(STAGE)/etc/axlinux/policies.d
+	@install -m 0644 packaging/fedora/axlinux-sample-workstation.yaml \
+	    $(STAGE)/etc/axlinux/policies.d/00-sample-workstation.yaml
+
+	# CONFFILES: politika dosyalari KULLANICI VERISIDIR.
+	#
+	# dpkg -r ile kaldirildiginda bu dosyalarin SILINMEMESI gerekir.
+	# Gozlemlenen hata: "dpkg -r axlinux" sonrasi
+	# /etc/axlinux/policies.d/00-sample-workstation.yaml kayboldu.
+	# dpkg, conffiles olarak isaretlenmeyen /etc dosyalarini kaldirmada
+	# SILER; RPM tarafi ayni durumda "%config(noreplace)" ile
+	# KORUYOR. Iki paket yolu ayni davranmiyordu.
+	@# conffiles listesini kurulumdan SONRA uret: dosya yollari
+	@# $(STAGE) icinde o an mevcut olmali.
+	@{ \
+	  echo "/etc/axlinux/desktop.yaml"; \
+	  echo "/etc/axlinux/minimal.yaml"; \
+	  echo "/etc/axlinux/web-server.yaml"; \
+	  echo "/etc/axlinux/policies.d/00-sample-workstation.yaml"; \
+	} > $(STAGE)/DEBIAN/conffiles
+	@chmod 0644 $(STAGE)/DEBIAN/conffiles
 	@# Belgeler
 	@install -d $(STAGE)/usr/share/doc/$(PKGNAME)
 	@install -m 0644 DAGITIM.md README.md CHANGELOG.md \
