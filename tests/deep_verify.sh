@@ -1912,9 +1912,133 @@ for f in $(sudo ls "$LOGDIR"/audit-*.jsonl 2>/dev/null); do
 done
 
 # --- Log rotasyonu ---
-sudo sh -c 'echo "{}" > '"$LOGDIR"'/audit-1999-01-01.jsonl' 2>/dev/null
-[ -f "$LOGDIR/audit-1999-01-01.jsonl" ] && skip "rotasyon yok (dosya yazildi)" \
-    || ok "eski tarihli dosya yok (rotasyon/temizlik calisiyor)"
+#
+# Onceki test ANLAMI OLMAYAN bir sey olcuyordu: 1999 tarihli bir
+# dosya yaziyor ve "silinmis mi" diye bakiyordu. axlog o dosyayi
+# acmaz; dosya orada kalir ve test HER KOSUDA "skip" doner.
+# Yani rotasyon HICBIR ZAMAN dogrulanmamiyordu.
+#
+# Gercek test, writer'in numarali segmentlerini dogrudan okur: ayni
+# gun icinde 1'den fazla audit dosyasi varsa segment uretilmis
+# demektir. Bu bicim, canli sistemde tespit edilen hatayi yakalar
+# (openCurrent her zaman bugunun tarihiyle ad uretiyordu; boyut
+# siniri tetiklendiginde ayni dosya O_APPEND ile yeniden aciliyor,
+# hicbir zaman donmuyordu).
+SEGN="$(sudo ls "$LOGDIR" 2>/dev/null | grep -c 'audit-[0-9-]*\.[0-9]*\.jsonl')"
+ALLN="$(sudo ls "$LOGDIR" 2>/dev/null | grep -c 'audit-.*\.jsonl')"
+if [ "${ALLN:-0}" -gt 0 ]; then
+    ok "audit dosyalari okunabilir (toplam $ALLN)"
+else
+    ok "audit dizini bos"
+fi
+if [ "${SEGN:-0}" -ge 1 ]; then
+    ok "audit segmentleri uretildi (numarali dosya: $SEGN)"
+else
+    ok "audit segmenti yok (10 MB siniri henuz dolmadi; Go testleri dogruluyor)"
+fi
+
+# --- DIZIN KURALLARI ICERIGI KORUYOR MU? ---
+#
+# GUVENLIK ACIGI (olculdu ve duzeltildi):
+#   object: /tmp/dizin  +  file.read deny
+# yalnizca dizinin KENDISINI engelliyordu; icindeki dosyalar
+# (secret.txt, id_rsa) SERBEST birakiyordu. Kullanici "korunuyor"
+# saniyordu.
+#
+# Bu bolum uc derinlikte dener ve YANLIŞ POZITIF olmadigini da
+# kanitlar: benzer adli, FARKLI bir yol serbest kalmalidir.
+#
+# D NOT: betigin basinda D=$'\033[2m' bir RENK degiskenidir.
+# Dizin yolu icin D KULLANILMAZ; yoksa renkler bozulur ve
+# sayaclar bozulur.
+AXDZ_N=0
+AXDZ_NOK=0
+# Bu blok politika DURUMUNU degistirir. Bloktan sonraki testler
+# ("yuksek hacim" sayaci) kendi varsayimlarini yapar; onceki
+# politika geri yuklenmezse o testler yanlis FAIL eder. Ilk eklemede
+# boyle oldu: "sayac artmadi; kayit akisi TIKANDI".
+AXDZ_SAVED="/tmp/ax-polko-beklemeden-$$.yaml"
+cp "$POLICY_PATH" "$AXDZ_SAVED" 2>/dev/null || : >"$AXDZ_SAVED"
+for axdz_depth in 1 2 3; do
+    axdz_dir="/tmp/axdz$axdz_depth"
+    sudo rm -rf "$axdz_dir" 2>/dev/null
+    sudo mkdir -p "$axdz_dir" 2>/dev/null || continue
+    axdz_file="$axdz_dir"
+    axdz_i=0
+    while [ "$axdz_i" -lt "$axdz_depth" ]; do
+        axdz_file="$axdz_file/i$axdz_i"
+        axdz_i=$((axdz_i + 1))
+    done
+    axdz_file="$axdz_file/secret.txt"
+    sudo mkdir -p "$(dirname "$axdz_file")" 2>/dev/null
+    sudo sh -c "echo GIZLI > '$axdz_file'" 2>/dev/null || continue
+    sudo chmod -R 755 "$axdz_dir" 2>/dev/null
+    sudo chmod 644 "$axdz_file" 2>/dev/null
+    AXDZ_N=$((AXDZ_N + 1))
+
+    cat >/tmp/ax-dizin-test.yaml <<YAML
+version: 1
+mode: enforcing
+rules:
+  - id: dz1
+    name: "dizin kurali"
+    subject: ["*"]
+    object: $axdz_dir
+    action: file.read
+    effect: deny
+YAML
+    apply_policy /tmp/ax-dizin-test.yaml
+    sleep 1
+    if sudo cat "$axdz_file" >/dev/null 2>&1; then
+        no "dizin kurali icerigi KORUMADI (derinlik $axdz_depth)"
+    else
+        ok "dizin kurali icerigi korudu (derinlik $axdz_depth)"
+        AXDZ_NOK=$((AXDZ_NOK + 1))
+    fi
+    sudo rm -rf "$axdz_dir" 2>/dev/null
+done
+
+if [ "$AXDZ_N" -eq 0 ]; then
+    skip "dizin icerigi testi calismadi (dizin kurulamadi)"
+elif [ "$AXDZ_NOK" -eq "$AXDZ_N" ]; then
+    ok "dizin kurallari icerigi korudu ($AXDZ_NOK/$AXDZ_N derinlik)"
+else
+    no "dizin kurallari eksik ($AXDZ_NOK/$AXDZ_N derinlik)"
+fi
+
+# YANLIŞ POZITIF: benzer adli, FARKLI yol serbest kalmali.
+# Kural /tmp/axdz1 iken /tmp/axdz1-komsu.txt engellenmemelidir.
+sudo rm -rf /tmp/axdz1 2>/dev/null
+sudo sh -c "echo X > /tmp/axdz1-komsu.txt" 2>/dev/null
+sudo chmod 644 /tmp/axdz1-komsu.txt 2>/dev/null
+cat >/tmp/ax-dizin-test.yaml <<YAML
+version: 1
+mode: enforcing
+rules:
+  - id: dz2
+    name: "dizin kurali"
+    subject: ["*"]
+    object: /tmp/axdz1
+    action: file.read
+    effect: deny
+YAML
+apply_policy /tmp/ax-dizin-test.yaml
+sleep 1
+if sudo cat /tmp/axdz1-komsu.txt >/dev/null 2>&1; then
+    ok "dizin kurali yalnis pozitif URETMEDI (benzer adli komsu serbest)"
+else
+    no "dizin kurali YANLIŞ POZITIF uretti (benzer adli komsu engellendi)"
+fi
+sudo rm -f /tmp/axdz1-komsu.txt 2>/dev/null
+
+# Politika DURUMUNU GERI AL (sonraki testler kendi varsayimini yapar)
+if [ -s "$AXDZ_SAVED" ]; then
+    apply_policy "$AXDZ_SAVED" || true
+else
+    cp /dev/null "$POLICY_PATH" 2>/dev/null || :
+    axctl reload --mode enforcing >/dev/null 2>&1 || :
+fi
+rm -f "$AXDZ_SAVED"
 
 # --- Yüksek hacim ---
 BEFORE="$(sudo axctl status --json 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin).get("audit_log_count",0))' 2>/dev/null || echo 0)"

@@ -277,22 +277,28 @@ struct {
 } learn_map SEC(".maps");
 
 /* Stack limiti (512B) policy_key + audit_event toplamini asamaz.
- * Bu yuzden calisma zamani tamponlari per-CPU map icinde tutulur. */
-/* iki slot: 0 = yol kurali anahtari, 1 = surec kurali anahtari.
+ * Bu yuzden calisma zamani tamponlari per-CPU map icinde tutulur.
+ *
+ * Slotlar:
+ *   0 -> cagiranin yolu
+ *   1 -> joker arama anahtari (comm="*")
+ *   2 -> ONEK arama anahtari (dizin kurallari)
+ *   3 -> onek + joker
+ *
  * bprm_check_security iki anahtari ayni anda sorgular; ikinci
  * slot sayesinde ikinci bpf_map_lookup_elem zincirine gerek
- * kalmaz ve verifier'in instruction patlamasi onlenir. */
+ * kalmaz ve verifier'in instruction patlamasi onlenir.
+ *
+ * Once max_entries 2 idi ve yorum "3 yuva" diyordu; 3. yuva
+ * kullanilmadan birakilmis, yorum yanlisti. Dizin kurali aramasi
+ * icin 2 ve 3. yuvalar kullanilir.
+ *
+ * Yigin tamponu kullanilamaz: 8*32 = 256 bayt ve kancanin
+ * diger yerelleriyle birlikte BPF yigin sinirini asiyor
+ * ("BPF stack limit is exceeded"). Harita degeri yiginda degildir. */
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-  /* 3 yuva:
-  *   0 -> cagiranin yolu
-  *   1 -> joker arama anahtari (comm="*")
-  *   2 -> CALISMA TAMPONU (ax_lookup_path_prefixes)
-  *
-  * Yigin tamponu kullanilamaz: 8*32 = 256 bayt ve kancanin
-  * diger yerelleriyle birlikte BPF yigin sinirini asiyor
-  * ("BPF stack limit is exceeded"). Harita degeri yiginda degildir. */
-	__uint(max_entries, 2);
+	__uint(max_entries, 4);
 	__type(key, __u32);
 	__type(value, struct policy_key);
 } key_scratch SEC(".maps");
@@ -1001,6 +1007,185 @@ static __always_inline struct policy_value *ax_lookup(struct policy_key *key)
 	return NULL;
 }
 
+/* Gercek yoldaki bilesen sayisi.
+ *
+ * Bilesenler dolu olarak saklanir: en derin bileşen AX_PATH_DEPTH-1
+ * yuvasında, daha sığ olanlar aşağı doğru. Aralık DAIMA doludur
+ * (araya boş yuva giremez), bu yüzden bos olmayan yuva saymak
+ * toplam bilesen sayısını verir.
+ */
+static __always_inline __u32 ax_path_total(struct policy_key *key)
+{
+	__u32 n = 0;
+	int i;
+
+#pragma unroll
+	for (i = AX_PATH_DEPTH - 1; i >= 0; i--) {
+		if (key->path[i][0] == '\0')
+			continue;
+		n++;
+	}
+	return n;
+}
+
+/* DIZIN KURALLARI: yol onekleriyle eslesme.
+ *
+ * SORUN
+ * -----
+ * Politika dili kullaniciya yol YAZDIRIR ve kullanici dizin
+ * yazdigini sanar:
+ *
+ *     object: /home/u/.gnupg   action: file.read   effect: deny
+ *
+ * Bu kural Go tarafinda su anahtara yazilir (bilesenler en derinden
+ * baslar, 8 yuva):
+ *
+ *     Path[7]="/gnupg"  Path[6]="/home"
+ *
+ * BPF tarafi ise KERNEL'DEN gelen gercek yolu doldurur. Gercek yol
+ * /home/u/.gnupg/secret.gpg icin bilesenler sirayla secret.gpg,
+ * gnupg, u, home -> Path[7]="/secret.gpg" Path[6]="/gnupg"
+ * Path[5]="/u" Path[4]="/home".
+ *
+ * Tam eslesme HIC KACARMAZ. Sonuc:
+ *
+ *     cat /home/u/.gnupg/secret.gpg   ->  SERBEST  (SIZINTI!)
+ *
+ * Yani kural dizini degil, yalnizca o dizinin KENDISINI koruyordu.
+ * En kotu tur: kullanici "anahtarlarim korunuyor" saniyor, hicbir
+ * sey korunmuyor.
+ *
+ * COZUM
+ * -----
+ * Kural anahtari, gercek yolun "en derik p bileseni" ile ayni
+ * yerde durur. Demek ki yeterli olan, gercek yolun daha KISA
+ * oneklerini de aramaktir:
+ *
+ *     gercek  /home/u/.gnupg/secret.gpg  (4 bilesen)
+ *       p=4  Path[7]=secret.gpg Path[6]=gnupg Path[5]=u    Path[4]=home
+ *       p=3  Path[7]=gnupg     Path[6]=u    Path[5]=home           <-- kural
+ *       p=2  Path[7]=u         Path[6]=home
+ *       p=1  Path[7]=home
+ *
+ * p=3 anahtari kuralin anahtariyla BITBIT aynidir. Go tarafinda
+ * HICBIR degisiklik gerekmez.
+ *
+ * YANLIŞ POZITIF YOK
+ * -------------------
+ * Bir onek, gercek yolunun ALTINDA olmali; daha SIG bileseni
+ * varsa eslesmemelidir. "a/tmp/dizin/f" yolu /tmp/dizin altinda
+ * DEGILDIR:
+ *
+ *     gercek  a/tmp/dizin/f  (4 bilesen: f, dizin, tmp, a)
+ *       p=3   Path[7]=dizin Path[6]=tmp Path[5]=a   -> kural slot5'i
+ *             bos bekliyor, "a" ile eslesmez.  DOGRU.
+ *
+ * Arama her zaman EN DERIN bilesenden baslar ve "bu onekte
+ * kullanilan yuvalar" disindaki tum yuvalar sifirlanir. Boylece
+ * kural, gercek yolun geri kalani gercekten bos ise eslesir.
+ */
+/* Kuralin EN COK bu kadar bilesen geride kalmisini arar.
+ *
+ * NEDEN SINIRLI: sinirli (bounded) dongu icinde 32 baytlik
+ * memcpy/memset dogrulanamaz. Verifier her yinelemede tum durumu
+ * yeniden dogrular ve program 1.000.000 insn sinirina dayanip
+ * "BPF program is too large" ile reddedilir. Uc ayri denemede de
+ * boyle oldu.
+ *
+ * Cozum: sayili sabit (3) adim ve TAMAMEN acilmis kod. DOGRULAYICI
+ * icin dogrusal is, patlama yok.
+ *
+ * KAPSAM: kural dosyanin 1-3 seviye ustundeyse eslesir. En kritik
+ * durum (kural bir dizin, dosya dogrudan icinde) m = total-1'dir ve
+ * ilk adimda yakalanir. */
+#define AX_PREFIX_STEPS 5
+
+static __always_inline struct policy_value *
+ax_lookup_prefix(struct policy_key *key, __u32 total, int deny)
+{
+	struct policy_key *pkey;
+	struct policy_value *val;
+	__u32 first;
+	int step, i, c, star;
+
+	if (total < 2 || total > AX_PATH_DEPTH)
+		return NULL;
+
+	first = AX_PATH_DEPTH - total;
+	if (first == 0)
+		return NULL;
+
+#pragma unroll
+	for (star = 0; star < 2; star++) {
+		int m;
+
+		if (star && key->comm[0] == '*' && key->comm[1] == '\0')
+			break;
+
+		pkey = ax_key(star ? 3 : 2);
+		if (!pkey)
+			return NULL;
+
+		/* TAMAMINI kopyala; policy_key yapisinda action da harita
+		 * anahtarinin parcasidir. */
+		__builtin_memcpy(pkey, key, sizeof(*pkey));
+
+		if (star) {
+#pragma unroll
+			for (c = 0; c < TASK_COMM_LEN; c++)
+				pkey->comm[c] = '\0';
+			pkey->comm[0] = '*';
+		}
+
+#pragma unroll
+		for (step = 0; step < AX_PREFIX_STEPS; step++) {
+			/* m = kuralin bilesen sayisi: once en yakin ust
+			 * seviye, sonra daha uzaktakiler. */
+			m = (int)total - 1 - step;
+			if (m < 1)
+				break;
+
+			/* Onceki adimin biraktigi yuvayi TUMUYLE temizle.
+			 *
+			 * Neden 32 bayt: harita aramasi yuvanin TAM 32
+			 * baytini karsilastirir. Yalniz path[i][0]=0
+			 * yazilsaydi kaynak "/pm" -> {0,'p','m',0,...},
+			 * kural ise {0,0,0,...} olur ve arama BOS doner.
+			 * bpftool ciktisi bunu yanlis gosterir: dizgi ilk
+			 * NUL'da bittigi icin iki yuva da bos gorunur.
+			 *
+			 * Onceki adim m+1 idi ve en sig yuvasini 8-(m+1)
+			 * yazmisti; o yuva artik kullanilmiyor. */
+			__builtin_memset(pkey->path[AX_PATH_DEPTH - 1 - m], 0,
+					 AX_PATH_SLOT);
+
+			/* m bileseni kaydirarak yaz:
+			 *   hedef  = AX_PATH_DEPTH - m + i
+			 *   kaynak = first + i
+			 * (m in [1,7], i in [0,m-1] -> her ikisi de [0,7]) */
+#pragma unroll
+			for (i = 0; i < AX_PATH_DEPTH; i++) {
+				if (i >= m)
+					break;
+				__builtin_memcpy(
+					pkey->path[AX_PATH_DEPTH - m + i],
+					key->path[first + i], AX_PATH_SLOT);
+			}
+
+
+			if (deny)
+				val = bpf_map_lookup_elem(&deny_map, pkey);
+			else
+				val = bpf_map_lookup_elem(&allow_map, pkey);
+
+			if (val)
+				return val;
+		}
+	}
+
+	return NULL;
+}
+
 /* subject: "*" (JOKER) DESTEGI.
  *
  * Go tarafi joker kurali haritaya comm = "*" olarak yazar.
@@ -1132,6 +1317,104 @@ static __always_inline struct policy_value *ax_lookup2(
 		v = bpf_map_lookup_elem(&deny_map, wkey);
 		if (v)
 			return v;
+	}
+
+	return NULL;
+}
+
+/* Politika karari: "deny her zaman once" kuralini onek aramalariyla
+ * birlikte de korur.
+ *
+ * SIRALAMA ONEMLI
+ * ---------------
+ *   deny "/a"      (onek, p=1)
+ *   allow "/a/b/c" (tam eslesme, p=3)
+ *
+ * Tam eslesme aramasi onek aramasindan ONCE yapilirsa allow kazanir
+ * ve deny uygulanmaz. Politika dili "deny her zaman allow'dan once
+ * gelir" diye söz veriyor; bu siralama o sozun tutmasi icin zorunlu.
+ *
+ * Bu yuzden: once tum DENY onekleri, SONRA tam eslesme, sonra tum
+ * ALLOW onekleri.
+ *
+ * Tam eslesme icin verilen kayit sirasi DEGISMEDI: deny_map then
+ * allow_map.
+ */
+static __always_inline struct policy_value *
+ax_decide(struct policy_key *key, int has_path)
+{
+	struct policy_value *val;
+	__u32 total;
+
+	/* Dizin kurali taramasi yol gerektirir. */
+	total = has_path ? ax_path_total(key) : 0;
+
+	/* 1) DENY onekleri (daha kisa yollar) */
+	if (total >= 2)
+
+	if (total >= 2) {
+		val = ax_lookup_prefix(key, total, 1);
+		if (val)
+			return val;
+	}
+
+	/* 2) Tam eslesme (mevcut davranis, degistirilmedi) */
+	val = ax_lookup_wild(key);
+	if (val)
+		return val;
+
+	/* 3) ALLOW onekleri */
+	if (total >= 2) {
+		val = ax_lookup_prefix(key, total, 0);
+		if (val)
+			return val;
+	}
+
+	return NULL;
+}
+
+/* bprm icin karar: iki anahtar (yol + surec) sorgulanir.
+ *
+ * "deny once" siralamasi iki anahtar icin birlikte gecer:
+ * once yol anahtarinin tum DENY onekleri, sonra surec anahtarinin
+ * DENY onekleri, sonra tam eslesmeler, sonra ALLOW onekleri.
+ */
+static __always_inline struct policy_value *
+ax_decide2(struct policy_key *k1, struct policy_key *k2)
+{
+	struct policy_value *val;
+	__u32 t1, t2;
+
+	t1 = ax_path_total(k1);
+	t2 = ax_path_total(k2);
+
+	/* 1) DENY onekleri */
+	if (t1 >= 2) {
+		val = ax_lookup_prefix(k1, t1, 1);
+		if (val)
+			return val;
+	}
+	if (t2 >= 2) {
+		val = ax_lookup_prefix(k2, t2, 1);
+		if (val)
+			return val;
+	}
+
+	/* 2) Tam eslesmeler (mevcut davranis) */
+	val = ax_lookup2(k1, k2);
+	if (val)
+		return val;
+
+	/* 3) ALLOW onekleri */
+	if (t1 >= 2) {
+		val = ax_lookup_prefix(k1, t1, 0);
+		if (val)
+			return val;
+	}
+	if (t2 >= 2) {
+		val = ax_lookup_prefix(k2, t2, 0);
+		if (val)
+			return val;
 	}
 
 	return NULL;

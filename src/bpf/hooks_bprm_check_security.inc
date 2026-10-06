@@ -157,8 +157,8 @@ int BPF_PROG(ax_bprm_check, struct linux_binprm *bprm, int ret)
 	event->effect = EFFECT_DENY;
 	event->hook_type = HOOK_BPRM_CHECK_SECURITY;
 
-	val = ax_lookup2(pkey, skey);
-	if (!val || val->effect != EFFECT_DENY) {
+		val = ax_lookup2(pkey, skey);
+		if (!val || val->effect != EFFECT_DENY) {
 		if (ax_learning()) {
 			event->effect = EFFECT_ALLOW;
 			event->rule_id = 0;

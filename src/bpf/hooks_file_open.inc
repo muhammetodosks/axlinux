@@ -101,8 +101,11 @@ int BPF_PROG(ax_file_open, struct file *file, int ret)
 	event->effect = EFFECT_DENY;
 	event->hook_type = HOOK_FILE_OPEN;
 
-	val = ax_lookup_wild(key);
-	if (!val || val->effect != EFFECT_DENY) {
+		/* ax_decide: tam eslesme + dizin (onek) kurallari.
+		 * Deny onekleri once taranir; "deny her zaman once"
+		 * sozunu onekler icin de tutar. */
+		val = ax_decide(key, 1);
+		if (!val || val->effect != EFFECT_DENY) {
 	/* Ogrenme gozlemi.
 	 *
 	 * Buraya kadar yalnizca DENY kurali eslesen operasyonlar

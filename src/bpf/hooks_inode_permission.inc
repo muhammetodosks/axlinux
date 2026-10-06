@@ -52,7 +52,9 @@ int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 	if (ax_protected(key->comm))
 		return 0;
 
-	val = ax_lookup_wild(key);
+	/* Bu kanca yol cozumlemez (ax_clear_path yukarida cagrildi),
+	 * bu yuzden dizin/onek kurali aranmaz: has_path = 0. */
+	val = ax_decide(key, 0);
 	int denied = val && val->effect == EFFECT_DENY;
 
 	event->pid = cur_pid;
