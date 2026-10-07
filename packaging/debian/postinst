@@ -15,7 +15,12 @@ fi
 
 # TMPFILES: /run/axlinux iki servis tarafindan paylasilir ve
 # hicbir servis onu sahiplenmez (bkz. axlinux-tmpfiles.conf).
-systemd-tmpfiles --create /usr/lib/tmpfiles.d/axlinux.conf || true
+# systemd-tmpfiles minimal konteynerde olmayabilir; komut
+# `|| true` ile yutuluyor ama kabuk "not found" YAZIYOR ve
+# kurulum ciktisini kirletiyor. ONCE var mi diye bak.
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/axlinux.conf || true
+fi
 
 if [ -d /run/systemd/system ]; then
     systemctl daemon-reload || true

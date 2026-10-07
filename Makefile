@@ -418,6 +418,13 @@ package: all
 	    $(STAGE)/lib/systemd/system/axlog.service
 	@install -m 0644 packaging/axlinux-tmpfiles.conf \
 	    $(STAGE)/usr/lib/tmpfiles.d/axlinux.conf
+	@# journald ust siniri. RPM tarafi packaging/journald altinda
+	@# drop-in olarak kuruyor; .deb tarafinda HIC KURULUMUYORDU,
+	@# yani Debian/Ubuntu sistemlerinde /var/log/journal sinirsiz
+	@# kaliyordu. Ayni dosya, ayni sinirlar.
+	@install -d $(STAGE)/etc/systemd/journald.conf.d
+	@install -m 0644 packaging/journald/10-axlinux.conf \
+	    $(STAGE)/etc/systemd/journald.conf.d/10-axlinux.conf
 	@# Ornek politikalar
 	@install -d $(STAGE)/etc/axlinux
 	@for f in examples/*.yaml; do install -m 0644 $$f $(STAGE)/etc/axlinux/; done
@@ -447,6 +454,7 @@ package: all
 	  echo "/etc/axlinux/minimal.yaml"; \
 	  echo "/etc/axlinux/web-server.yaml"; \
 	  echo "/etc/axlinux/policies.d/00-sample-workstation.yaml"; \
+	  echo "/etc/systemd/journald.conf.d/10-axlinux.conf"; \
 	} > $(STAGE)/DEBIAN/conffiles
 	@chmod 0644 $(STAGE)/DEBIAN/conffiles
 	@# Belgeler
