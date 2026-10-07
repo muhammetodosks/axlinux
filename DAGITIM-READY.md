@@ -2,7 +2,8 @@
 
 **Tarih:** 7 Ekim 2026
 **Sürüm:** `axlinux-1.2.0-1.fc44.x86_64`
-**Durum:** ✅ Dağıtıma hazır — 9 maddenin tamamı gerçek düzeltme + ölçülmüş kanıtla kapatıldı
+**Durum:** ✅ Dağıtıma hazır — 9 maddenin tamamı gerçek düzeltme + ölçülmüş kanıtla kapatıldı;
+**kurulum ve kaldırma yollarının üçü de** (RPM, `install.sh`, `.deb`) uçtan uca doğrulandı
 **Doğrulama ortamı:** `/mnt/anka` altındaki Fedora 44 Workstation VM
 **Kısıt:** Ana makinede (`/dev/sdb1`) AXlinux **çalıştırılmadı**. Tüm enforcement testleri VM'de yapıldı.
 
@@ -31,6 +32,15 @@ Bu rapor okunduğunda üç şey net olmalı: **ne ölçüldü**, **ne düzeltild
 | 7 | Audit kaydında boş yol | ✅ | `BOS YOL YOK (0/4)` |
 | 8 | Sürüm yükseltme yolu | ✅ | 1.1.0 → 1.2.0 `dnf upgrade`, veri korundu |
 | 9 | Çok kullanıcılı senaryo | ✅ | `kullanıcı A kendi gizli anahtarını okuyamıyor` |
+
+Ek olarak — **dağıtım yollarının kaldırma tarafı** üç yolda da doğrulandı ve
+orada üç gerçek hata bulundu (§7):
+
+| Yol | Kurulum | Kaldırma |
+|-----|---------|----------|
+| RPM | ✅ | ✅ sıfır SELinux/paket artığı (2 döngü) |
+| `install.sh` | ✅ | ✅ `--uninstall` eklendi, sıfır artık |
+| `.deb` | ✅ | ✅ conffiles korunuyor |
 
 ---
 
@@ -218,6 +228,9 @@ Hepsisi kalıcı olarak düzeltildi ve kapıya bağlandı:
 | RPM kaldırmada 4 sessiz SELinux hatası | 8 fcontext + 1 modül artık kalıyordu | `semodule -r`, boşluk ayrımı, `-l -C`, `%preun` |
 | `.deb` journald kurmuyordu | Debian sistemlerinde sınır yoktu | Drop-in + conffiles |
 | `deep_verify` ayrıcalığa bağlıydı | Root dışı çalıştırınca "dosya yok" diyordu | `sudo ls` |
+| Kaldırmada `awk` **yola** bakıyordu | `/usr/bin/axdaemon` yolunda "axlinux" yok → 3 kayıt hiç silinmedi | Tüm satıra eşleştirildi |
+| `parse_args()` **hiç çağrılmıyordu** | `--unattended`/`--url`/`--no-lsm` sessizce yok sayılıyordu | `banner`'dan önce çağrıldı |
+| `install.sh`'te kaldırma yoktu | Betik kuruyordu, kaldırmıyordu | `--uninstall` eklendi |
 
 ---
 
@@ -242,6 +255,16 @@ axlog          :  3 paket, 0 hata
 python         : 179 passed + 20 subtests
 ```
 
+**Kaldırma (üç yol, §7):**
+```
+RPM  dnf install -> dnf remove : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4
+     (ardışık iki döngü, ikisi de temiz tabandan, ikisi de sıfır artık)
+SH   --unattended -> --uninstall: semodule=0 fcontext=0 tip=0 ikili=0/4
+     axdaemon=inactive axlog=inactive unit=0 journald=0  /etc/axlinux=KALICI
+DEB  dpkg -i      -> dpkg -r     : dpkg=rc ikili=0/4 journald=1 policies=1
+     (conffiles korundu — RPM ile aynı davranış)
+```
+
 **Kilitlenme koruması da doğrulandı:**
 ```
 ok  bash hâlâ çalışıyor (kilitlenme yok)
@@ -251,7 +274,7 @@ ok  enforcement'e donus: bpf 5/5
 ok  toparlanma sonrasi saglikli
 ```
 
-**Depo:** 57 commit, çalışma ağacı temiz.
+**Depo:** 61 commit, çalışma ağacı temiz.
 
 ---
 
@@ -271,6 +294,14 @@ sudo dnf install ./axlinux-1.2.0-1.fc44.x86_64.rpm
 sudo ./install.sh --unattended
 ```
 
+**Kaldırma:**
+```bash
+sudo dnf remove axlinux          # RPM ile kurulduysa
+sudo ./install.sh --uninstall    # install.sh ile kurulduysa
+sudo dpkg -r axlinux             # .deb ile kurulduysa (konfigurasyon korunur)
+sudo dpkg -P axlinux             # .deb + konfigurasyon da silinsin
+```
+
 **Kurulum (Debian/Ubuntu):**
 ```bash
 sudo dpkg -i ./axlinux_1.2.0_amd64.deb
@@ -286,7 +317,73 @@ sudo axctl status
 
 ---
 
-## 7. Bilinmesi gerekenler
+## 7. Kaldırma yolları — üçü de uçtan uca doğrulandı
+
+Daha önce bu bölümde "RPM kaldırma doğrulanmadı" notu vardı. Doğrulandı —
+ve kaldırma yolunda **gerçek hatalar** bulundu. Üçü de düzeltildi.
+
+### 7.1 Bulunan ve düzeltilen hatalar
+
+| # | Hata | Neden önemliydi | Düzeltme |
+|---|------|------------------|----------|
+| 1 | `awk '$1 ~ /axlinux/'` | **Eşleştirme yola bakıyordu.** `/usr/bin/axdaemon` yolunda "axlinux" **yoktur** — tip alanında vardır. 8 kayıttan 5'i yakalanıyor, 3'lü `/usr/bin/*` hiç listelenmiyordu | `awk '/axlinux/ { print $1 }'` (tüm satır) |
+| 2 | `parse_args()` **hiç çağrılmıyordu** | `--unattended`, `--url`, `--no-lsm`, `--uninstall` **sessizce yok sayılıyordu**. Kurulum yine çalışıyordu (root + boş stdin) ama istenen mod uygulanmıyordu; `--uninstall` **kurulumu** çalıştırıyordu | `banner`'dan önce `parse_args "$@"` |
+| 3 | `install.sh`'te **kaldırma yolu hiç yoktu** | Betik kuruyordu, kaldırmıyordu. SELinux modülü ve fcontext kayıtları sistemde kalıyordu | `install.sh --uninstall` eklendi |
+
+Hata 1'in ölçümü — işaretli alan yol, işaretsiz alan tip:
+
+```
+/usr/bin/axdaemon  all files  system_u:object_r:axlinux_daemon_exec_t:s0
+                 ^^^^^^^^                              ^^^^^^
+                 eşleşmez                             eşleşir
+```
+
+Hata 2'nin ölçümü: `parse_args` tanımı satır 97'de, **çağrısı hiçbir yerde yoktu**.
+
+### 7.2 RPM yolu — `dnf install` → `dnf remove`
+
+**Ardışık iki döngü, ikisi de temiz tabandan:**
+
+```
+===== DÖNGÜ 1 =====
+  TABAN    : semodule=0 fcontext=0 yerel=0 tip=0
+  KURULUM  : semodule=1 fcontext=8 yerel=8 tip=10
+  KALDIRMA : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4  ← SIFIR SIZINTI
+===== DÖNGÜ 2 =====   (aynı sonuç)
+  TABAN    : semodule=0 fcontext=0 yerel=0 tip=0
+  KURULUM  : semodule=1 fcontext=8 yerel=8 tip=10
+  KALDIRMA : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4  ← SIFIR SIZINTI
+```
+
+Sıfır olan her şey: modül, fcontext kayıtları, yerel kayıtlar, 10 tip,
+modül dizini, `.pp`, ikililer, unit dosyaları, journald drop-in'i.
+
+### 7.3 `install.sh` yolu — `--unattended` → `--uninstall`
+
+```
+kurulum  : semodule=1 fcontext=8 ikili=4/4 journald=1
+kaldırma : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4
+            axdaemon=inactive  axlog=inactive
+            unit=0  journald=0
+            /etc/axlinux = KALICI   ← doğru (kullanıcı verisi)
+```
+
+### 7.4 `.deb` yolu — Debian 12.15, `dpkg -i` → `dpkg -r`
+
+```
+KURULUM  : dpkg=ii  ikili=4/4 journald=1 policies=1
+KALDIRMA : dpkg=rc  ikili=0/4 journald=1 policies=1   ← conffiles KORUNDU
+```
+
+RPM'de `%config(noreplace)` ile korunan dosyalar, `.deb`'te `conffiles`
+ile korunuyor. **İki paket yolu artık aynı davranıyor.**
+
+`dpkg -P` (purge) conffiles'ı da siler — bu istenen davranış ve ayrıca
+doğrulandı (`ikili=0/4 journald=0 policies=0`).
+
+---
+
+## 8. Bilinmesi gerekenler
 
 **Politika yüklemesi başarısız olursa sistem kilitlenmez.** Bu bilinçli bir güvenlik
 kararı: yanlışlıkla kilitlenmeyip korumasız kalmak, kullanıcıyı sisteme kilitlemekten
@@ -308,20 +405,22 @@ doldurup kayıt düşürebilir. Bu artık sessiz değil: `audit_lost_samples` sa
 `axctl status`'ta görünür. Sıfır olmayan değer, denetim izinde boşluk demektir ve
 bilinçli olarak olduğu gibi bildirilir.
 
-**Bu turda doğrulanmayan tek yol:** RPM **kaldırma** sonrası SELinux deposunun tamamen
-temizlenmesi. Spec'teki dört hata düzeltildi ve temiz bir ortamda `dnf remove`
-sonrası sıfır sızıntı elle doğrulandı; ancak bu test VM'i, oturum boyunca yapılan elle
-`semodule -r` denemelerinden kalan bir **dangling** store kaydı taşıyor. Bu bir kod hatası
-değil, çalışma ortamı artığıdır — temiz bir VM'de kurulum → kaldırma döngüsünün
-tekrarı bu doğrulamayı tamamlar.
+**Kaldırma sırası önemlidir.** Hem RPM spec'inde hem `install.sh --uninstall`'ta
+sıra şöyledir: servisler → fcontext kayıtları → SELinux modülü. Ters sıra
+çalışmaz: modül tipleri önce tanımsızlaşır, kalan `/usr/bin/*` kaydı
+doğrulamayı başarısız kılar ve modül sistemde kalır.
+
+**Kullanıcı verisi kaldırmada korunur** (bilinçli tasarım): `/etc/axlinux`,
+`/var/log/axlinux`, `~/.axlinux`. Tam silmek isteyen operator bunları elle
+kaldırmalı; `install.sh --uninstall` ve RPM `%preun` bunu açıkça yazar.
 
 ---
 
-## 8. İlgili belgeler
+## 9. İlgili belgeler
 
 | Belge | İçerik |
 |-------|--------|
-| `FEDORA-READINESS.md` | Ayrıntılı kanıt raporu (668 satır), tüm ölçüm tabloları |
+| `FEDORA-READINESS.md` | Ayrıntılı kanıt raporu, tüm ölçüm tabloları |
 | `DAGITIM.md` | Kanal bazlı dağıtım rehberi |
 | `CHANGELOG.md` | Sürüm değişiklikleri |
 | `README.md` | Kurulum ve kullanım |
