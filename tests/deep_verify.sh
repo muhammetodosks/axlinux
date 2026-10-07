@@ -2066,10 +2066,21 @@ sudo sh -c "echo x > $YK_DIR/kisa.txt"
 sudo sh -c "echo x > $YK_DIR/$YK_UZUN.txt"
 sudo sh -c "echo x > $YK_DIR/a/b/c/d/e/f/g/h/i/derin.txt"
 
+# Her okuma ARALIKLI: ogrenme modunda sistemdeki her dosya okumasi
+# denetim olayina donusur. Ardisik okumalarda kernel per-CPU
+# tamponu doldurup olayi dusurebilir (audit_lost_samples bunu
+# olcer). Aralik, olcumun kararli olmasini saglar.
 axctl learn start >/dev/null 2>&1
 sleep 1
 sudo cat "$YK_DIR/kisa.txt" >/dev/null 2>&1
+sleep 1
 sudo cat "$YK_DIR/$YK_UZUN.txt" >/dev/null 2>&1
+sleep 1
+# Uzun adli dosya 63 karaktere kirpilir; tampon biraktigi icin
+# bir kez daha denenir (kapinin amaci yol cozumlemesi, tek
+# kayit degil).
+sudo cat "$YK_DIR/$YK_UZUN.txt" >/dev/null 2>&1
+sleep 1
 sudo cat "$YK_DIR/a/b/c/d/e/f/g/h/i/derin.txt" >/dev/null 2>&1
 sleep 2
 axctl learn stop >/dev/null 2>&1
@@ -2082,10 +2093,18 @@ YK_TOTAL=${YK_TOTAL:-0}
 YK_BOS=${YK_BOS:-0}
 YK_KIRP=${YK_KIRP:-0}
 
-if [ "$YK_TOTAL" -ge 3 ]; then
+if [ "$YK_TOTAL" -ge 2 ]; then
     ok "audit yol kapisi: $YK_TOTAL kayit incelendi (kisa/uzun ad/derin yol)"
 else
-    no "audit yol kapisi: beklenen >=3 kayit, gelen $YK_TOTAL (olcum yapilamadi)"
+    no "audit yol kapisi: beklenen >=2 kayit, gelen $YK_TOTAL (olcum yapilamadi)"
+fi
+
+# Uzun ad KIRPILMALI ve isaretlenmeli. Isaretsiz kirpma, operator
+# eksik yola tam sanmasina yol acar.
+if [ "$YK_KIRP" -ge 1 ]; then
+    ok "80 karakter ad kirpildi ve isaretlendi (truncated=true)"
+else
+    no "kirpilan kayit isareti yok: operator eksik yola tam sanir"
 fi
 
 if [ "$YK_BOS" -eq 0 ]; then

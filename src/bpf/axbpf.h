@@ -935,15 +935,24 @@ static __always_inline void ax_fill_audit_path(struct path *p,
 		 * gorunur onek alinir. onek + bilesen sigmiyorsa hic
 		 * yazilmaz (yarim yol, hic yazilmamis yoldan kotudur).
 		 *
-		 * NOT: bilesen derinligi 4'u gecerse onek yazilmaz.
-		 * Gerekce: onek "her bilesende mount_point_map'e bak"
-		 * demiyor, yalnizca KOKTE bir kez bakilir; kok 4'ten
-		 * derin bir yolda onek zaten gereksizdir.
-		 */
+		 * ONEMLI: onek, bilesen derinliginden BAGIMSIZ olarak yazilir.
+ *
+ * Ilk denemede `d <= 4` korumasi vardi ve derin yollarda onek
+ * atlandi:
+ *
+ *   /tmp/ax-yolkapisi/a/b/c/d/e/f/g/h/i/derin.txt
+ *     -> "/a/b/c/d/e/f/g/h/i/derin.txt"
+ *
+ * Yani kayit var ama HANGI dizin oldugu belli degil - tam da
+ * duzeltilen boslugun bir diger bicimi.
+ *
+ * Switch 0..15 icin uretildi; bilesenler + onek sigmiyorsa hic
+ * yazilmaz (yarim yol, hic yazilmamis yoldan kotudur).
+ */
 		if (!up || up == cur) {
 			__u32 np = 0;
 
-			if (d <= 4) {
+			{
 				struct ax_mp_key mk;
 				struct ax_mp_val *mpv;
 
@@ -965,8 +974,8 @@ static __always_inline void ax_fill_audit_path(struct path *p,
 					 * Operator eksik olmayan yola
 					 * eksik sanirdi - bu, isareti
 					 * degerlendirilemez yapar. */
-					if (np >= 1 && n + np <= (__u32)AX_AUDIT_DEPTH) {
-						switch (n) {
+						if (np >= 1 && n + np <= (__u32)AX_AUDIT_DEPTH) {
+							switch (n) {
 						case 0:
 							if (np > 0)
 								__builtin_memcpy(ev->apath[0], mpv->slot[0], AX_PATH_SLOT);
@@ -1017,9 +1026,107 @@ static __always_inline void ax_fill_audit_path(struct path *p,
 							if (np > 3)
 								__builtin_memcpy(ev->apath[7], mpv->slot[3], AX_PATH_SLOT);
 							break;
-						default:
+						case 5:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[5], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[6], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[7], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[8], mpv->slot[3], AX_PATH_SLOT);
 							break;
-						}
+						case 6:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[6], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[7], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[8], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[9], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 7:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[7], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[8], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[9], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[10], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 8:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[8], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[9], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[10], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[11], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 9:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[9], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[10], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[11], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[12], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 10:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[10], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[11], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[12], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[13], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 11:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[11], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[12], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[13], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[14], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 12:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[12], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[13], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[14], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[15], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 13:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[13], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[14], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[15], mpv->slot[2], AX_PATH_SLOT);
+							break;
+						case 14:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[14], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[15], mpv->slot[1], AX_PATH_SLOT);
+							break;
+						case 15:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[15], mpv->slot[0], AX_PATH_SLOT);
+							break;
+							default:
+								break;
+							}
 						ev->apath_count = n + np;
 					}
 				}

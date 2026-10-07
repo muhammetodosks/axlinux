@@ -212,21 +212,30 @@ func (s *UnixSender) toAxlogEvent(e Event) axlogEvent {
 	// ONCE anahtar yolu (kisa ve kesin), yol cozulemediyse genis
 	// audit yolu. JoinAPath her zaman doludur; kirpma isaretiyle
 	// gelir.
+	// DENETIM YOLU: once apath (genis, 16x63, mount onekli ve
+	// her zaman TAM).
+	//
+	// Once burada JoinPath() (policy anahtari) tercih ediliyordu
+	// ve bu YANLIS cikti. Anahtar 8x31 ile sinirlidir ve 8'den
+	// derin yollarda TAMAMLANMADAN yazilir. Go tarafi bos olmayan
+	// bir anahtar gorup "yol cozuldu" saniyor, operatora KIRIK
+	// yol gosteriyordu:
+	//
+	//   /tmp/dp2/l1/l2/l3/l4/l5/l6/f.txt      dogru
+	//     -> "/l1/l2/l3/l4/l5/l6/f.txt"       URETIMDE GORULDU
+	//
+	// Anahtar ESLESME icindir (hash lookup), GOSTERIM icin degil.
+	// Bu yuzden once apath, bos kalirsa anahtar.
 	apath, apathTrunc := e.JoinAPath()
-	if p := e.JoinPath(); p != "" {
-		// Anahtar yolu TAM ve CEXIMDIR: temsil edilemeyen
-		// bir yol icin setKeyPath anahtari bosaltir ve
-		// ValidateRule hata verir. Dolayisiyla burada hicbir
-		// zaman kirpma isareti olmaz.
-		//
-		// apathTrunc KULLANILMAZ: mount oneki iceren tam
-		// yollarda da apath bayragi set olabilir, ama
-		// goruntulenen yol (key) eksiksizdir.
-		out.Object.Path = p
-		out.Object.Truncated = false
-	} else {
+	if apath != "" {
 		out.Object.Path = apath
 		out.Object.Truncated = apathTrunc
+	} else if p := e.JoinPath(); p != "" {
+		// apath dolu degilse anahtar tek sans. inode_permission
+		// buraya duser (yol cozulemez); o zaman kayit ino/dev
+		// kimligiyle anlamli kalir.
+		out.Object.Path = p
+		out.Object.Truncated = false
 	}
 	// inode_permission yol cozulemez; kayit yine de kimlik tasir.
 	// Once `object: {}` yaziliyordu: operator hangi dosyaya

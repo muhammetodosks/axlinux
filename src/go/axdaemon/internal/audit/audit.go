@@ -289,7 +289,19 @@ func (m *Manager) OpenPerfBuffer(em *ebpf.Map) error {
 	//
 	// 16384 bayt = 12 olay/olay basina, 4 sayfa. Burst (ornegin
 	// 2000 islem) sirasinda tampon dolmadan bosalir.
-	const perfBufPerCPU = 16384
+	// 16384 -> 65536 bayt (CPU basina 16 sayfa).
+	//
+	// OLCUM: ogrenme modu acikken sistemdeki HER dosya okunmasi
+	// denetim olayina donusur. 1352 baytlik olayla 16 KB tampon
+	// CPU basina yalnizca 12 olay aliyor; 1 dakikalik bir ogretme
+	// kosusunda kernel 79 olayi SESSIZCE dusurdu.
+	//
+	// Bu olcumlenmis bir sey: audit_lost_samples sayaci eklendikten
+	// sonra 36 -> 79 goruldu. Once bu kayip hic gorunmuyordu.
+	//
+	// 65536 bayt = CPU basina ~48 olay. Maliyet: 8 CPU'da 512 KB,
+	// ihmal edilebilir.
+	const perfBufPerCPU = 65536
 
 	reader, err := perf.NewReader(em, perfBufPerCPU)
 	if err != nil {
