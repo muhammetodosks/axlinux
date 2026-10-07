@@ -359,6 +359,23 @@ rpm: all
 	 echo "  uretildi: $(CURDIR)/../axlinux-$(VERSION)-1.x86_64.rpm"; \
 	 rpm -qip "$$RPM" | sed 's/^/  /'
 
+	@echo "== RPM: imzali =="
+	@OUT=$(CURDIR)/../axlinux-$(VERSION)-1.x86_64.rpm; \
+	 if gpg --list-secret-keys "$(GPG_EMAIL)" >/dev/null 2>&1; then \
+	    rpmsign --addsign "$$OUT" --define "_gpg_name $(GPG_EMAIL)" \
+	        && echo "  imzalandi: $$OUT"; \
+	 else \
+	    echo "HATA: GPG anahtari yok ($(GPG_EMAIL))."; \
+	    echo "  Imzasiz RPM gercek depoda DAGITILAMAZ."; \
+	    echo "  Once 'make rpm-gpg-key' calistirin."; \
+	    rm -f "$$OUT"; \
+	    exit 1; \
+	 fi; \
+	 rpm -Kv "$$OUT" | grep -q "signature.*OK" \
+	    || { echo "HATA: imza dogrulanamadi"; rm -f "$$OUT"; exit 1; }; \
+	 echo "  imza dogrulandi: $$OUT"; \
+	 rpm -Kv "$$OUT" | grep signature | sed "s/^/    /"
+
 rpm-install: rpm
 	@echo "  kurulum: sudo dnf install -y ../axlinux-$(VERSION)-1.x86_64.rpm"
 
