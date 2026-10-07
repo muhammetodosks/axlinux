@@ -632,7 +632,13 @@ YFEOF
     n=$(axctl logs --limit 5 2>/dev/null | grep -c 'DENIED' || true)
     if [ "${n:-0}" -gt 0 ]; then ok "axctl logs DENIED gosteriyor ($n)"
     else no "axctl logs DENIED gostermiyor"; fi
-    f=$(ls -1 /var/log/axlinux/*.jsonl 2>/dev/null | head -1)
+    # sudo ile listelenir. Audit dizini 0750 root; betik root
+    # OLMAYAN bir kullanici ile calistirilirsa ls sessizce basarisiz
+    # olur ve kapi "dosya yok" der - dosya vardir.
+    #
+    # Bu, ayricaliga bagli bir kapidi: ayni sistemde kapi kim
+    # calistirirsaniz farkli sonuc verir. Duzeltildi.
+    f=$(sudo ls -1 /var/log/axlinux/*.jsonl 2>/dev/null | head -1)
     if [ -n "$f" ]; then
         ok "JSONL dosyasi: $f"
         if python3 -c "
