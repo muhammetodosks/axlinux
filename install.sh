@@ -7,6 +7,7 @@
 #   Repodan:            sudo ./install.sh
 #   Uzak repodan:       curl -fsSL <url>/install.sh | sudo bash
 #   Gecersiz kili:      sudo ./install.sh --key https://github.com/...
+#   Kaldirma:            sudo ./install.sh --uninstall
 #
 # Betik su sirayi garanti eder:
 #   1) Ortam denetimi (cekirdek, araclar, bpf LSM)
@@ -100,6 +101,7 @@ parse_args() {
             --yes|-y) ASSUME_YES=1 ;;
             --no-lsm) SKIP_LSM=1 ;;
             --unattended) ASSUME_YES=1; UNATTENDED=1 ;;
+            --uninstall) UNINSTALL=1; ASSUME_YES=1 ;;
             -h|--help)
                 sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
                 exit 0 ;;
@@ -220,7 +222,19 @@ summary() {
 
 TOTAL=11
 # sudo ile yeniden calistirildiginda banner iki kez basilmasin.
-if [ "${AXLINUX_RESPAWNED:-0}" != "1" ]; then
+# Argumanlar ONCE islenir.
+#
+# GERCEK HATA: parse_args() tanimliydi ama HIC CAGRILMIYORDU.
+# Dolayisiyla --unattended, --url, --no-lsm ve --uninstall
+# sessizce yok sayiliyordu. Kurulum yine calisiyordu (root,
+# bos stdin) ama istenen mod uygulanmiyordu; "--uninstall"
+# kurulumu calistiriyordu.
+#
+# Buraya, banner'dan ONCE konur: kaldirma modunda reklam
+# basligi gosterilmemeli.
+parse_args "$@"
+
+if [ "${UNINSTALL:-0}" != "1" ] && [ "${AXLINUX_RESPAWNED:-0}" != "1" ]; then
     banner "$APP $VERSION - Tek Komut Kurulumu"
     say "Tum adimlar otomatik. Tehlikeli bir adim gorulurse onay sorulur."
     say "Yeniden baslatma ASLA otomatik yapilmaz."
@@ -237,6 +251,60 @@ else
     fi
     fail_step "root gerekli. 'sudo bash install.sh' ile calistirin."
     summary; exit 1
+fi
+
+# ------------------------------------------------------------------ 0 kaldirma
+#
+# Betik kurulum yapiyordu ama KALDIRMA yolu hic yoktu. Operator
+# elle dosya silmek zorundaydi; SELinux modulu ve fcontext
+# kayitlari sistemde kaliyordu.
+#
+# SIRA KRITIK (RPM spec ile ayni sebepler):
+#   1) SERVISLER durdurulur (kapalida kalmasinlar)
+#   2) yerel fcontext kayitlari silinir
+#   3) SELinux modul kaldirilir
+# Ters sira calismiyor: modul tipleri once tanimsizlasiyor ve
+# kalan /usr/bin/* kaydi dogrulamayi basarisiz kiliyor.
+if [ "${UNINSTALL:-0}" = "1" ]; then
+    begin "AXlinux kaldiriliyor"
+
+    if has systemctl; then
+        systemctl stop axdaemon.service axlog.service 2>/dev/null || :
+        systemctl disable axdaemon.service axlog.service 2>/dev/null || :
+    fi
+
+    info "ikililer kaldiriliyor"
+    for _b in /usr/bin/axdaemon /usr/bin/axlog /usr/bin/axctl; do
+        rm -f "$_b" 2>/dev/null || :
+    done
+    rm -rf /usr/lib/axlinux 2>/dev/null || :
+    rm -f /etc/systemd/system/axdaemon.service           /etc/systemd/system/axlog.service 2>/dev/null || :
+    rm -f /usr/lib/systemd/system/axdaemon.service           /usr/lib/systemd/system/axlog.service 2>/dev/null || :
+    rm -f /etc/systemd/journald.conf.d/10-axlinux.conf 2>/dev/null || :
+    rm -f /usr/lib/tmpfiles.d/axlinux.conf 2>/dev/null || :
+    systemctl daemon-reload 2>/dev/null || :
+
+    # Kullanici verisi KORUNUR: /etc/axlinux, /var/log/axlinux,
+    # ~/.axlinux. Bunlar operatorun kararidir.
+    if has semanage; then
+        info "SELinux fcontext kayitlari kaldiriliyor"
+        # Eslestirme TUM SATIRA uygulanir: /usr/bin/axdaemon
+        # yolunda "axlinux" yoktur, tip alaninda vardir.
+        semanage fcontext -l 2>/dev/null \
+            | awk '/axlinux/ { print $1 }' \
+            | while read -r _re; do
+                  [ -n "$_re" ] && semanage fcontext -d "$_re" 2>/dev/null || :
+              done
+        has semodule && semodule -r axlinux 2>/dev/null || :
+        has semanage && semanage module -r axlinux 2>/dev/null || :
+    fi
+
+    ok "AXlinux kaldirildi"
+    warn "Politika ve audit KORUNDU (kullanici verisi):"
+    warn_step "  /etc/axlinux, /var/log/axlinux, ~/.axlinux"
+    warn_step "  Tam silmek icin bu dizinleri elle kaldirin."
+    summary
+    exit 0
 fi
 
 # ------------------------------------------------------------------ 1 ortam

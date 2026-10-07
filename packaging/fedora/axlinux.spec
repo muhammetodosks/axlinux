@@ -232,45 +232,42 @@ if [ $1 -eq 0 ]; then
     echo "    ~/.axlinux, \$AXLINUX_HOME, /var/log/axlinux"
     echo "  Tam silmek icin bu dizinleri elle kaldirin."
 
-    # --- SELinux temizligi BURADA, %postun'da DEGIL ---
+    # SIRA KRITIK - olculerek bulundu:
     #
-    # NEDEN: axlinux.pp %files icinde yer alir
-    # (%{_datadir}/selinux/packages/%{name}.pp). RPM paket
-    # dosyalarini %postun'dan ONCE siler. Yani %postun
-    # calistiginda .pp KALDIRILMIS olur ve `semodule -r axlinux`
-    # modulu bulamaz:
+    #   1) /usr/bin/axdaemon, axlog, axctl icin YEREL fcontext
+    #      kayitlari silinir. Bunlari selinux-setup.sh uretir:
+    #        set_fcontext axlinux_daemon_exec_t "$PREFIX/bin/axdaemon"
+    #   2) semodule -r calistirilir.
     #
-    #   Unable to remove module axlinux at priority 400
-    #     (No such file)
-    #
-    # `|| :` hatayi yutuyor, modul sistemde KALIYOR ve 5
-    # fcontext kaydi siziyor.
-    #
-    # SIRA ONEMLI:
-    #   1) yerel fcontext kayitlari silinir
-    #   2) modul kaldirilir
-    #
-    # LISTELEME -C ILE YAPILIR. `semanage fcontext -l` DOGRULAMA
-    # yapar ve gecersiz kayitlari ATLAR:
+    # TERS SIRA CALISMIYOR. `semodule -r` modul tiplerini kaldirirken
+    # KALAN yerel kayitlari dogrular. /usr/bin/axdaemon kaydi
+    # axlinux_daemon_exec_t tipine bagli oldugu icin tipOnce
+    # tanimsizlasiyor ve dogrulama basarisiz oluyor:
     #
     #   type axlinux_daemon_exec_t is not defined
     #     -> validate_handler: invalid context ... for /usr/bin/axdaemon
     #
-    # Bu durum kaldirma aninda NORMALDIR: paket dosyalari gider,
-    # tip referanslari gecersizlesir, dogrulama bu kayitlari
-    # listelemeyi reddeder. Sonuc: /usr/bin/* kayitlari hic listelenmez,
-    # silinmez ve modul kaldirmayi engeller.
+    # Sonuc: modul KALIR, 3 fcontext kaydi SIZAR, 10 tip tanimli kalir.
     #
-    # -C (yerel) listesi DOGRULAMA YAPMAZ; kirli kayitlar da gorunur.
-    # Sonucta modul kaldirmasi basariliyor, sistemde 0 iz kalıyor.
+    # ESLESTIRME TUM SATIRA UYGULANIR, SADECE YOLA DEGIL.
     #
-    # Daha once iki ayri hata vardi, ikisi de sessiz:
-    #   - `semanage delete -a ...` gecersiz alt komut
-    #   - `awk -F"\t"` ile bolme: cikti TAB DEGIL BOSLUKLA
-    #     hizali, $1 tum satir oluyordu
+    # `awk '$1 ~ /axlinux/'` yalnizca YOL alanina bakar. Oysa
+    # /usr/bin/axdaemon yolunda "axlinux" YOKTUR:
+    #
+    #   /usr/bin/axdaemon  all files  system_u:object_r:axlinux_daemon_exec_t:s0
+    #                       ^^^^^^^^                              ^^^^^^
+    #                       eslesmez                             eslesir
+    #
+    # Sonuc: en kritik uc yerel kayit hic listelenmiyor, silinmiyor ve
+    # `semodule -r` onlar yuzunden basarisiz oluyor.
+    #
+    # Olcum (8 kayittan yalnizca 5'i yakalandi):
+    #   yakalanan: /etc/axlinux, /run/axlinux, /usr/lib/axlinux/axbpf.o,
+    #              /var/lib/axlinux, /var/log/axlinux
+    #   KACIRILAN: /usr/bin/axctl, /usr/bin/axdaemon, /usr/bin/axlog
     if command -v semanage >/dev/null 2>&1; then
-        semanage fcontext -l -C 2>/dev/null \
-            | awk '$1 ~ /axlinux/ { print $1 }' \
+        semanage fcontext -l 2>/dev/null \
+            | awk '/axlinux/ { print $1 }' \
             | while read -r _re; do
                   [ -n "$_re" ] && semanage fcontext -d "$_re" 2>/dev/null || :
               done
