@@ -2036,7 +2036,66 @@ sudo systemctl stop axlog 2>/dev/null
 sudo rm -f "$ROT_DIR"/audit-* 2>/dev/null
 sudo systemctl start axlog 2>/dev/null
 sleep 1
+# --- AUDIT KAYITLARINDA YOL BOS OLAMAZ (madde 7) ---
+#
+# Bu kapi, ONCEDEN var olan sessiz boslugu kapatir.
+#
+# BOSLUK NEYDI:
+# audit_event yapisindaki `path` alani policy anahtariyla AYNIDIR
+# ve 8 bilesen x 31 karakter sinirlidir. Ogrenme modunda izinli
+# her dosya okundugunda kayit uretilir; 31 karakterden uzun dosya
+# adi, 8'den derin dizin veya 256 bayti gecen yol anahtara
+# SIGMIYORDU ve kayit `object: {}` olarak yaziliyordu.
+#
+# OLCUM (Fedora 44, ogrenme modu, 6 dosya):
+#   /tmp/olcum/aaaaa.txt        -> cozuldu
+#   31+ karakter ad (5 dosya)  -> object: {}   BOS
+#
+# Sonuc: operator "kural uygulandi mi?" sorusunu kayda bakarak
+# CEVAPLAYAMIYORDU. Korunmayan dosyalarin kaydi gorulup gecildi.
+#
+# COZUM: ayri ve daha genis audit tamponu (16 bilesen x 63 karakter,
+# apath) + inode_permission icin ino/dev kimligi. Sigmayan yol
+# kirpilir ve `truncated: true` isaretiyle yazilir; kayit HICBIR
+# ZAMAN bos yol olmaz.
+YK_DIR="/tmp/ax-yolkapisi"
+sudo rm -rf "$YK_DIR"
+sudo mkdir -p "$YK_DIR/a/b/c/d/e/f/g/h/i"
+YK_UZUN="$(python3 -c 'print("q"*80)')"
+sudo sh -c "echo x > $YK_DIR/kisa.txt"
+sudo sh -c "echo x > $YK_DIR/$YK_UZUN.txt"
+sudo sh -c "echo x > $YK_DIR/a/b/c/d/e/f/g/h/i/derin.txt"
 
+axctl learn start >/dev/null 2>&1
+sleep 1
+sudo cat "$YK_DIR/kisa.txt" >/dev/null 2>&1
+sudo cat "$YK_DIR/$YK_UZUN.txt" >/dev/null 2>&1
+sudo cat "$YK_DIR/a/b/c/d/e/f/g/h/i/derin.txt" >/dev/null 2>&1
+sleep 2
+axctl learn stop >/dev/null 2>&1
+sleep 1
+
+YK_SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_yolgate.py"
+YK_STATS=$(sudo python3 "$YK_SCRIPT" 2>/dev/null)
+read -r YK_TOTAL YK_BOS YK_KIRP <<<"$YK_STATS"
+YK_TOTAL=${YK_TOTAL:-0}
+YK_BOS=${YK_BOS:-0}
+YK_KIRP=${YK_KIRP:-0}
+
+if [ "$YK_TOTAL" -ge 3 ]; then
+    ok "audit yol kapisi: $YK_TOTAL kayit incelendi (kisa/uzun ad/derin yol)"
+else
+    no "audit yol kapisi: beklenen >=3 kayit, gelen $YK_TOTAL (olcum yapilamadi)"
+fi
+
+if [ "$YK_BOS" -eq 0 ]; then
+    ok "audit kayitlarinda BOS YOL YOK (0/$YK_TOTAL); kirpilan=$YK_KIRP isaretli"
+else
+    no "BOS YOL VAR: $YK_BOS/$YK_TOTAL kayitta object yolu bos"
+    no "  31 karakterden uzun ad veya derin dizin yolu cozulemiyor"
+fi
+
+sudo rm -rf "$YK_DIR"
 # --- COK KULLANICILI SENARYO ---
 #
 # Tek kullanicili testler, cok kullanicili sistemde kurallarin

@@ -325,6 +325,23 @@ func (h *Handler) handleGetStatus(req protocol.Request) protocol.Response {
 		if failed := auditMgr.SendFailures(); failed > 0 {
 			result["audit_send_failures"] = failed
 		}
+		// KAYIP KAYITLAR. Sifir degilse denetim izinde delik
+		// var: enforcement karar verdi, kanit yazilmadi. Once
+		// sayac YOKTU; per-CPU tampon dolarsa kernel sessizce
+		// dusuruyordu ve hicbir yerden anlasilmuyordu.
+		if lost := auditMgr.LostSamples(); lost > 0 {
+			result["audit_lost_samples"] = lost
+			result["audit_notice"] = fmt.Sprintf(
+				"kernel %d kaybi: per-CPU tampon dolu, kayitlar dusuruldu",
+				lost)
+		}
+		// C/Go yapi kaymasi gostergesi. Sifir olmamalidir.
+		if under := auditMgr.Undersized(); under > 0 {
+			result["audit_undersized"] = under
+			result["audit_notice"] = fmt.Sprintf(
+				"%d kayit beklenenden kisa geldi; olay yapisi kaymis",
+				under)
+		}
 	} else {
 		result["audit_log_count"] = 0
 		result["audit_denied_count"] = 0

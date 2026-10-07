@@ -30,6 +30,12 @@ type Object struct {
 	Path  string `json:"path,omitempty"`
 	Inode uint64 `json:"inode,omitempty"`
 	Port  uint16 `json:"port,omitempty"`
+	// Dev, inode ile birlikte dosyayi bulmak icin gereklidir:
+	// ayni inode numarasi farkli dosya sistemlerinde olabilir.
+	Dev uint32 `json:"dev,omitempty"`
+	// Truncated, yolun tamami sigmadi oldugunu bildirir. Path
+	// dolu olsa bile Truncated true ise yol eksiktir.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // Filter holds query parameters for filtering events.

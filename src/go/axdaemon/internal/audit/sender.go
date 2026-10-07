@@ -172,6 +172,12 @@ type axlogEvent struct {
 	} `json:"subject"`
 	Object struct {
 		Path string `json:"path,omitempty"`
+		// inode_permission yol cozulemez; kayit yine de kimlik
+		// tasir: find / -xdev -inum <inode>.
+		Inode uint64 `json:"inode,omitempty"`
+		Dev   uint32 `json:"dev,omitempty"`
+		// Truncated: yolun tamami sigmadi.
+		Truncated bool `json:"truncated,omitempty"`
 	} `json:"object"`
 	Action   string `json:"action"`
 	Effect   string `json:"effect"`
@@ -203,7 +209,30 @@ func (s *UnixSender) toAxlogEvent(e Event) axlogEvent {
 	out.Hook = HookName(e.HookType)
 	out.Subject.PID = e.PID
 	out.Subject.Comm = trimNUL(e.Comm[:])
-	out.Object.Path = e.JoinPath()
+	// ONCE anahtar yolu (kisa ve kesin), yol cozulemediyse genis
+	// audit yolu. JoinAPath her zaman doludur; kirpma isaretiyle
+	// gelir.
+	apath, apathTrunc := e.JoinAPath()
+	if p := e.JoinPath(); p != "" {
+		// Anahtar yolu TAM ve CEXIMDIR: temsil edilemeyen
+		// bir yol icin setKeyPath anahtari bosaltir ve
+		// ValidateRule hata verir. Dolayisiyla burada hicbir
+		// zaman kirpma isareti olmaz.
+		//
+		// apathTrunc KULLANILMAZ: mount oneki iceren tam
+		// yollarda da apath bayragi set olabilir, ama
+		// goruntulenen yol (key) eksiksizdir.
+		out.Object.Path = p
+		out.Object.Truncated = false
+	} else {
+		out.Object.Path = apath
+		out.Object.Truncated = apathTrunc
+	}
+	// inode_permission yol cozulemez; kayit yine de kimlik tasir.
+	// Once `object: {}` yaziliyordu: operator hangi dosyaya
+	// denialdigini hicbir sekilde ogrenemiyordu.
+	out.Object.Inode = e.Ino
+	out.Object.Dev = e.Dev
 	out.Action = ActionName(e.Action)
 	out.Effect = EffectName(e.Effect)
 	out.Decision = DecisionName(e.Decision)

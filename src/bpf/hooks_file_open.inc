@@ -67,7 +67,7 @@ int BPF_PROG(ax_file_open, struct file *file, int ret)
 	if (!file || !event)
 		return 0;
 
-	__builtin_memset(event, 0, sizeof(*event));
+	ax_event_clear(event);
 
 	struct policy_key *key = ax_key(0);
 	if (!key)
@@ -89,6 +89,10 @@ int BPF_PROG(ax_file_open, struct file *file, int ret)
 
 	/* bpf_d_path yerine kendi cozumleyicimiz; bkz. axbpf.h */
 	ax_fill_path((struct path *)&file->f_path, key);
+	/* Audit yolu policy anahtarindan genistir: 31 karakterden
+	 * uzun dosya adi ve 8'den derin dizin de kayda tam yazilir.
+	 * Anahtar temsil edemediginde kayit yine de BOS DEGILDIR. */
+	ax_fill_audit_path((struct path *)&file->f_path, event);
 
 	/* Audit alanlari map aramasindan ONCE doldurulur:
 	 * bpf_map_lookup_elem cagrisi sonrasi verifier key/event

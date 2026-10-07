@@ -157,6 +157,7 @@ func sizeBits(f cField) int {
 var goFieldOrder = []string{
 	"Timestamp", "PID", "Comm", "Path",
 	"Action", "Effect", "Decision", "RuleID", "HookType",
+	"Ino", "Dev", "APath", "APFlags", "APCount",
 }
 
 // goFieldOffsets are the byte offsets the decoder writes to. They are
@@ -171,6 +172,11 @@ var goFieldOffsets = map[string]int{
 	"Decision":  292,
 	"RuleID":    296,
 	"HookType":  300,
+	"Ino":       304,
+	"Dev":       312,
+	"APath":     316,
+	"APFlags":   1340,
+	"APCount":   1344,
 }
 
 // TestEventLayoutMatchesC locks the perf-buffer record layout.
@@ -218,6 +224,7 @@ func TestCFieldNamesDocumented(t *testing.T) {
 	want := []string{
 		"timestamp", "pid", "comm", "path",
 		"action", "effect", "decision", "rule_id", "hook_type",
+		"ino", "dev", "apath", "apath_flags", "apath_count",
 	}
 	for i, w := range want {
 		if cFields[i].name != w {

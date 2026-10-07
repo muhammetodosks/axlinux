@@ -19,6 +19,14 @@ type AuditEvent struct {
 		Path  string `json:"path,omitempty"`
 		Inode uint64 `json:"inode,omitempty"`
 		Port  uint16 `json:"port,omitempty"`
+		// Dev, inode ile birlikte dosyayi bulmak icin gereklidir:
+		// ayni inode numarasi farkli dosya sistemlerinde olabilir
+		// (find / -xdev -inum N).
+		Dev uint32 `json:"dev,omitempty"`
+		// Truncated: yolun tamami sigmadi, gorunen kisim eksiktir.
+		// Alan bos da OLABILIR ama Truncated varsa yola ASLA
+		// tam dogrulukla bakilmamalidir.
+		Truncated bool `json:"truncated,omitempty"`
 	} `json:"object"`
 	Action   string `json:"action"`
 	Effect   string `json:"effect"`

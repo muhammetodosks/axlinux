@@ -45,6 +45,83 @@ type Event struct {
 	Decision  uint32
 	RuleID    uint32
 	HookType  uint32
+
+	// Kimlik: path cozulemedigi durumlar icin (inode_permission).
+	Ino uint64
+	Dev uint32
+
+	// APath, policy anahtarindan genis okunabilir audit yolu.
+	//
+	// Anahtar 8x31 ile sinirli oldugu icin 31 karakterden uzun
+	// dosya adi veya 8'den derin dizin anahtara SIIGMIYOR ve
+	// kayit `object: {}` olarak yaziliyordu. APath 16x63 tutar;
+	// sigmiyorsa APFlags & PathFlagTruncated isareti birakilir.
+	APath   [AuditDepth][AuditSlot]byte
+	APFlags uint32
+	APCount uint32
+}
+
+const (
+	// PathFlagTruncated: yolun tamami sigmadi.
+	PathFlagTruncated uint32 = 1 << 0
+)
+
+// Audit yolu tamponu sabitleri. BPF tarafiyla BIREBIR ayni
+// olmak ZORUNDA: Event, perf buffer'dan okunan ham baytlardir
+// (bkz. sender.go) ve Go derleyicisinin ekledigi bir hizalama
+// veya alan siralamasi tum kayitlari kaydırır.
+
+// JoinAPath returns the readable audit path, or "" if empty.
+//
+// Anahtar yolu (JoinPath) temsil edilemediginde bos doner; bu
+// yontem her zaman doludur. Kirpma isareti Truncated ile birlikte
+// doner.
+func (e Event) JoinAPath() (s string, truncated bool) {
+	var sb strings.Builder
+	truncated = e.APFlags&PathFlagTruncated != 0
+
+	// SIRALAMA KONUSU - burada dikkatli olmak gerekiyor:
+	//
+	// ax_fill_audit_path, dentry yurusunde dosyanin KENDI adindan
+	// baslayip yukari dogru ilerler ve her bileseni sirayla
+	// apath[0], apath[1], ... yazar. Yani:
+	//
+	//   apath[0] = "/aaaa.txt"   (en derin)
+	//   apath[1] = "/olcum"
+	//   apath[2] = "/tmp"        (en sig)
+	//
+	// Bu TERS siradir. Duz (0 -> N) iterate edilirse yol
+	// "/aaaa.txt/olcum/tmp" olur - dosyanin hangi dizinde
+	// oldugu kaybolur ve operator okudugu yolu tanimaz.
+	//
+	// Ayni sey JoinPath() icin de gecerli: politika anahtari
+	// bilesenleri Path[7]'den Path[0]'a YAZAR, yani ilk yazilan
+	// en derin bilesendir.
+	//
+	// Bu yuzden GERIYE dogru iterasyon zorunludur. Yanlis
+	// yonun ilk denemesi tam olarak bu hatayi uretti:
+	//   "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.txt/olcum/tmp"
+	//
+	// APCount, gercekten yazilan bilesen sayisidir; kirpma
+	// durumunda da guvenilir.
+	n := int(e.APCount)
+	if n > AuditDepth {
+		n = AuditDepth
+	}
+	if n == 0 {
+		// APCount 0 ise ya hic bilesen yazilmadi ya da eski kayit.
+		// Yine de dolu blogu tara: sessizce bos donmek, yol
+		// cozulebilen durumda gecersiz bos kayit uretir.
+		n = AuditDepth
+	}
+	for i := n - 1; i >= 0; i-- {
+		blk := strings.TrimRight(string(e.APath[i][:]), "\x00")
+		if blk == "" {
+			continue
+		}
+		sb.WriteString(blk)
+	}
+	return sb.String(), truncated
 }
 
 // JoinPath stitches the path blocks back into a single string.
@@ -71,7 +148,18 @@ func (e Event) JoinPath() string {
 // shorter than this, so an overestimate would silently drop every
 // audit record. TestEventLayoutMatchesC computes the C value
 // independently and compares.
-const EventSize = 8 + 4 + 16 + 256 + 5*4
+// C yapisi: 8 + 4 + 16 + (8*32) + 5*4 + 8 + 4 + (16*64) + 4 + 4
+//
+// Ayri bir "tahmini toplam" DEGERI degil; TestEventLayoutMatchesC
+// bunu C basligindan OLEN bolumun toplamiyla karsilastirir. Elle
+// yazilan bir toplam sessizce kayar ve her kayit bozulur.
+const EventSize = 8 + 4 + 16 + 8*32 + 5*4 + 8 + 4 + 16*64 + 4 + 4
+
+// Audit tampon sabitleri C ile ayni olmak ZORUNDA.
+const (
+	AuditDepth = 16
+	AuditSlot  = 64
+)
 
 // EventSender is the interface for forwarding events to axlog.
 type EventSender interface {
@@ -94,8 +182,13 @@ type Observer interface {
 type Manager struct {
 	mu     sync.Mutex
 	reader *perf.Reader
-	sender EventSender
-	events []Event
+
+	// lostSamples: kernel tarafindan dusurulen kayit sayisi.
+	lostSamples uint64
+	// undersized: EventSize'dan kucuk gelen kayit (yapi kaymasi).
+	undersized uint64
+	sender     EventSender
+	events     []Event
 
 	// obsMu is deliberately NOT m.mu. The observer is called from the
 	// read loop, and an observer is free to call back into the audit
@@ -126,6 +219,27 @@ func (m *Manager) Healthy() (bool, string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.healthy, m.fatalErr
+}
+
+// LostSamples returns how many audit records the kernel dropped
+// because the per-CPU perf buffer was full.
+//
+// SIFIR OLMAYAN BIR DEGER, DENETIM IZINDE BOSLUK DEMEKTIR:
+// enforcement karar verdi ama kanit KAYDEDILMEDI. Bu sayac
+// operatorun "kayitlar yaziliyor" varsayimini denetlenebilir
+// kilar.
+func (m *Manager) LostSamples() uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.lostSamples
+}
+
+// Undersized returns records that arrived shorter than EventSize.
+// Sifir olmamalidir; sifirdan buyukse C/Go yapi kaymasi vardir.
+func (m *Manager) Undersized() uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.undersized
 }
 
 // SendFailures returns how many events the downstream writer rejected.
@@ -166,7 +280,18 @@ func (m *Manager) OpenPerfBuffer(em *ebpf.Map) error {
 		return fmt.Errorf("perf map nil")
 	}
 
-	reader, err := perf.NewReader(em, 4096)
+	// Per-CPU tampon 4096 -> 16384 bayt.
+	//
+	// OLAY BOYUTU 304 -> 1352 bayta cikti (genis okunabilir audit
+	// yolu: 16 bilesen x 63 karakter). 4096 baytlik tampona artik
+	// YALNIZCA 2 olay sigiyor; 3. olaydan itibaren kernel
+	// PERF_RECORD_LOST uretiyor ve kayit SESSIZCE duser.
+	//
+	// 16384 bayt = 12 olay/olay basina, 4 sayfa. Burst (ornegin
+	// 2000 islem) sirasinda tampon dolmadan bosalir.
+	const perfBufPerCPU = 16384
+
+	reader, err := perf.NewReader(em, perfBufPerCPU)
 	if err != nil {
 		return fmt.Errorf("perf reader acilamadi: %w", err)
 	}
@@ -239,7 +364,29 @@ func (m *Manager) Run(ctx context.Context) error {
 		// yazilmis bir toplam (316) EventSize'dan (304) buyuk
 		// kalirsa her kayit sessizce dusurulur ve audit hicbir
 		// zaman bos gorunmez.
+		// KERNEL KAYBI: per-CPU tampon dolarsa kernel kaydi dusurur
+		// ve LostSamples artar. Bu sayac OLMADAN, tampon yetersiz
+		// oldugunda kayitlar sessizce yok olur ve operator "kural
+		// uygulaniyor, kayit da yaziliyor" sanar.
+		//
+		// 304 -> 1352 bayt olay buyutmesiyle tampon 4096'da 2 olaya
+		// sigiyordu; buyume sessizce %100 kayba donustu.
+		if lost := rec.LostSamples; lost > 0 {
+			m.mu.Lock()
+			m.lostSamples += lost
+			m.mu.Unlock()
+			// Kalici degil: tek bir kayip normaldir (buffer anlik
+			// dolar). Ama surekli kayip gostergeyi kirar.
+			m.markUnhealthy(fmt.Sprintf(
+				"kernel %d audit kaybini raporladi (per-CPU tampon dolu); "+
+					"kayitlar dusuruluyor", lost))
+			continue
+		}
+
 		if len(rec.RawSample) < EventSize {
+			m.mu.Lock()
+			m.undersized++
+			m.mu.Unlock()
 			continue
 		}
 
@@ -407,6 +554,25 @@ func parseEvent(data []byte) (Event, error) {
 	offset += 4
 
 	e.HookType = binary.LittleEndian.Uint32(data[offset:])
+	offset += 4
+
+	// Kimlik: inode_permission yol cozulemedigi icin.
+	e.Ino = binary.LittleEndian.Uint64(data[offset:])
+	offset += 8
+
+	e.Dev = binary.LittleEndian.Uint32(data[offset:])
+	offset += 4
+
+	// Okunabilir audit yolu (anahtardan genis).
+	for i := 0; i < AuditDepth; i++ {
+		copy(e.APath[i][:], data[offset:offset+AuditSlot])
+		offset += AuditSlot
+	}
+
+	e.APFlags = binary.LittleEndian.Uint32(data[offset:])
+	offset += 4
+
+	e.APCount = binary.LittleEndian.Uint32(data[offset:])
 
 	return e, nil
 }

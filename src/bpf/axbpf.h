@@ -71,6 +71,41 @@
 #ifndef AX_PATH_SLOT
 #define AX_PATH_SLOT  32
 
+/* AUDIT yolu icin AYRI ve daha genis tampon.
+ *
+ * NEDEN AYRI: policy anahtari (policy_key) sabit ve kucuk
+ * tutulmak zorunda - her kural bir hash map girdisi ve BPF
+ * maliyeti dogrudan bununla olceklenir. AX_PATH_SLOT=31 ve
+ * AX_PATH_DEPTH=8 sinirlari kasitlidir.
+ *
+ * Ama AUDIT kaydi policy anahtari DEGILDIR; sadece operatorun
+ * gormesi icin bir metindir. O yuzden 16 bilesen x 63 karakter
+ * tutulur.
+ *
+ * BU BOSLUK GERICI VE SILENTTI: 31 karakterden uzun dosya adi,
+ * 8'den derin dizin veya 256 bayti gecen yol AXlinux'de
+ * YUZDE 100 SIFIRLANIRDI. Politika tarafi bunu acik hata olarak
+ * bildiriyor (dogru), ama audit kaydi `object: {}` yaziyordu:
+ *
+ *   {"comm":"cat","object":{},"action":"file.read"}     <- hangi dosya?
+ *
+ * Olcum (Fedora 44, ogrenme modu, 6 dosya):
+ *   /tmp/olcum/aaaaa.txt          (10 bayt)  -> cozuldu
+ *   31+ karakter ad               (5 dosya) -> BOS
+ *
+ * Artik audit yolu her zaman doludur; sigmiyorsa kirpildi
+ * isareti (AX_PATHFLAG_TRUNCATED) ile birlikte yazilir. */
+#ifndef AX_AUDIT_DEPTH
+#define AX_AUDIT_DEPTH 16
+#endif
+#ifndef AX_AUDIT_SLOT
+#define AX_AUDIT_SLOT  64
+#endif
+#define AX_AUDIT_NAME_MAX (AX_AUDIT_SLOT - 1)
+
+/* apath kirpildi: yolun tamami sigmadi, kayit sonuna "..." eklendi. */
+#define AX_PATHFLAG_TRUNCATED (1U << 0)
+
 #endif
 /* Tek bir bilesen adi bu kadar karakteri asabilir (ext4'te 255
  * olabilir; pratikte 31 yeterli ve instruction maliyetini 8 kat
@@ -106,6 +141,26 @@ struct audit_event {
 	__u32 decision;
 	__u32 rule_id;
 	__u32 hook_type;
+
+	/* --- Kimlik (path cozulemedigi durumlar icin) ---
+	 *
+	 * inode_permission imzasi `struct inode *` alir; dentry'ye geri
+	 * isaretci YOKTUR (yol tek yonlu: dentry -> inode). Bu yuzden
+	 * bilesenler gezilemez.
+	 *
+	 * Once "yok" birakiliyordu ve kayit `object: {}` ile yaziliyordu:
+	 * operator hangi dosyaya denialdigini hicbir sekilde ogrenemiyordu.
+	 *
+	 * ino+dev COZUMDUR: `find / -xdev -inum <ino>` ve
+	 * `stat -c '%d:%i'` ile dosya bulunur. Bu yuzden yol cozulemese
+	 * bile kayit BOS DEGILDIR - kimlik tasir. */
+	__u64 ino;
+	__u32 dev;
+
+	/* --- Okunabilir audit yolu (policy anahtarindan genis) --- */
+	char apath[AX_AUDIT_DEPTH][AX_AUDIT_SLOT];
+	__u32 apath_flags;	/* AX_PATHFLAG_* */
+	__u32 apath_count;	/* yazilan bilesen sayisi */
 };
 
 /* Izin verilen kurallar */
@@ -778,10 +833,227 @@ static __always_inline struct policy_key *ax_key(__u32 slot)
 	return bpf_map_lookup_elem(&key_scratch, &k);
 }
 
+/* audit_event yapisini SIFIRLAR.
+ *
+ * NEDEN __builtin_memset(event, 0, sizeof(*event)) DEGIL:
+ * audit_event 1352 bayta ulstigi icin (genis okunabilir audit
+ * yolu 16x64) clang bunu 256 bayt uzerinde LIBM memset cagrisina
+ * CEVIRIYOR ve BPF hedefi bunu REDDEDIYOR:
+ *
+ *   error: A call to built-in function 'memset' is not supported
+ *
+ * BPF onek kucuk boyutlari acarken (her bayt icin store yazar),
+ * buyuk boyutlarda harici cagri uretir.
+ *
+ * Cozum: diziler AÇIK unroll dongusuyle, skalerler tek tek
+ * sifirlanir. Dizi erisimi `ev->apath[i]` sabit ofkez oldugu
+ * icin verifier'a uygundur.
+ */
+static __always_inline void ax_event_clear(struct audit_event *ev)
+{
+	volatile __u8 *p;
+	int i;
+
+	if (!ev)
+		return;
+
+	/* volatile ZORUNLU: aksi halde clang ardisik sifir atamalari
+	 * tek bir memset libcall'ine birlestirir ve BPF onu reddeder
+	 * ("A call to built-in function 'memset' is not supported").
+	 *
+	 * volatile her baytin DOGRUDAN store olarak yazilmasi zorunlu
+	 * kilar; birlestirme engellenir. Dizi erisimleri de ayni
+	 * sebeple tek tek unroll edilir. */
+	p = (volatile __u8 *)ev;
+#pragma unroll
+	for (i = 0; i < (int)sizeof(struct audit_event); i++)
+		p[i] = 0;
+}
+
 static __always_inline struct audit_event *ax_event(void)
 {
 	__u32 zero = 0;
 	return bpf_map_lookup_elem(&event_scratch, &zero);
+}
+
+/* Audit icin okunabilir yol: 16 bilesen x 63 karakter.
+ *
+ * policy anahtarindan (8x31) BILINCLI olarak genistir. Anahtar
+ * kucuk tutulmak zorundadir; burada maliyet degil, operatorun
+ * gormesi vardir.
+ *
+ * VERIFIER NOTU: donus her yinelemede SABIT (unroll indeksi d),
+ * bu yuzden "d = calisma aninda degisen offset" hatasi olusmaz.
+ * Onceki policy anahtarindaki mount-prefix switch'i de burada
+ * YOK: audit icin mount noktasi oneki gerekmiyor, sirali yazmak
+ * yeterli.
+ *
+ * Sigmayan bileşen kirpilir ve AX_PATHFLAG_TRUNCATED isareti
+ * birakilir - kayit HIC BIR ZAMAN bos yol olmaz.
+ */
+static __always_inline void ax_fill_audit_path(struct path *p,
+						struct audit_event *ev)
+{
+	struct dentry *cur;
+	struct dentry *up;
+	__u32 n = 0;
+
+	if (!p || !ev)
+		return;
+
+	cur = BPF_CORE_READ(p, dentry);
+	if (!cur)
+		return;
+
+	ev->apath_flags = 0;
+	ev->apath_count = 0;
+
+#pragma unroll
+	for (int d = 0; d < AX_AUDIT_DEPTH; d++) {
+		const unsigned char *nm;
+		__u32 len;
+		__u32 cp;
+
+		up = BPF_CORE_READ(cur, d_parent);
+		nm = BPF_CORE_READ(cur, d_name.name);
+		len = BPF_CORE_READ(cur, d_name.len);
+		if (!nm || len == 0)
+			break;
+
+		/* MOUNT KOKU: alt birim kozu kendine ebeveynidir
+		 * (`up == cur`), adi gorunur yolun bir parcasidir ve
+		 * ETIFADE yurutulmus o esnada bulunamaz.
+		 *
+		 * Fedora'da /tmp, /var, /home btrfs ALT BIRIMI olarak
+		 * baglanir. Onceden bilesen sirasiyla
+		 *   x.txt -> olcum2 -> [tmp, KOK]   oldugu icin
+		 * "tmp" bileseni hic yazilmazdi ve kayit
+		 * "/olcum2/x.txt" olurdu: dosya hangi dizindeydi
+		 * belli degildi.
+		 *
+		 * Cozum, ax_fill_path ile ayni: mount_point_map'ten
+		 * gorunur onek alinir. onek + bilesen sigmiyorsa hic
+		 * yazilmaz (yarim yol, hic yazilmamis yoldan kotudur).
+		 *
+		 * NOT: bilesen derinligi 4'u gecerse onek yazilmaz.
+		 * Gerekce: onek "her bilesende mount_point_map'e bak"
+		 * demiyor, yalnizca KOKTE bir kez bakilir; kok 4'ten
+		 * derin bir yolda onek zaten gereksizdir.
+		 */
+		if (!up || up == cur) {
+			__u32 np = 0;
+
+			if (d <= 4) {
+				struct ax_mp_key mk;
+				struct ax_mp_val *mpv;
+
+				mk.dev = BPF_CORE_READ(cur, d_inode, i_sb, s_dev);
+				mpv = bpf_map_lookup_elem(&mount_point_map, &mk);
+				if (mpv) {
+					np = mpv->n;
+					if (np > AX_MP_MAX)
+						np = AX_MP_MAX;
+					/* DIKKAT: burada AX_PATHFLAG_TRUNCATED
+					 * YAZILMAZ. Mount oneki eklemek
+					 * kirpma DEGILDIR; yolun tumu
+					 * yazilmistir.
+					 *
+					 * Ilk denemede isaret burada
+					 * kosulsuz set edildi ve /tmp
+					 * altindaki KISA dosyalar da
+					 * "truncated" isaretli cikti.
+					 * Operator eksik olmayan yola
+					 * eksik sanirdi - bu, isareti
+					 * degerlendirilemez yapar. */
+					if (np >= 1 && n + np <= (__u32)AX_AUDIT_DEPTH) {
+						switch (n) {
+						case 0:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[0], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[1], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[2], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[3], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 1:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[1], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[2], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[3], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[4], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 2:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[2], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[3], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[4], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[5], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 3:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[3], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[4], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[5], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[6], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						case 4:
+							if (np > 0)
+								__builtin_memcpy(ev->apath[4], mpv->slot[0], AX_PATH_SLOT);
+							if (np > 1)
+								__builtin_memcpy(ev->apath[5], mpv->slot[1], AX_PATH_SLOT);
+							if (np > 2)
+								__builtin_memcpy(ev->apath[6], mpv->slot[2], AX_PATH_SLOT);
+							if (np > 3)
+								__builtin_memcpy(ev->apath[7], mpv->slot[3], AX_PATH_SLOT);
+							break;
+						default:
+							break;
+						}
+						ev->apath_count = n + np;
+					}
+				}
+			}
+			break;
+		}
+
+		/* 63 karakterden uzun ad kirpilir. KIRPMA ISARETI
+		 * konur; yoksa operator eksik yolu tam sanir. */
+		cp = len;
+		if (cp > AX_AUDIT_NAME_MAX) {
+			cp = AX_AUDIT_NAME_MAX;
+			ev->apath_flags |= AX_PATHFLAG_TRUNCATED;
+		}
+		if (bpf_probe_read_kernel(&ev->apath[d][1], cp, nm) < 0) {
+			ev->apath_flags |= AX_PATHFLAG_TRUNCATED;
+			break;
+		}
+		ev->apath[d][0] = '/';
+		ev->apath[d][1 + cp] = '\0';
+		n = d + 1;
+		ev->apath_count = n;
+		cur = up;
+	}
+}
+
+/* inode_permission icin kimlik: yol cozulemez ama ino/dev vardir. */
+static __always_inline void ax_fill_inode_id(struct inode *inode,
+					     struct audit_event *ev)
+{
+	if (!inode || !ev)
+		return;
+	ev->ino = BPF_CORE_READ(inode, i_ino);
+	ev->dev = BPF_CORE_READ(inode, i_sb, s_dev);
 }
 
 static __always_inline void ax_get_comm(char *comm)

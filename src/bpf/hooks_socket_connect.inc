@@ -25,7 +25,7 @@ int BPF_PROG(ax_socket_connect, struct socket *sock,
 		return 0;
 
 	__builtin_memset(key, 0, sizeof(*key));
-	__builtin_memset(event, 0, sizeof(*event));
+	ax_event_clear(event);
 
 	ax_get_comm(key->comm);
 	key->action = ACTION_NET_CONNECT;

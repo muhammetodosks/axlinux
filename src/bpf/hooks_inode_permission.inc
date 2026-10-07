@@ -41,7 +41,7 @@ int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 		return 0;
 
 	__builtin_memset(key, 0, sizeof(*key));
-	__builtin_memset(event, 0, sizeof(*event));
+	ax_event_clear(event);
 
 	ax_get_comm(key->comm);
 	key->action = action;
@@ -59,6 +59,11 @@ int BPF_PROG(ax_inode_permission, struct inode *inode, int mask, int ret)
 
 	event->pid = cur_pid;
 	__builtin_memcpy(event->comm, key->comm, sizeof(event->comm));
+	/* Bu kanca yol COZULEMEZ (inode -> dentry geri isaretcisi
+	 * yoktur). Kayit bos birakilirsa operator hangi dosyaya
+	 * denialdigini ogrenemez. ino+dev ile dosya bulunabilir:
+	 * find / -xdev -inum <ino>. */
+	ax_fill_inode_id(inode, event);
 	event->action = action;
 	event->effect = denied ? EFFECT_DENY : EFFECT_ALLOW;
 	event->rule_id = denied ? val->rule_id : 0;

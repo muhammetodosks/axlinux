@@ -29,7 +29,7 @@ int BPF_PROG(ax_bprm_check, struct linux_binprm *bprm, int ret)
 	if (!file)
 		return 0;
 
-	__builtin_memset(event, 0, sizeof(*event));
+	ax_event_clear(event);
 
 	/*
 	 * Iki ayri kural grubu denetlenir ve DENY olan varsa her zaman
@@ -67,6 +67,7 @@ int BPF_PROG(ax_bprm_check, struct linux_binprm *bprm, int ret)
 	ax_get_comm(pkey->comm);
 	pkey->action = ACTION_FILE_EXEC;
 	ax_fill_path((struct path *)&file->f_path, pkey);
+	ax_fill_audit_path((struct path *)&file->f_path, event);
 
 	/* Hedef binary'nin adi = yolun EN DERIN dolu bileseni.
 	 * (Slotlar 7'den 0'a dogru doldurulur.)
