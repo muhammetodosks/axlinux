@@ -1,8 +1,11 @@
 # AXlinux — Sen YAML yaz, AXlinux uygulasın.
 
-> **Fedora 44 hazırlık ve kanıt raporu:** [`FEDORA-READINESS.md`](FEDORA-READINESS.md)
-> 716/0/2 test kanıtları, RPM kanıtı, gerçek enforcement çıktıları ve
-> dağıtıma hazırlık için açık boşluk listesi.
+> **Dağıtım hazır mı? → [`DAGITIM-READY.md`](DAGITIM-READY.md)**
+> 1.2.0 için dokuz maddenin tamamı gerçek düzeltme + ölçülmüş kanıtla
+> kapatıldı: `deep_verify` **732 geçti / 0 kaldı / 1 atlandı**, imzalı RPM,
+> Debian 12.15 kurulumu, journald sınırları, %52 disk.
+>
+> Ayrıntılı ölçüm tabloları: [`FEDORA-READINESS.md`](FEDORA-READINESS.md)
 
 Kullanıcı odaklı, YAML tabanlı Mandatory Access Control sistemi.
 Milyonlarca satır hazır politika yok: **politika senin, tek
@@ -187,8 +190,10 @@ Ayrıntı: [docs/challenges-risks.md](docs/challenges-risks.md)
 
 ## Durum
 
-Sürüm **1.0.0**. Üç dağıtımda gerçek enforcement ile uçtan uca
-doğrulandı; kapsamlı test paketi 100 denetimin tamamını geçiyor.
+Sürüm **1.2.0**. Üç dağıtım yolunda (RPM, `install.sh`, `.deb`) gerçek
+enforcement ile uçtan uca doğrulandı: `deep_verify` **732 geçti / 0 kaldı /
+1 atlandı**, Go 13 paket, Python 179 + 20 alt test. Özet:
+[`DAGITIM-READY.md`](DAGITIM-READY.md).
 
 | Bileşen | Durum | Kanıt |
 |---------|-------|-------|
