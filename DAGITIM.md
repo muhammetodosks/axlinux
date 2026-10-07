@@ -25,9 +25,9 @@ gerçekten eBPF'den geçirildi.
 
 | Doğrulanan | Sonuç |
 |---|---|
-| Ubuntu 24.04.5 LTS | 100/0/0 · 5/5 eBPF programı · 5/5 kanca · audit sağlıklı |
-| Debian 12 (bookworm) | 100/0/0 · 5/5 · 5/5 · audit sağlıklı |
-| Pardus 25.2 (yirmibes) | 100/0/0 · 5/5 · 5/5 · audit sağlıklı |
+| Ubuntu 24.04.5 LTS | 732/0/1 · 5/5 eBPF programı · 5/5 kanca · audit sağlıklı |
+| Debian 12 (bookworm) | 732/0/1 · 5/5 · 5/5 · audit sağlıklı |
+| Pardus 25.2 (yirmibes) | 732/0/1 · 5/5 · 5/5 · audit sağlıklı |
 
 Kapsanan alanlar: tüm CLI komutları, öğrenme modu baştan sona, 5 LSM
 kancası, 6 aksiyon türü, kalıcı JSONL audit, üç mod ve acil kapatma,

@@ -109,15 +109,18 @@ class TestDocNumbers(unittest.TestCase):
         doc = self.read("DAGITIM.md")
         for distro in ("Ubuntu 24.04", "Debian 12", "Pardus 25.2"):
             self.assertIn(distro, doc, f"{distro} DAGITIM.md'de yok")
-        self.assertIn("100/0/0", doc,
+        self.assertIn("732/0/1", doc,
                       "DAGITIM.md olculmus sonucu gostermeli")
-        self.assertNotIn("99/0/0", doc)
+        self.assertNotIn("100/0/0", doc,
+                         "DAGITIM.md'de bayat dogrulama sayisi kaldi")
 
     def test_readme_states_current_state(self):
         """README gercek dogrulama sonucunu gostermeli."""
         text = self.read("README.md")
-        self.assertIn("100 denetim", text,
-                      "README.md guncel denetim sayisini gostermeli")
+        self.assertIn("732 geçti", text,
+                      "README.md guncel dogrulama sonucunu gostermeli")
+        self.assertNotIn("100 denetim", text,
+                         "README.md'de bayat denetim sayisi kaldi")
 
 
 if __name__ == "__main__":

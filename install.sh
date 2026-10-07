@@ -220,7 +220,7 @@ summary() {
     hr
 }
 
-TOTAL=11
+TOTAL=12
 # sudo ile yeniden calistirildiginda banner iki kez basilmasin.
 # Argumanlar ONCE islenir.
 #
