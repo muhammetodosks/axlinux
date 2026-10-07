@@ -231,6 +231,52 @@ if [ $1 -eq 0 ]; then
     echo "  Politika ve audit KORUNUYOR:"
     echo "    ~/.axlinux, \$AXLINUX_HOME, /var/log/axlinux"
     echo "  Tam silmek icin bu dizinleri elle kaldirin."
+
+    # --- SELinux temizligi BURADA, %postun'da DEGIL ---
+    #
+    # NEDEN: axlinux.pp %files icinde yer alir
+    # (%{_datadir}/selinux/packages/%{name}.pp). RPM paket
+    # dosyalarini %postun'dan ONCE siler. Yani %postun
+    # calistiginda .pp KALDIRILMIS olur ve `semodule -r axlinux`
+    # modulu bulamaz:
+    #
+    #   Unable to remove module axlinux at priority 400
+    #     (No such file)
+    #
+    # `|| :` hatayi yutuyor, modul sistemde KALIYOR ve 5
+    # fcontext kaydi siziyor.
+    #
+    # SIRA ONEMLI:
+    #   1) yerel fcontext kayitlari silinir
+    #   2) modul kaldirilir
+    #
+    # LISTELEME -C ILE YAPILIR. `semanage fcontext -l` DOGRULAMA
+    # yapar ve gecersiz kayitlari ATLAR:
+    #
+    #   type axlinux_daemon_exec_t is not defined
+    #     -> validate_handler: invalid context ... for /usr/bin/axdaemon
+    #
+    # Bu durum kaldirma aninda NORMALDIR: paket dosyalari gider,
+    # tip referanslari gecersizlesir, dogrulama bu kayitlari
+    # listelemeyi reddeder. Sonuc: /usr/bin/* kayitlari hic listelenmez,
+    # silinmez ve modul kaldirmayi engeller.
+    #
+    # -C (yerel) listesi DOGRULAMA YAPMAZ; kirli kayitlar da gorunur.
+    # Sonucta modul kaldirmasi basariliyor, sistemde 0 iz kalıyor.
+    #
+    # Daha once iki ayri hata vardi, ikisi de sessiz:
+    #   - `semanage delete -a ...` gecersiz alt komut
+    #   - `awk -F"\t"` ile bolme: cikti TAB DEGIL BOSLUKLA
+    #     hizali, $1 tum satir oluyordu
+    if command -v semanage >/dev/null 2>&1; then
+        semanage fcontext -l -C 2>/dev/null \
+            | awk '$1 ~ /axlinux/ { print $1 }' \
+            | while read -r _re; do
+                  [ -n "$_re" ] && semanage fcontext -d "$_re" 2>/dev/null || :
+              done
+    fi
+    command -v semodule >/dev/null 2>&1 && semodule -r axlinux 2>/dev/null || :
+    command -v semanage >/dev/null 2>&1 && semanage module -r axlinux 2>/dev/null || :
 fi
 
 %postun
@@ -242,12 +288,6 @@ fi
 # temizlenir.
 rm -rf /usr/lib/axlinux/axctl/__pycache__ 2>/dev/null || :
 rmdir /usr/lib/axlinux/axctl /usr/lib/axlinux 2>/dev/null || :
-
-# SELinux modulunu kaldir
-if [ $1 -eq 0 ] && command -v semanage >/dev/null 2>&1; then
-    semanage module -r axlinux 2>/dev/null || :
-    semanage delete -a axlinux_daemon_t 2>/dev/null || :
-fi
 
 %files
 %license LICENSE
