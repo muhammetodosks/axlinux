@@ -352,6 +352,70 @@ uygulandi / [tmpfs /dev/shm] uygulandi / [tmpfs /run] uygulandi —
 
 ---
 
+## 6a. Bu turda kapatılan madde 7: audit kaydında yol asla boş değil
+
+### Ölçülen boşluk
+
+`audit_event` yapısındaki `path` alanı policy anahtarıyla **aynıydı**:
+8 bileşen × 31 karakter, toplam 256 bayt. Öğrenme modunda izinli her
+dosya okunduğunda kayıt üretilir, ama şu yollar anahtara **sığmıyordu**:
+
+| Yol | Sonuç |
+|-----|-------|
+| 31 karakterden uzun dosya adı | `object: {}` |
+| 8'den derin dizin | `object: {}` |
+| 256 baytı geçen yol | `object: {}` |
+
+Fedora 44, öğrenme modu, 6 dosya:
+
+```
+/tmp/olcum/aaaaa.txt          (10 bayt)  -> çözüldü
+31+ karakter ad               (5 dosya)  -> BOS
+```
+
+Politika tarafı zaten güvenliydi: `setKeyPath` temsil edilemeyen yol
+anahtarı boşaltır ve `ValidateRule` **açık hata** verir; yani kural
+sessizce uygulanmaz. Açık olan **denetim kaydı** idi — operator hangi
+dosyaya denialdiğini göremiyordu.
+
+### Çözüm
+
+| Değişiklik | Nerede |
+|------------|--------|
+| `AX_AUDIT_DEPTH=16` / `AX_AUDIT_SLOT=64` ayrı, geniş audit tamponu (`apath`) | `src/bpf/axbpf.h` |
+| `ax_fill_audit_path()` — mount kökü dahil tam yol | `src/bpf/axbpf.h` |
+| `AX_PATHFLAG_TRUNCATED` → JSON `truncated: true` | `src/bpf/axbpf.h`, `protocol.go` |
+| `inode_permission` için `ino`+`dev` kimliği | `ax_fill_inode_id()` |
+| Önce `apath`, boşsa anahtar (anahtar eşleşme içindir) | `sender.go` |
+
+`/tmp`, `/var`, `/home` btrfs **alt birimi** olduğu için dentry yürüyüşü
+mount kökünde durur; önek `mount_point_map`'ten alınır (mevcut
+`ax_fill_path` ile aynı mekanizma).
+
+### Bu sırada kapatılan üç sessiz kayıp
+
+| Kayıp | Belirti |
+|-------|---------|
+| `__builtin_memset` 1352 bayt | BPF libcall'i reddediyordu → program yüklenmiyordu |
+| per-CPU perf tamponu 4096 | 2 olaya sığıyor, gerisi **sessizce** düşüyordu |
+| Kayıp sayacı **yoktu** | Düşen kayıt hiçbir yerden görünmüyordu |
+
+Perf tamponu `4096 → 65536` (CPU başına ~48 olay) yapıldı ve
+`audit_lost_samples` + `audit_undersized` sayaçları eklendi. Ölçülen
+kayıp: bir öğretme koşusunda 79 olay.
+
+### Kanıt (VM, temiz kurulum)
+
+```
+audit yol kapisi: 4 kayit incelendi (kisa/uzun ad/derin yol)
+80 karakter ad kirpildi ve isaretlendi (truncated=true)
+audit kayitlarinda BOS YOL YOK (0/4); kirpilan=2 isaretli
+```
+
+C/Go yapı eşitliği **ölçülerek** doğrulandı (boyut 1352 = 1352; `ino` 304,
+`dev` 312, `apath` 316, `apath_flags` 1340) ve `TestEventLayoutMatchesC`
+bunu C başlığından her koşuda yeniden hesaplar.
+
 ## 6b. Bu turda kapatılan dağıtım boşlukları
 
 Aşağıdakiler daha önce "bilinen sınırlar" olarak listeleniyordu.
@@ -477,6 +541,70 @@ bu kayıtlar ne bilgi taşır ne kural üretir — 10 dakikada 43.641 kayıt
 (10 MB) üretiyordu. DENY kayıtları etkilenmedi.
 
 ---
+
+## 6c. Dağıtım yollarında kapatılan boşluklar (bu tur)
+
+### `make rpm` artık **imzalı** paket üretir
+
+Daha önce imzalama ayrı bir adımdı (`make rpm-sign`) ve ana akışta
+çağrılmıyordu; normal yoldan çıkan RPM **imzasızdı**.
+
+```
+== RPM: imzali ==
+  imzalandi: .../axlinux-1.2.0-1.x86_64.rpm
+  imza dogrulandi
+  Header OpenPGP V4 RSA/SHA512 signature, key fingerprint:
+    f108e5cc55806bbb4fc42afa6a2e2989448a5310: OK
+```
+
+GPG anahtarı yoksa hata verilir ve **üretilen dosya silinir** —
+kullanılamaz paket bırakılmaz.
+
+### `.deb` artık journald sınırını kurar
+
+RPM tarafı `packaging/journald/10-axlinux.conf` drop-in'ini kuruyordu,
+Debian tarafı **hiç kurmuyordu** — yani Debian/Ubuntu sistemlerinde
+`/var/log/journal` sınırsızdı. Aynı dosya `.deb` içine de kuruluyor ve
+`conffiles`'a işleniyor.
+
+Debian 12.15 konteyner doğrulaması:
+
+```
+dpkg      : ii  axlinux 1.2.0          (kuruldu VE yapılandırıldı)
+journald  : 1 drop-in, SystemMaxUse=200M
+conffiles : 5 kayıt
+axctl     : axctl, version 1.2.0
+politika  : ✓ YAML syntax geçerli
+kaldırma  : policies.d 1 dosya + journald 1 drop-in KORUNDU
+```
+
+`postinst` artık `systemd-tmpfiles` varlığını kontrol ediyor; minimal
+konteynerde "not found" yazıp kurulum çıktısını kirletiyordu.
+
+### `install.sh` yolu (RPM'siz, sıfırdan)
+
+```
+ikililer    : 4/4
+policies.d : 1 dosya (00-sample-workstation.yaml)
+journald   : 1 drop-in
+LSM=5 mod=permissive kural=0 policy_healthy=True audit_healthy=True
+reload sonrasi: mod=enforcing kural=3
+```
+
+### Kaldırma yolunda dört sessiz hata
+
+`dnf remove axlinux` sonrası 8 fcontext kaydı ve 1 modül kalıyordu;
+görünür hata yoktu, hepsi `|| :` ile yutuluyordu.
+
+| # | Hata | Çözüm |
+|---|------|-------|
+| 1 | `semanage delete -a …` **geçersiz alt komut** | `semanage fcontext -d <regex>` |
+| 2 | `awk -F'\t'` — çıktı tab değil **boşlukla** hizalı | varsayılan ayrım |
+| 3 | `semanage module -r` oncelik deposu içindir | `semodule -r` |
+| 4 | Temizlik `%postun`'da; `.pp` `%files` içinde olduğu için **önce** siliniyor | `%preun`'a taşındı |
+
+Ayrıca `fcontext -l` **doğrulama** yapar ve geçersiz kayıtları atlar;
+kaldırma anında bu normaldir. Ham yerel liste (`-l -C`) kullanılıyor.
 
 ## 8. Dağıtıma hazır mı?
 
