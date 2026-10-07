@@ -6,6 +6,8 @@
 > Debian 12.15 kurulumu, journald sınırları, %52 disk.
 >
 > Ayrıntılı ölçüm tabloları: [`FEDORA-READINESS.md`](FEDORA-READINESS.md)
+>
+> **Hangi sistemler destekleniyor?** [`SUPPORT.md`](SUPPORT.md)
 
 Kullanıcı odaklı, YAML tabanlı Mandatory Access Control sistemi.
 Milyonlarca satır hazır politika yok: **politika senin, tek

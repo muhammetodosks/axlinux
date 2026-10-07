@@ -13,6 +13,9 @@ Kural yazarsın, uygularsın. Kural yazmazsan sistem serbest kalır.
 | Sürücü modülü | Linux LSM + eBPF (CO-RE) |
 | Dağıtım | `axdaemon` (Go), `axlog` (Go), `axctl` (Python 3) |
 | Doğrulanmış | Ubuntu 24.04.5, Debian 12 (bookworm), **Pardus 25.2 (yirmibes)** |
+
+Fedora sürüm desteği ve çekirdek gereksinimleri: [`SUPPORT.md`](SUPPORT.md).
+CI'daki paketleme matrisi bu tablonun sözleşmesidir (`fedora:42/43/44`, `debian:12`).
 | Test sonucu | 3 dağıtımda da **99 geçen / 0 kalan / 0 atlanan**, 125 birim testi |
 
 ---

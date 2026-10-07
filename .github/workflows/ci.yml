@@ -95,3 +95,112 @@ jobs:
       # Go<->C sabit sozlesmesi sessiz hatayi onler
       - name: Sabit sozlesmesi
         run: cd src/go/axdaemon && go test ./internal/maps/ ./internal/lsm/ ./internal/audit/ -v
+
+  # --- Paketleme matrisi -------------------------------------------------
+  #
+  # NEDEN: "hangi surum destekleniyor" sorusunun OTOMATIK cevabi
+  # olmali. Simdiye kadar CI yalnizca Go/Python/BPF/sozlesme
+  # testleriyordu; hicbir paket gercekten derlenip kurulmuyordu.
+  # Desteklenen surum listesi yalnizca elle bir VM'de dogrulanmis
+  # bir seydi.
+  #
+  # Bu is, RPM ve .deb'yi gercekten DERLEyip imzalamayan bir is.
+  # Icerik denetimi (deep_verify) sanal makinesiz calistirilamaz;
+  # ozel olarak isaretlenmistir.
+  packaging:
+    name: paket (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: fedora:42
+            dist: rpm
+          - image: fedora:43
+            dist: rpm
+          - image: fedora:44
+            dist: rpm
+          - image: debian:12
+            dist: deb
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kurulum araclari
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.dist }}" = "rpm" ]; then
+            dnf install -y golang clang llvm bpftool make gcc \
+              rpm-build rpm-sign python3-devel python3-setuptools \
+              selinux-policy-devel systemd-rpm-macros \
+              'kernel-devel-$(uname -r)' kernel-core
+          else
+            apt-get update
+            apt-get install -y --no-install-recommends golang clang llvm \
+              make dpkg-dev python3-dev python3-setuptools \
+              linux-headers-amd64
+          fi
+
+      - name: BPF nesnesini turet
+        shell: bash
+        run: |
+          set -euo pipefail
+          make bpf 2>&1 | tail -20
+
+      - name: Go ve Python
+        shell: bash
+        run: |
+          set -euo pipefail
+          make go
+          make python
+
+      - name: RPM derle
+        if: matrix.dist == 'rpm'
+        shell: bash
+        run: |
+          set -euo pipefail
+          make rpm 2>&1 | tail -30
+          ls -la ../axlinux-*.rpm
+
+      - name: .deb derle
+        if: matrix.dist == 'deb'
+        shell: bash
+        run: |
+          set -euo pipefail
+          make package 2>&1 | tail -20
+          ls -la ../axlinux_*.deb
+
+      - name: Icerik dogrulamasi
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.dist }}" = "rpm" ]; then
+            RPM=$(ls -1 ../axlinux-*.rpm | head -1)
+            echo "--- RPM icerigi ---"
+            rpm -qlp "$RPM" | grep -E 'axbpf\.o|/axdaemon|/axlog|journald' || {
+              echo "::error::RPM icerigi eksik"; exit 1; }
+            echo "--- SELinux modulu ---"
+            rpm -qlp "$RPM" | grep -q 'selinux/packages/axlinux.pp' || {
+              echo "::error::SELinux modulu RPM icinde degil"; exit 1; }
+            rpm -qp --requires "$RPM" | grep -q 'kernel-core' || {
+              echo "::error::kernel-core bagimliligi yok"; exit 1; }
+          else
+            DEB=$(ls -1 ../axlinux_*.deb | head -1)
+            echo "--- .deb icerigi ---"
+            dpkg-deb -c "$DEB" | grep -E 'axbpf\.o|/axdaemon|/axlog' >/dev/null || {
+              echo "::error::.deb icerigi eksik"; exit 1; }
+            dpkg-deb -c "$DEB" | grep -q 'journald.conf.d/10-axlinux.conf' || {
+              echo "::error::journald drop-in .deb icinde degil"; exit 1; }
+            dpkg-deb --ctrl-tarfile "$DEB" | tar -xO ./conffiles | \
+              grep -q 'journald.conf.d/10-axlinux.conf' || {
+              echo "::error::journald conffiles kaydi yok"; exit 1; }
+          fi
+          echo "paketleme matrisi: ${{ matrix.image }} TAMAM"
+
+      - name: Icerik dogrulamasi (VM gerekir)
+        shell: bash
+        run: |
+          echo "::warning::deep_verify.sh sanal makinesiz calistirilamaz"
+          echo "::warning::icerik dogrulamasi ayrica Fedora 44 VM'de yapilir"
