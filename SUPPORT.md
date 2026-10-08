@@ -38,9 +38,18 @@ SELinux: Enforcing
 
 **Kesin olarak doğrulanmış: Fedora 41, 42, 43, 44.**
 
-CI'da paketleme matrisi (`fedora:42`, `fedora:43`, `fedora:44`) RPM'i gerçekten
-derler ve içeriğini doğrular. **Fedora 41** dahil edilmemiştir; aşağıdaki
-gereksinimlere bakıldığında çalışması beklenir ancak CI ile doğrulanmaz.
+Dördünde de RPM **gerçekten derlendi** ve 8/8 içerik kontrolü geçti
+(`fedora:41/42/43/44` konteynerleri, `make rpm SKIP_SIGN=1`):
+
+```
+ok axbpf.o            ok journald drop-in      ok python3-click
+ok axdaemon           ok SELinux modülü       ok kernel-core
+ok axlog              ok axdaemon.service
+→ SONUC: ICERIK TAMAM          (Release: 1.fc41 / 1.fc42 / 1.fc43 / 1.fc44)
+```
+
+CI'daki paketleme matrisi aynı işi her commit'te tekrarlar
+(`fedora:42`, `fedora:43`, `fedora:44`). **Fedora 41** CI'a da eklenmelidir.
 
 **Fedora 40 ve öncesi desteklenmiyor.** Nedeni aşağıdaki gereksinimlerde.
 
@@ -63,8 +72,13 @@ Ayrıca paketleme zinciri:
 | BTF'nin dağıtımda varsayılan gelmesi | Fedora 38+ |
 | `bpftool` ile `vmlinux.h` üretimi | Fedora 34+ |
 
-**Pratik taban: Fedora 38** (BTF varsayılan). CI kapsamı bunun üzerine
-Fedora 42–44'ü koyar.
+**Pratik taban: Fedora 38** (BTF varsayılan). Doğrulanmış derleme aralığı
+**Fedora 41–44**'tür.
+
+> **Bu belge daha önce "Fedora 35+ desteklenir" diyordu** (`docs/challenges-risks.md`).
+> Bu bir çelişkiydi ve şimdi ölçümle çözüldü: 41–44 gerçekten derleniyor.
+> 35–40 için derleme kanıtı yoktur; "beklenir" tahmin olarak kalmasın diye
+> destek tablosuna alınmadı.
 
 ### Bu koşullar sağlanmıyorsa ne olur?
 

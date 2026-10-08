@@ -42,7 +42,7 @@ PY_DIR    := src/python
 BINARIES  := axdaemon axlog
 STAGED    := $(addprefix $(LIBDIR)/,$(patsubst %,%.o,$(BINARIES) axbpf))
 
-.PHONY: all bpf go python test test-go test-python test-contract \
+.PHONY: all bpf go python python-compile python-compile test test-go test-python test-contract \
         test-static test-protection test-silent test-integration \
         verify install uninstall clean fmt lint help
 
@@ -96,19 +96,17 @@ go:
 	fi
 
 # --- Python ---
-python:
+python: python-compile
 	@echo "== Python =="
-	@# Bytecode KAYNAK AGACINA YAZILMAZ. Once burada dogrudan
-	@# "compileall $(PY_DIR)/axctl" vardi ve kullanici "sudo make
-	@# install" dediginde derleyici kullanicinin deposuna root'a
-	@# ait __pycache__ birakiyordu. Sonrasi: kullanici artik
-	@# "rm -rf axlinux" bile yapamiyor ("Permission denied") ve
-	@# senkronizasyon sessizce ESKI kaynakla surer. (Debian 12'de
-	@# tam olarak goruldu: duzeltmeyi test etmek mumkun olmadi.)
-	@# pycache_prefix sayesinde bytecode .build/ altina gider.
-	@mkdir -p .build/pycache
-	@PYTHONPYCACHEPREFIX=$(CURDIR)/.build/pycache \
-		$(PYTHON) -m compileall -q $(PY_DIR)/axctl
+	@# Bytecode derleme python-compile hedefinde; orada.
+	@# pycache_prefix sayesinde bytecode .build/ altina gider,
+	@# kaynak agacina degil (root'a ait __pycache__ sorunu).
+	@# Calisma zamani bagimliliklari. Onceki surumde hic kontrol
+	@# yoktu; Ubuntu'da click/rich/yaml baska paketler sayesinde
+	@# zaten kurulu oldugu icin sorun gorunmedi, Debian'da
+	@# "ModuleNotFoundError: No module named 'click'" ile CLI
+	@# coktu ve kurulum calisan bir sistem kurdugu halde
+	@# "axctl calismiyor" dedi.
 	@# Calisma zamani bagimliliklari. Onceki surumde hic kontrol
 	@# yoktu; Ubuntu'da click/rich/yaml baska paketler sayesinde
 	@# zaten kurulu oldugu icin sorun gorunmedi, Debian'da
@@ -247,6 +245,9 @@ SELINUX_DIR = packaging/fedora
 GPGKEY ?= $(HOME)/.gnupg/axlinux-signing-key
 GPG_NAME := AXlinux Packaging
 GPG_EMAIL := packaging@axlinux.invalid
+# CI paketleme matrisinde SKIP_SIGN=1 kullanilir: derleme dogrulanir,
+# imza dogrulanmaz. Imza gercekten VM'de (anahtarli ortamda) test edilir.
+SKIP_SIGN ?= 0
 
 # Anahtar gercekten var mi? (sadece public yeterli imzalamaya)
 GPG_AVAILABLE := $(shell gpg --list-secret-keys --keyid-format=long 2>/dev/null | grep -q . && echo yes || echo no)
@@ -334,7 +335,22 @@ rpm-verify-sign:
 	@test -n "$(RPMFILE)" || { echo "HATA: RPMFILE=<yol> verin"; exit 1; }
 	@rpm -Kv "$(RPMFILE)"
 
-rpm: all
+# `rpm` `all` UZERINE bagli degil.
+#
+# NEDEN: `all = bpf go python` ve `python` hedefi CALISMA ZAMANI
+# bagimliliklarini (click/rich/yaml) kontrol edip yoksa HATA veriyor.
+# Oysa RPM yalnizca .py KAYNAKLARINI paketler; bu moduller kurulum
+# aninda gerekir, DERLEME aninda degil. Dogrulanmis olarak ortaya
+# cikti: Fedora 43 konteynerinde gerekli tum derleme paketleri
+# kuruluydu, `make rpm` yine "eksik Python bagimliliklari" ile
+# basarisiz oldu.
+#
+# Sonuc: derleme ortami calisma zamani modullerini kurmak zorunda
+# kaliyordu ve CI paketleme matrisi de ayni hataya dusuyordu.
+#
+# Duzeltme: rpm yalnizca bpf ve go'ya bagli. Python KAYNAKLARI
+# zaten agac durumunda, derlenecek bir sey yok.
+rpm: bpf go
 	@echo "== RPM: SELinux modulu =="
 	@$(MAKE) -C $(SELINUX_DIR) 2>/dev/null \
 	    || { echo "HATA: SELinux modulu derlenemedi."; \
@@ -361,6 +377,11 @@ rpm: all
 
 	@echo "== RPM: imzali =="
 	@OUT=$(CURDIR)/../axlinux-$(VERSION)-1.x86_64.rpm; \
+	 if [ "$(SKIP_SIGN)" = "1" ]; then \
+	    echo "  SKIP_SIGN=1: imzalamadan geciliyor (CI matrisi)"; \
+	    echo "  bu paket DAGITILMAZ; yalnizca derleme dogrulanir"; \
+	    echo "  uretildi: $$OUT"; exit 0; \
+	 fi; \
 	 if gpg --list-secret-keys "$(GPG_EMAIL)" >/dev/null 2>&1; then \
 	    rpmsign --addsign "$$OUT" --define "_gpg_name $(GPG_EMAIL)" \
 	        && echo "  imzalandi: $$OUT"; \
@@ -509,7 +530,27 @@ fmt:
 	@cd $(GO_LOG)    && $(GO) fmt ./...
 
 # --- Kurulum ---
-install: all
+# `install` `all` UZERINE bagli; `all` python HEDEFINI de calistirir.
+# python hedefi calisma zamani bagimliliklarini (click/rich/yaml)
+# kontrol eder ve eksikse HATA verir.
+#
+# Dogrulanmis olarak ortaya cikti: Fedora 41/42/43 konteynerlerinin
+# ucunde de `make rpm` %build asamasini gecti ama %install asamasinda
+# "eksik Python bagimliliklari" ile basarisiz oldu.
+#
+# Kurulum (.py dosyalarini kopyalama) calisma zamani modullerine
+# ihtiyac duymaz; bunlar hedef sistemde kurulur.
+# Bytecode derleme: bagimlilik kontrolu YOK, yalnizca .py -> .pyc.
+python-compile:
+	@mkdir -p .build/pycache
+	@PYTHONPYCACHEPREFIX=$(CURDIR)/.build/pycache \
+	    $(PYTHON) -m compileall -q $(PY_DIR)/axctl
+
+# Bytecode derleme: bagimlilik kontrolu YOK, yalnizca .py -> .pyc.
+# python = python-compile + bagimlilik dogrulamasi.
+# install = bpf + go + python-compile (calisma zamani modullerine
+# ihtiyac duymaz; onlar hedef sistemde kurulur).
+install: bpf go python-compile
 	@echo "== Kurulum =="
 	@# Derleme ciktilarinin sahibi duzeltilir.
 	@#

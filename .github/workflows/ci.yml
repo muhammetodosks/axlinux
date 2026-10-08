@@ -114,6 +114,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - image: fedora:41
+            dist: rpm
           - image: fedora:42
             dist: rpm
           - image: fedora:43
@@ -134,12 +136,14 @@ jobs:
           if [ "${{ matrix.dist }}" = "rpm" ]; then
             dnf install -y golang clang llvm bpftool make gcc \
               rpm-build rpm-sign python3-devel python3-setuptools \
+              python3-click python3-rich python3-yaml \
               selinux-policy-devel systemd-rpm-macros \
               'kernel-devel-$(uname -r)' kernel-core
           else
             apt-get update
             apt-get install -y --no-install-recommends golang clang llvm \
               make dpkg-dev python3-dev python3-setuptools \
+              python3-click python3-rich python3-yaml \
               linux-headers-amd64
           fi
 
@@ -154,6 +158,8 @@ jobs:
         run: |
           set -euo pipefail
           make go
+          # python hedefi calisma zamani bagimliliklarini kontrol eder;
+          # hepsi kurulu oldugu icin burada da gecmeli.
           make python
 
       - name: RPM derle
@@ -161,7 +167,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          make rpm 2>&1 | tail -30
+          # SKIP_SIGN: CI imzalamaz (anahtar yok), yalnizca derleme
+          # ve icerik dogrulanir. Imza gercek anahtarli ortamda
+          # (Fedora 44 VM) test edilir.
+          make rpm SKIP_SIGN=1 2>&1 | tail -30
           ls -la ../axlinux-*.rpm
 
       - name: .deb derle

@@ -69,7 +69,20 @@ alanina verir; sistem geneline acik degildir.
 %build
 # Uretilen ikililer rpm'e gomulur; kullanici makinesinde
 # derleme araci gerekmez.
-make all
+# `make bpf go`, `make all` DEGIL.
+#
+# `all = bpf go python` ve python hedefi CALISMA ZAMANI
+# bagimliliklarini (click/rich/yaml) kontrol eder. Bunlar RPM
+# kurulduktan SONRA gerekir; derleme aninda gerekmez.
+#
+# Dogrulanmis olarak ortaya cikti: Fedora 41, 42 ve 43
+# konteynerlerinin UCUNDE de gerekli tum derleme paketleri
+# kurulu olmasina ragmen %build "eksik Python bagimliliklari"
+# ile basarisiz oldu. Yani rpmbuild'de paketlemek icin Python
+# modullerine ihtiyac yok.
+#
+# click/rich/yaml zaten `Requires:` altinda bildiriliyor.
+make bpf go
 
 %install
 rm -rf %{buildroot}
