@@ -56,7 +56,16 @@ kurallar uygulanır.
 **Çözüm**:
 - Kernel < 5.15'te graceful fallback: "AXlinux sadece audit modunda çalışıyor"
 - Dağıtım bazlı ön kontrol: `bash install.sh` 2. adımı (Ortam denetimi) ve `axctl status`
-- Ubuntu 22.04+, Fedora 35+, Debian 12+ desteklenir
+- **Doğrulanmış derleme: Fedora 41, 42, 43, 44.** Debian 12 ve
+  Ubuntu 24.04 için `.deb` gerçekten kuruldu ve çalıştırıldı.
+  Kanıt ve ayrıntı: [`SUPPORT.md`](../SUPPORT.md)
+- **DİKKAT:** Bu dosya daha önce "Ubuntu 22.04+, Fedora 35+,
+  Debian 12+ desteklenir" diyordu. Ölçüm yapıldı ve doğrulanmış
+  tablo **Fedora 41–44** ile Ubuntu 24.04 / Debian 12'dir.
+  35–40 arası için derleme kanıtı **yoktur**; tahmin olarak
+  desteklenen sürüm listesine alınmamalıdır.
+- Kurulum, sürüm **numarasına** değil yeteneğe bakar: BTF var mı,
+  `bpf` LSM zincirinde mi. Yetenek varsa sürüm numarası önemsizdir.
 
 **Risk**: Eski distro'larda çalışmaz.
 
