@@ -18,15 +18,66 @@ const (
 	EffectDeny  Effect = "deny"
 )
 
+// SubjectList, hem tekil (string) hem liste ([]string) yazimi
+// kabul eder.
+//
+// GERCEK HATA (Ubuntu 24.04'te olculdu):
+//
+//	axctl policy check  -> "Politika gecerli"      (✓)
+//	acilis              -> sistem politikasi
+//	                        yuklenemedi; sistem KISITLAMASIZ
+//	                        kaliyor (permissive)
+//	                        error: cannot unmarshal string into Go
+//	                        struct field Rule.rules.subject of type
+//	                        []string
+//
+// NEDEN: IKI BAGIMSIZ AYRISTIRICI VAR.
+//   - axctl policy check  -> saf Python (validator.py)
+//   - daemon sistem yukleme -> Go (yamlToJSON -> json.Unmarshal)
+//
+// Python tekil degeri listeye ceviriyor, Go ise []string talep
+// ediyordu. Sonuc: operator'a "gecerli" denilen politika acilista
+// REDDEDILIYOR ve sistem kisisitlamasiz kaliyor.
+//
+// Bu, MAC'te en kotu hata modudur: kullanici politikasini
+// dogrulatmis, hatta "yuklendi" sanmis, sistem uygulamamis
+// oluyor.
+//
+// COZUM: Go tarafi da tekil degeri kabul eder. Iki ayristirici
+// artik ayni girdi kumesini kabul eder ve ikisi de reddederse
+// politika gercekten hatalidir.
+type SubjectList []string
+
+// UnmarshalJSON: string veya [string] kabul eder; diger her sey
+// reddedilir (sessizce bos listeye cevrilmez).
+func (s *SubjectList) UnmarshalJSON(b []byte) error {
+	// Tekil: "curl"
+	if len(b) > 0 && b[0] == '"' {
+		var one string
+		if err := json.Unmarshal(b, &one); err != nil {
+			return err
+		}
+		*s = SubjectList{one}
+		return nil
+	}
+	// Liste: ["curl","wget"]
+	var many []string
+	if err := json.Unmarshal(b, &many); err != nil {
+		return err
+	}
+	*s = SubjectList(many)
+	return nil
+}
+
 // Rule is a single compiled policy rule.
 type Rule struct {
-	ID       string   `json:"id"`
-	Name     string   `json:"name"`
-	Subject  []string `json:"subject"`
-	Object   string   `json:"object"`
-	Action   string   `json:"action"`
-	Effect   Effect   `json:"effect"`
-	Priority int      `json:"priority"`
+	ID       string      `json:"id"`
+	Name     string      `json:"name"`
+	Subject  SubjectList `json:"subject"`
+	Object   string      `json:"object"`
+	Action   string      `json:"action"`
+	Effect   Effect      `json:"effect"`
+	Priority int         `json:"priority"`
 	// Port ag kurallari icin gereklidir: eBPF tarafi anahtari
 	// "p:PORT" biciminde uretir, bu yuzden object alanindan
 	// ayri olarak tasinmasi gerekir.
