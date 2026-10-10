@@ -1,97 +1,99 @@
 # AXlinux
 
-**YAML yaz, AXlinux uygulasın.**
+**Write YAML. AXlinux enforces it.**
 
-Kullanıcı odaklı, Mandatory Access Control (MAC) sistemi. Milyonlarca
-satır hazır politika yok — **politika senin**, tek gerçek kaynağın
-`~/.axlinux/policy.yaml`.
+A user-focused Mandatory Access Control (MAC) system. No millions of
+lines of pre-written policy — **the policy is yours**, and its single
+source of truth is `~/.axlinux/policy.yaml`.
 
 ```yaml
 # ~/.axlinux/policy.yaml
 version: 1
 mode: enforcing
 rules:
-  - id: gizli-anahtarlar
-    name: "SSH ve GPG anahtarları okunamaz"
+  - id: private-keys
+    name: "SSH and GPG keys are unreadable"
     subject: [cat, less, vim]
-    object: /home/kullanici/.ssh
+    object: /home/user/.ssh
     action: file.read
     effect: deny
 ```
 
-Tek komutla çalışır, `cat ~/.ssh/id_rsa` çıktısı `Operation not permitted` olur.
+One command later, `cat ~/.ssh/id_rsa` returns `Operation not permitted`.
 
-> ⚠️ **Bu yazılım yalnızca sanal makinede çalıştırılır.**
-> Erişim denetimi uygular; ana makinede çalıştırılırsa sistemi kilitleyebilir.
-> `axctl` bunu ayrıca denetler ve reddeder. Ayrıntı: [Güvenlik](#güvenlik) · [GUVENLIK-NOTU.md](GUVENLIK-NOTU.md)
-
----
-
-## İçindekiler
-
-- [Neden AXlinux?](#neden-axlinux)
-- [Özellikler](#özellikler)
-- [Gereksinimler](#gereksinimler)
-- [Kurulum](#kurulum)
-- [Hızlı başlangıç](#hızlı-başlangıç)
-- [Nasıl çalışır](#nasıl-çalışır)
-- [Fedora'ya özgü davranışlar](#fedoraya-özgü-davranışlar)
-- [Doğrulanmış durum](#doğrulanmış-durum)
-- [Testler](#testler)
-- [Güvenlik](#güvenlik)
-- [Katkı](#katkı)
-- [Lisans](#lisans)
+AXlinux runs on physical machines as well as virtual ones — including on
+the machine you use every day. Read [Why it is safe on a physical
+machine](#why-it-is-safe-on-a-physical-machine) before you start.
 
 ---
 
-## Neden AXlinux?
+## Contents
+
+- [Why AXlinux?](#why-axlinux)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [How it works](#how-it-works)
+- [Why it is safe on a physical machine](#why-it-is-safe-on-a-physical-machine)
+- [Fedora-specific behaviour](#fedora-specific-behaviour)
+- [Verified status](#verified-status)
+- [Tests](#tests)
+- [Emergency exit](#emergency-exit)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## Why AXlinux?
 
 | | SELinux | AXlinux |
 |---|---|---|
-| Politika kaynağı | Hazır, milyonlarca satır | **Senin YAML'ın** |
-| Kim yazar? | Fedora ekibi | Sen |
-| Öğrenme | `audit2allow` | `axctl learn` → gözlem → öneri |
-| Uygulama | `setenforce` + reboot riski | `axctl reload` → **anında** |
-| Log | `audit.log` (metin) | JSONL (yapılandırılmış, sorgulanabilir) |
-| Etki alanı | Sistem geneli | Süreç, yol, eylem — sen seçersin |
+| Policy source | Pre-built, millions of lines | **Your YAML** |
+| Who writes it? | The distribution vendor | You |
+| Learning | `audit2allow` | `axctl learn` → observe → propose |
+| Applying | `setenforce`, reboot risk | `axctl reload` → **instant** |
+| Log | `audit.log` (plain text) | JSONL (structured, queryable) |
+| Scope | Whole system | Process, path, action — you choose |
 
-SELinux kaldırılmak için değil, **tamamlanmak** için vardır. İkisi
-birlikte çalışır: SELinux alan sınırını verir (`axdaemon` kendi
-alanında çalışır), AXlinux içerik kurallarını yazar.
+SELinux is not meant to be removed — it is meant to be **complemented**.
+They work together: SELinux provides the domain boundary (`axdaemon`
+runs in its own confined domain), AXlinux writes the content rules.
 
-## Özellikler
+## Features
 
-- **YAML politika dili** — derlenmiş bir dil değil, okunabilir metin.
-- **Dizin kuralları içeriği korur** — `object: /tmp/gizli` ise içindeki
-  tüm dosyalar da korunur (derinlik 1/2/3 doğrulanmıştır).
-- **Altı aksiyon türü** — `file.read`, `file.write`, `file.execute`,
+- **A YAML policy language** — not a compiled format, just readable text.
+- **Directory rules protect their contents** — `object: /tmp/secrets`
+  protects everything inside it (verified at depths 1, 2 and 3).
+- **Six action types** — `file.read`, `file.write`, `file.execute`,
   `inode_permission`, `socket_connect`, `socket_bind`.
-- **Beş LSM kancası** — `file_open`, `inode_permission`,
+- **Five LSM hooks** — `file_open`, `inode_permission`,
   `bprm_check_security`, `socket_connect`, `socket_bind`.
-- **Üç mod** — `enforcing` (engelle), `permissive` (yalnız logla),
-  `disabled` (kısıt yok).
-- **Kalıcı politikalar** — `policies.d/` altındaki dosyalar açılışta
-  otomatik yüklenir.
-- **Önden görme** — `axctl policy simulate` kuralların etkisini
-  uygulamadan önce gösterir.
-- **Öğrenme modu** — `axctl learn` gözlem toplar, politika önerir.
-- **Etiketler** — süreçlere etiket atayıp kuralları etiket üzerinden yaz.
-- **Yapılandırılmış denetim** — JSONL log, `--subject` / `--effect` /
-  `--action` ile sorgulanır.
-- **Anında uygulama** — `axctl reload`; yeniden başlatma gerekmez.
+- **Three modes** — `enforcing` (block), `permissive` (log only),
+  `disabled` (no restrictions).
+- **Persistent policies** — files in `policies.d/` load automatically at
+  boot.
+- **Preview before applying** — `axctl policy simulate` shows what a
+  policy will affect before you enable it.
+- **Learning mode** — `axctl learn` collects observations and proposes
+  policy.
+- **Labels** — tag processes and write rules against the label.
+- **Structured audit** — JSONL logs, queryable by `--subject`,
+  `--effect`, `--action`.
+- **Instant application** — `axctl reload`; no reboot required.
 
-## Gereksinimler
+## Requirements
 
-| Bileşen | Sürüm | Not |
+| Component | Version | Note |
 |---|---|---|
-| İşletim sistemi | Fedora 41–44 | RHEL türevleri de çalışır |
-| Çekirdek | **5.15+** | `CONFIG_BPF_LSM=y` **ve** `lsm=bpf` zincirde olmalı |
-| clang | 12+ | `-target bpf` desteklemeli |
-| Go | 1.21+ | yalnızca **derleme** için |
+| Operating system | Fedora 41–44 | RHEL derivatives work too |
+| Kernel | **5.15+** | requires `CONFIG_BPF_LSM=y` **and** `bpf` in the active LSM chain |
+| clang | 12+ | must support `-target bpf` |
+| Go | 1.21+ | **build time only** |
 | Python | 3.9+ | `click`, `rich`, `PyYAML` |
-| Kök yetkisi | — | kurulum ve `axctl` için |
+| Root | — | for installation and `axctl` |
 
-## Kurulum
+## Installation
 
 ### RPM (Fedora)
 
@@ -99,7 +101,7 @@ alanında çalışır), AXlinux içerik kurallarını yazar.
 sudo dnf install ./axlinux-1.2.0-1.x86_64.rpm
 ```
 
-Paket imzalıdır:
+The package is signed:
 
 ```bash
 rpm -Kv axlinux-1.2.0-1.x86_64.rpm
@@ -113,7 +115,7 @@ rpm -Kv axlinux-1.2.0-1.x86_64.rpm
 sudo apt install ./axlinux_1.2.0_amd64.deb
 ```
 
-### Kaynaktan
+### From source
 
 ```bash
 git clone https://github.com/muhammetodosks/axlinux.git
@@ -121,10 +123,10 @@ cd axlinux
 sudo ./scripts/install.sh
 ```
 
-### Zorunlu ön koşul: `bpf` LSM
+### Mandatory prerequisite: the `bpf` LSM
 
-AXlinux, kernel'in aktif LSM zincirinde `bpf` bulunmadan politika
-**uygulayamaz**. `install.sh` bunu denetler ve gerekirse uyarır.
+AXlinux cannot enforce policy unless `bpf` is present in the kernel's
+active LSM chain. `install.sh` checks this and warns explicitly.
 
 ```bash
 # /etc/default/grub  ->  GRUB_CMDLINE_LINUX_DEFAULT
@@ -132,98 +134,162 @@ lsm=apparmor,bpf
 sudo update-grub && sudo reboot
 ```
 
-Denetlemek için:
+Verify:
 
 ```bash
 cat /sys/kernel/security/lsm
-# lockdown,capability,yama,selinux,bpf,...   <- "bpf" olmalı
+# lockdown,capability,yama,selinux,bpf,...   <- "bpf" must be present
 ```
 
-Ayrıntı: [docs/INSTALL.md](docs/INSTALL.md)
+Details: [docs/INSTALL.md](docs/INSTALL.md)
 
-## Hızlı başlangıç
+## Quick start
 
 ```bash
-axctl init                  # ~/.axlinux/ oluştur
-axctl policy edit           # YAML politikanı yaz
-axctl policy check          # doğrula
-axctl policy simulate       # neyi etkileyeceğini ÖNCE gör
-axctl mode permissive       # loglar, engellemez
-axctl reload                # uygula
-axctl status                # gerçek durumu kontrol et
+axctl init                  # create ~/.axlinux/
+axctl policy edit           # write your policy
+axctl policy check          # validate it
+axctl policy simulate       # see what it WOULD affect, before applying
+axctl mode permissive       # log, do not block
+axctl reload                # apply
+axctl status                # check the real state
 ```
 
-**Önerilen sıra bu.** `simulate` en önemli komuttur — kuralların neyi
-etkileyeceğini uygulamadan önce gösterir.
+**Follow this order.** `simulate` is the most important command — it
+shows the effect of your rules before anything is enforced.
 
-### Örnek politikalar
+### Example policies
 
-Depodaki `examples/` klasöründe dört hazır örnek var; hepsi
-`axctl policy check` ile doğrulanmıştır:
+Four ready-made examples live in `examples/`; all pass
+`axctl policy check`:
 
-| Dosya | Amaç |
+| File | Purpose |
 |---|---|
-| `examples/minimal.yaml` | En küçük başlangıç örneği |
-| `examples/desktop.yaml` | Masaüstü kullanımı (SSH/GPG anahtarları, tarayıcı profilleri) |
-| `examples/web-server.yaml` | Web sunucusu (yapılandırma ve günlük koruması) |
-| `packaging/fedora/axlinux-sample-workstation.yaml` | Kurulumla gelen örnek (kasıtlı olarak boş) |
+| `examples/minimal.yaml` | Smallest possible starting point |
+| `examples/desktop.yaml` | Desktop use (SSH/GPG keys, browser profiles) |
+| `examples/web-server.yaml` | Web server (config and log protection) |
+| `examples/50-guvenli-baslangic.yaml` | Safe default for new machines |
+| `packaging/fedora/axlinux-sample-workstation.yaml` | Installed sample (intentionally empty) |
 
-Kopyalamak için:
+To deploy one:
 
 ```bash
-sudo cp examples/desktop.yaml /etc/axlinux/policies.d/50-desktop.yaml
+sudo cp examples/50-guvenli-baslangic.yaml /etc/axlinux/policies.d/
+axctl policy check -f /etc/axlinux/policies.d/50-guvenli-baslangic.yaml
 sudo axctl reload
 ```
 
-Politika dili: [docs/policy-language.md](docs/policy-language.md)
+Policy language: [docs/policy-language.md](docs/policy-language.md)
 
-## Nasıl çalışır?
+## How it works?
 
 ```
-  axctl (Python)                     axdaemon (Go)                çekirdek
+  axctl (Python)                     axdaemon (Go)                kernel
        │                                   │                          │
   YAML ──┤ policy check / simulate         │                          │
        │                                   │                          │
   policy.yaml ─────────────────────────────►│                          │
-       │                            eBPF programlarını yükle         │
+       │                           load eBPF programs              │
        │                                   ├─────────────────────────►│
-       │                                   │      LSM kancaları bağla  │
+       │                                   │      attach LSM hooks    │
        │                                   ├─────────────────────────►│
-       │                                   │      deny_map / allow_map │
+       │                                   │      write deny/allow map │
        │                                   ├─────────────────────────►│
-       │◄────── status (kanca, kural) ──────┤                          │
+       │◄────── status (hooks, rules) ──────┤                          │
        │                                   │                          │
        │◄────── logs (JSONL) ──────────────┴──── audit perf buffer ───┤
 ```
 
-`axdaemon` politikayı eBPF haritalarına yazar ve LSM kancalarını bağlar.
-Çekirdek, kararı kanca anında verir — kullanıcı alanına girmez, süreç
-beklemez. İhlaller JSONL olarak `/var/log/axlinux/` altına düşer.
+`axdaemon` compiles your policy into eBPF maps and attaches the LSM
+hooks. The kernel then returns the decision inside the hook — the
+calling process never enters user space and never blocks on a daemon.
 
-SELinux modülü (`axlinux.pp`) `bpf()` yetkisini **yalnızca** `axdaemon`
-alanına verir; sistem geneline açmaz.
+Violations are written as JSONL to `/var/log/axlinux/`.
 
-## Fedora'ya özgü davranışlar
+The SELinux module (`axlinux.pp`) grants the `bpf()` capability **only**
+to the `axdaemon` domain. Nothing system-wide.
 
-İki davranış bilinmelidir:
+## Why it is safe on a physical machine
 
-**1. Kök dosya sistemi btrfs alt birimidir.** `/etc`, `/var`, `/home`,
-`/root` yol kuralları çalışır. `/tmp`, `/dev/shm`, `/run`,
-`/run/user/N` gibi ayrı bağlama noktaları da çalışır: daemon
-`mountinfo`'dan süperblok aygıtını okuyup `mount_point_map`'e yazar ve
-BPF bağlama köküne ulaştığında öneki yolun altına ekler.
+AXlinux is meant to be used on the machine you work on every day. It
+does not require a virtual machine, and it does not refuse to run on
+physical hardware — `install.sh` and `axctl` contain **no**
+virtual-machine check at all.
 
-**2. `file.execute` kuralları sembolik bağların hedefine uygulanır.**
-`/usr/bin/python3` bir bağ ise kural `python3.14` için yazılır.
-Bu güvenlik için zorunludur — aksi hâlde bağ üzerinden kural atlanır.
+What you may have read about "physical machine protection" refers to
+the **test suite**, not the product: `tests/deep_verify.sh` refuses to
+run enforcement tests on a physical machine, because a test that
+deliberately denies access can lock the machine you are working on. It
+can be overridden with `AXLINUX_ALLOW_PHYSICAL=1`. That is a property
+of the *tests*, not a limitation of the product.
 
-## Doğrulanmış durum
+### The properties that make physical use safe
 
-Tüm sayılar **ölçülmüştür**. Kaynak: [`DOGRULAMA-RAPORU.md`](DOGRULAMA-RAPORU.md).
+These are measured, not asserted:
 
-### `deep_verify.sh` — 732 kontrol
+| Property | Measured result |
+|---|---|
+| **Emergency exit always works** | A policy denying `cat /etc/hostname` made the read fail (`rc=1`). `axctl mode disabled` immediately after made the same read succeed (`rc=0`). No reboot required. |
+| **Policy survives reboot** | A rule placed in `policies.d/` was loaded at boot (`rules=1`) and enforced (`rc=1`). |
+| **SELinux confines only the daemon** | The module grants `cap_bpf` to `axlinux_daemon_t` alone — verified as 10 types and 8 file-context rules, never system-wide. |
+| **Preview before enforcement** | `axctl policy simulate` evaluates rules without applying them. |
+| **A failing policy can be rolled back** | `axctl mode disabled` needs no policy, no network and no other process. |
 
-| Platform | geçti | kaldı | atlandı |
+### The safe order
+
+```
+1. axctl policy check      validate syntax and meaning
+2. axctl policy simulate  see the effect in advance
+3. axctl mode permissive   observe without blocking
+4. axctl reload            apply
+5. axctl status            confirm the real state
+```
+
+### Practical recommendations
+
+- **Start in `permissive`.** Run it for a few days and read the log
+  before you block anything.
+- **Never deny your own shell.** Shells are your recovery path. The
+  validator warns when a rule targets recovery processes such as
+  `bash`, `zsh` or `fish`.
+- **Do not use a `file.execute` deny rule on `/usr/bin` before you have
+  confirmed the allow-list is correct.** It can stop your system from
+  starting services.
+- **Keep `axctl mode disabled` in your muscle memory.** It is one
+  command and it always works.
+
+### Known structural limit
+
+The `inode_permission` hook cannot return a **path**: the kernel ABI
+gives it only `struct inode *`, with no way back to a dentry. AXlinux
+therefore records `ino` + `dev` identity for those events, and obtains
+paths from the `file_open` and `bprm_check_security` hooks instead.
+This is a kernel design constraint, not a missing feature.
+
+## Fedora-specific behaviour
+
+Two behaviours are worth knowing:
+
+**1. The root filesystem is a btrfs subvolume.** Path rules work for
+`/etc`, `/var`, `/home` and `/root`. Separate mount points such as
+`/tmp`, `/dev/shm`, `/run` and `/run/user/N` also work: the daemon reads
+the superblock device from `mountinfo`, records it in
+`mount_point_map`, and when BPF reaches a mount root it appends the
+prefix beneath that path.
+
+**2. `file.execute` rules apply to the target of symbolic links.** If
+`/usr/bin/python3` is a symlink, the rule is written for `python3.14`.
+This is mandatory for security — otherwise a rule can be bypassed
+through a link.
+
+## Verified status
+
+Every number below was measured. Source:
+[docs/VERIFICATION-REPORT.md](docs/VERIFICATION-REPORT.md).
+
+### `deep_verify.sh` — 732 checks
+
+| Platform | passed | failed | skipped |
 |---|---|---|---|
 | **Fedora 44** | **732** | **0** | **0** |
 | Fedora 43 | 732 | 1 | 1 |
@@ -231,104 +297,87 @@ Tüm sayılar **ölçülmüştür**. Kaynak: [`DOGRULAMA-RAPORU.md`](DOGRULAMA-R
 | Debian 12 | 731 | 0 | 1 |
 | Pardus 25.2 | 731 | 0 | 1 |
 
-Debian ailesindeki tek atlanan kalem `SELinux yok`'tur — Debian ailesi
-SELinux sağlamaz; bu eksik değil, platform farkıdır. Fedora 44'te
-**hiçbir kalem atlanmaz**.
+The single skip on Debian-family systems is `SELinux unavailable` — the
+Debian family ships no SELinux. That is a platform difference, not a gap.
+On Fedora 44 **nothing is skipped and nothing fails**.
 
-Fedora 43'teki tek kalem, o imajda SELinux kuşaklamasının eBPF yüklemeyi
-engellediğini dürüstçe bildiren rapordur; enforcement çalışmaktadır
-(kanca 5/5, eBPF 5/5).
+The single failure on Fedora 43 is an honest report: on that image,
+enabling SELinux confinement prevents eBPF from loading, so the
+installer detects this, reverts the labels and leaves enforcement
+running on LSM alone (measured: hooks 5/5, eBPF 5/5).
 
-### Ölçülen performans
+### Measured performance
 
-| Ölçüm | Değer |
+| Metric | Value |
 |---|---|
-| `axdaemon` RSS | 108.236 kB (~106 MB) |
-| Açık dosya tanıtıcı | 33 |
-| 50.000 dosya açma (`enforcing`) | 0.559 s (~89.600 açma/sn) |
-| 50.000 dosya açma (`disabled`) | 0.228 s (~220.000 açma/sn) |
-| Politika sorgusu maliyeti | +5.8 µs (aralıklar çakışmıyor — ölçülebilir) |
+| `axdaemon` RSS | 108,236 kB (~106 MB) |
+| Open file descriptors | 33 |
+| 50,000 file opens (`enforcing`) | 0.559 s (~89,600 opens/s) |
+| 50,000 file opens (`disabled`) | 0.228 s (~220,000 opens/s) |
+| Policy lookup cost | +5.8 µs (ranges do not overlap — measurable) |
 
-Fark 0.33 saniye: tarayıcı açılışı gibi gerçek bir iş yükünde
-algılanmayacak büyüklükte.
+The difference is 0.33 seconds — imperceptible in a real workload such
+as a browser start.
 
-> Mutlak mikrosaniye değerleri tek başına ölçüt değildir — aynı ölçüm
-> Ubuntu'da Fedora'ya göre ~20 kat yavaş çıkar, çünkü sanal makine ortamı
-> belirleyicidir. Bu yüzden test paketi **göreli oran** uygular.
+> Absolute microsecond figures are not a criterion on their own: the
+> same measurement runs about 20× slower under Ubuntu than Fedora,
+> because the virtual machine environment dominates. The test suite
+> therefore applies a **relative** threshold.
 
-### Paketleme matrisi
+### Packaging matrix
 
-Beş imajın beşinde de paketleme koşuldu: `fedora:41/42/43/44` ve
-`debian:12` — her biri 8/8 içerik + 5 conffiles + SELinux modülü.
+All five images were built and verified: `fedora:41/42/43/44` and
+`debian:12` — each with 8/8 content, 5 conffiles and the SELinux module.
 
-## Testler
+## Tests
 
 ```bash
-# Yerel paket — hızlı
-python3 -m pytest tests/ -q          # 179 test + 20 alt test
-cd src/go/axdaemon && go test ./...  # 10 paket
-cd src/go/axlog    && go test ./...  # 3 paket
+# Local package — fast
+python3 -m pytest tests/ -q          # 180 tests + 22 subtests
+cd src/go/axdaemon && go test ./...  # 10 packages
+cd src/go/axlog    && go test ./...  # 3 packages
 
-# Tam doğrulama — sanal makine gerektirir
+# Full verification — requires a virtual machine
 sudo bash tests/deep_verify.sh
 ```
 
-`deep_verify.sh` 732 kontrolü çalıştırır ve tek rapor üretir. Fiziksel
-makinede çalışmayı **reddeder** — bu bilinçli bir güvenlik sınırıdır.
+`deep_verify.sh` runs 732 checks and produces a single report. It
+refuses to run enforcement tests on a physical machine, because those
+tests deliberately deny access and could lock the machine. Override
+with `AXLINUX_ALLOW_PHYSICAL=1` only if you have console access and a
+known way out.
 
-Ayrıntı: [DOGRULAMA-RAPORU.md](DOGRULAMA-RAPORU.md)
+Details: [docs/VERIFICATION-REPORT.md](docs/VERIFICATION-REPORT.md)
 
-## Güvenlik
-
-### Acil çıkış
+## Emergency exit
 
 ```bash
 sudo axctl mode disabled
 ```
 
-Her zaman çalışır ve tüm kısıtları kaldırır.
+This always works, removes every restriction, and requires no reboot.
+Keep it in your muscle memory before you write your first rule.
 
-### Güvenli uygulama sırası
+## Contributing
 
-```
-1. axctl policy check      → sözdizimi ve anlam doğrulaması
-2. axctl policy simulate  → etkiyi önceden gör
-3. axctl mode permissive   → loglar, engellemez
-4. axctl reload            → uygula
-5. axctl status            → gerçek durumu doğrula
-```
+Contributions are welcome: [CONTRIBUTING.md](CONTRIBUTING.md)
 
-### Bilinen sınır
+## License
 
-`inode_permission` kancası kernel ABI'si gereği **yol alamaz** —
-yalnızca `struct inode *` verilir, dentry'ye geri referans yoktur.
-Çözüm olarak `ino` + `dev` kimliği audit kaydına eklenir; yol gerektiren
-kayıtlar `file_open` ve `bprm_check_security` kancalarında kalır.
+MIT — see [LICENSE](LICENSE)
 
-### Güvenlik açığı bildirimi
+## Documentation
 
-Güvenlik açığı bulursanız lütfen [SECURITY.md](SECURITY.md) içindeki
-yöntemi izleyin — herkese açık issue yerine özel bildirim.
-
-## Katkı
-
-Katkılar memnuniyetle karşılanır:
-[CONTRIBUTING.md](CONTRIBUTING.md)
-
-## Lisans
-
-MIT — bkz. [LICENSE](LICENSE)
-
-## Belgeler
-
-| Belge | İçerik |
+| Document | Contents |
 |---|---|
-| [DOGRULAMA-RAPORU.md](DOGRULAMA-RAPORU.md) | Her iddianın nasıl kanıtlandığı, bulunan gerçek hatalar |
-| [DAGITIM.md](DAGITIM.md) | Kurulum yolları ve platform sonuçları |
-| [SUPPORT.md](SUPPORT.md) | Desteklenen sistemler ve sınırlar |
-| [FEDORA-READINESS.md](FEDORA-READINESS.md) | Fedora ölçüm tabloları |
-| [CHANGELOG.md](CHANGELOG.md) | Sürüm geçmişi |
-| [docs/INSTALL.md](docs/INSTALL.md) | Ayrıntılı kurulum |
-| [docs/policy-language.md](docs/policy-language.md) | Politika dili |
-| [docs/cli-reference.md](docs/cli-reference.md) | Tüm komutlar |
-| [docs/architecture.md](docs/architecture.md) | İç mimari |
+| [docs/VERIFICATION-REPORT.md](docs/VERIFICATION-REPORT.md) | How every claim was proven; real bugs found |
+| [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) | Installation paths and per-platform results |
+| [SUPPORT.md](SUPPORT.md) | Supported systems and limits |
+| [docs/FEDORA-READINESS.md](docs/FEDORA-READINESS.md) | Fedora measurement tables |
+| [CHANGELOG.md](CHANGELOG.md) | Version history |
+| [docs/INSTALL.md](docs/INSTALL.md) | Detailed installation |
+| [docs/policy-language.md](docs/policy-language.md) | Policy language reference |
+| [docs/cli-reference.md](docs/cli-reference.md) | All commands |
+| [docs/architecture.md](docs/architecture.md) | Internal architecture |
+| [SECURITY-NOTICE.md](SECURITY-NOTICE.md) | Safety notes and emergency exit |
+| [docs/challenges-risks.md](docs/challenges-risks.md) | Known challenges and risks |

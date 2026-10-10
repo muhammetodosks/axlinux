@@ -1,244 +1,291 @@
-# AXlinux kurulumu
+# Installation
 
-## Gereksinimler
+This document covers every installation path, the mandatory kernel
+prerequisite, and how to verify the result.
 
-| Bileşen | Sürüm | Not |
-|---------|-------|-----|
-| Kernel | 5.15+ | `CONFIG_BPF_LSM=y` **ve** `lsm=bpf` |
-| clang | 12+ | eBPF hedefi desteklemeli (`-target bpf`) |
-| Go | 1.21+ | axdaemon ve axlog |
-| Python | 3.10+ | axctl |
-| libbpf | 1.0+ | `libbpf-dev` |
+> AXlinux runs on physical machines as well as virtual ones. The only
+> restriction in this document is that the **test suite** needs a virtual
+> machine, because those tests deliberately deny access.
 
-## 1. BPF LSM'i etkinlestir (EN ONEMLI ADIM)
+---
 
-BPF LSM derlenmis olsa bile, boot parametresiyle aktif LSM zincirine
-eklenmedikce hicbir program baglanamaz. Bu adim atlanirsa
-`axdaemon` su hatayi verir:
+## 1. Prerequisites
 
-```
-libbpf: prog 'ax_file_open': BPF program load failed: -EACCES
-```
+### 1.1 The `bpf` LSM must be active
 
-Mevcut zinciri kontrol et:
+AXlinux enforces policy inside LSM hooks. If `bpf` is not in the kernel's
+active LSM chain, nothing can be enforced.
 
 ```bash
 cat /sys/kernel/security/lsm
-# lockdown,capability,landlock,yama,apparmor,ima,evm
-#                                   ^^^^^^^^^ bpf YOK
 ```
 
-`bpf` listede degilse GRUB'a ekle.
+If the output contains `bpf`, you are ready. If it does not, add it to
+the kernel command line:
 
 ```bash
-sudoedit /etc/default/grub
-```
-
-GRUB_CMDLINE_LINUX satirini su sekilde duzenle (apparmor ile birlikte
-calisir, sadece bpf tek basina yazma):
-
-```
-GRUB_CMDLINE_LINUX_DEFAULT="... lsm=apparmor,bpf"
-```
-
-Sonra:
-
-```bash
-sudo update-grub
-sudo reboot
-```
-
-Dogrulama:
-
-```bash
-cat /sys/kernel/security/lsm
-# bpf gorunuyor olmali
-```
-
-> Not: Ubuntu'da `apparmor` MAC slotunu kaplar. `bpf`yi eklemezsen
-> AXlinux baglanamaz; ikisi birlikte zincirde sirayla calisir.
-
-## 2. Bagimliliklar
-
-```bash
-# Debian / Ubuntu
-sudo apt install clang llvm libbpf-dev python3-pip make
-
-# Fedora
-sudo dnf install clang llvm libbpf-devel python3-pip make
-
-# Arch
-sudo pacman -S clang llvm libbpf python-pip make
-```
-
-## 3. Derle
-
-```bash
-git clone <repo> axlinux && cd axlinux
-sudo make install
-```
-
-Ayrintili:
-
-```bash
-make            # her seyi derler
-make bpf        # yalnizca eBPF (axbpf.o)
-make verify     # sozlesme + bolum dogrulamasi
-make test       # Go + Python testleri
-make install    # /usr/local/bin ve /usr/lib/axlinux altina kurar
-```
-
-## 4. Dogrulama
-
-```bash
-axctl init
-axctl policy check
-sudo systemctl start axdaemon
-axctl status
-```
-
-Beklenen: `eBPF Programları  5/5 yüklü` ve `LSM Kancaları  5/5 aktif`.
-
-Bunlar `0/5` ise LSM baglanmamistir: `cat /sys/kernel/security/lsm`
-ciktisinda `bpf` olmalidir.
-
-### Tam dogrulama (onerilen)
-
-Yukaridaki kontroller LSM zincirinin dogru oldugunu gosterir ama
-**engellemenin gercekten calistigini kanitlamaz**. "5/5 kanca bagli"
-olmasi, kurallarin uygulandigi anlamina gelmez.
-
-```bash
-sudo bash tests/verify_all.sh
-```
-
-Bu betik sunlari yapar ve **sistemi kilitlemez**:
-
-1. LSM zincirini dogrular
-2. Daemon'u baslatir
-3. Her kanca icin gercek engelleme dener (`file_open`,
-   `inode_permission`, `socket_bind`, `socket_connect`, `bprm`)
-4. Audit kaydinin dogru geldigini dogrular
-5. Mod gecislerini (enforcing/permissive/disabled) dogrular
-6. Kilitlenme korumasini kanitlar
-
-Her adimdan sonra mod `disabled`'a cekilir, boylece bir adim takilsa
-bile sonraki calistirmalarda oturum kilitlenmez.
-
-### Dogrulama sirasinda takilirsaniz
-
-`tests/verify_all.sh` veya `axctl mode disabled` **calismiyorsa**
-sistem kilitlenmis olabilir. Bu durumda:
-
-```bash
-# GRUB'dan bpf'yi kaldirip yeniden baslat (acil cikis)
-sudo sed -i 's/,bpf"$/"/' /etc/default/grub
+# /etc/default/grub  ->  GRUB_CMDLINE_LINUX_DEFAULT
+lsm=apparmor,bpf
 sudo update-grub && sudo reboot
 ```
 
-Yedek: `/etc/default/grub.axlinux-backup`
-
-Nadiren olur: koruma (`ax_protected`) normalde `bash`, `sudo`,
-`systemd`, `sshd` gibi sureclere kural uygulanmasini engeller. Bir
-kuralin yanlislikla bir arac zinciri surecini hedefledigi durumlarda
-bu onlem devreye girer. `tests/test_protection.py` listesin
-dogru kaldigini dogrular.
-
-Reboot sonrasi calistirilacak tek komut:
+After the reboot:
 
 ```bash
-sudo bash scripts/recover-and-verify.sh
+cat /sys/kernel/security/lsm
+# expect bpf to be present
 ```
 
-Derler, test eder, gercek enforcement'i dogrular ve gecerse git
-commit yapar.
+### 1.2 Kernel BTF must exist
 
-## 5. Ilk politika
+The BPF program is compiled against kernel type information extracted
+from BTF.
 
 ```bash
-axctl policy edit
+ls -la /sys/kernel/btf/vmlinux
 ```
 
-```yaml
-version: 1
-mode: enforcing
-rules:
-  - name: "firefox /etc/shadow okuyamaz"
-    subject: firefox
-    object: /etc/shadow
-    action: file.read
-    effect: deny
-```
+If this file is missing, your kernel was built without
+`CONFIG_DEBUG_INFO_BTF=y` and BPF cannot be built for it.
 
-### subject icin ne secmeliyim
+### 1.3 Package requirements
 
-`subject` alanina **hedef uygulamayi** yazin. Sistem sureclerini
-(`bash`, `sudo`, `systemd`, `sshd`) yazmayin: AXlinux bunlara
-guvenlik geregi hicbir kural uygulamaz ve kural sessizce
-etkisiz kalir.
+| Component | Version |
+|---|---|
+| Kernel | 5.15+ with `CONFIG_BPF_LSM=y` |
+| clang | 12+ (must support `-target bpf`) |
+| Go | 1.21+ (**build only**) |
+| Python | 3.9+ with `click`, `rich`, `PyYAML` |
 
-```yaml
-# Dogru: hedef uygulama
-subject: firefox
+---
 
-# Etkisiz: korumali surec (uyari verilir)
-subject: bash
-```
+## 2. Install from the RPM (Fedora)
 
 ```bash
-axctl policy check
-axctl policy simulate
-sudo axctl reload
-axctl status
+sudo dnf install ./axlinux-1.2.0-1.x86_64.rpm
 ```
 
-## Sorun giderme
-
-**`BPF program load failed: -EACCES`**
-`lsm=bpf` boot parametresi eksik. Yukariya bakin.
-
-**`axbpf.h: No such file`**
-`make` calistirin, `vmlinux.h` otomatik uretilir. Elle uretilmis
-`vmlinux.h` calismazsa:
+Verify the signature first if you received the package from a third
+party:
 
 ```bash
-cd src/bpf && rm -f vmlinux.h && make
+rpm -Kv axlinux-1.2.0-1.x86_64.rpm
+# Header OpenPGP V4 RSA/SHA512 signature,
+#   key fingerprint: f108e5cc55806bbb4fc42afa6a2e2989448a5310: OK
 ```
 
-**`permission denied` (socket)**
-`/run/axlinux` yok. `sudo mkdir -p /run/axlinux` ya da servisi root ile
-baslatin.
+What the package does automatically:
 
-Socket izni `0600`'dir: yalnizca root baglanabilir. Bu bilincli bir
-karardir — socket uzerinden `reload_policy` gonderilebildigi icin
-herkese acik olsaydi (`0666`) herhangi bir yerel kullanici sistem
-genelinde politika degistirebilirdi.
+1. Installs the SELinux module (`axlinux.pp`) and loads it
+2. Writes file contexts so `axdaemon` runs in its own confined domain
+3. Places the compiled BPF object at `/usr/lib/axlinux/axbpf.o`
+4. Installs a journald limit (`SystemMaxUse=200M`)
+5. Enables and starts `axdaemon.service` and `axlog.service`
 
-Bu yuzden `axctl` komutlarini `sudo` ile calistirin:
+If SELinux confinement turns out to prevent eBPF from loading on your
+system, the installer detects it, reverts the labels, restarts the
+service and reports it. Enforcement continues on LSM alone.
+
+---
+
+## 3. Install the .deb (Debian, Ubuntu, Pardus)
+
+```bash
+sudo apt install ./axlinux_1.2.0_amd64.deb
+```
+
+If you use `dpkg` directly, resolve dependencies afterwards:
+
+```bash
+sudo dpkg -i axlinux_1.2.0_amd64.deb
+sudo apt-get -f install
+```
+
+---
+
+## 4. Install from source
+
+```bash
+git clone https://github.com/muhammetodosks/axlinux.git
+cd axlinux
+sudo ./scripts/install.sh
+```
+
+`install.sh` detects your package manager and installs the right
+packages. It has been verified on all six supported managers: `apt-get`,
+`dnf`/`yum`, `pacman`, `apk` and `zypper`.
+
+### 4.1 Options
+
+| Option | Effect |
+|---|---|
+| `--unattended` | do not prompt |
+| `--url URL` | fetch sources from a URL |
+| `--no-lsm` | skip the LSM chain check (advanced) |
+| `--uninstall` | remove AXlinux |
+
+### 4.2 Build dependencies
+
+Fedora:
+
+```bash
+sudo dnf install golang clang llvm bpftool make gcc rpm-build rpm-sign \
+  python3-devel python3-setuptools python3-click python3-rich \
+  python3-yaml selinux-policy-devel systemd-rpm-macros kernel-core
+```
+
+Debian / Ubuntu:
+
+```bash
+sudo apt install golang clang llvm make dpkg-dev python3-dev \
+  python3-setuptools python3-click python3-rich python3-yaml \
+  linux-headers-amdbook-$(uname -r)
+```
+
+> **Debian note:** the distribution's `golang` package is Go 1.19, but
+> this project requires Go 1.21 (`go.mod` and the use of `log/slog`).
+> On Debian 12 install `golang-1.23-go` from bookworm-backports.
+
+Arch:
+
+```bash
+sudo pacman -S --needed clang llvm libbpf libbpf-devel linux-headers \
+  python-pytest base-devel git rsync curl tar netcat-openbsd
+```
+
+Alpine:
+
+```bash
+apk add clang llvm libbpf-dev linux-headers py3-pytest \
+  build-base git rsync curl tar
+```
+
+openSUSE:
+
+```bash
+sudo zypper install clang llvm libbpf libbpf-devel \
+  linux-devel-default python3-pytest gcc make git rsync curl \
+  ca-certificates tar bpftool netcat-openbsd
+```
+
+---
+
+## 5. Verify the installation
 
 ```bash
 sudo axctl status
-sudo axctl mode enforcing
 ```
 
-Dogrudan socket'e baglanmak da ayni sekilde `sudo` gerektirir.
+A healthy installation reports:
 
-**Politika yuklendi ama bir sey engellenmiyor**
-Sirasiyla kontrol edin:
+```
+lsm_hooks_active    : 5
+lsm_hooks_total     : 5
+bpf_programs_loaded : 5
+policy_healthy      : true
+```
 
-1. `sudo axctl status` -> `lsm_hooks_active` 5 mi?
-   5 degilse `hooks_missing` hangi kancayi gosterir; enforcement
-   KISMIDIR ve eksik kancalara yazilan kurallar etkisiz kalir.
-2. Mod `enforcing` mi? (`sudo axctl mode enforcing`)
-3. `audit_healthy` `true` mu? `false` ise kararlar kaydedilmiyor
-   demektir; enforcement calisiyor olabilir ama kanit toplanmiyor.
-4. Log'da kural isabet ediyor mu? (`sudo axctl logs --filter effect=deny`)
+Then run the full verification suite:
 
-Yanlis `effect` degerleri sessizce hicbir seyi engellemez; bu yuzden
-`go test ./internal/maps/` sozlesme testi calistirilir.
+```bash
+sudo bash tests/deep_verify.sh
+```
 
-**Desteklenmeyen eylem reddediliyor**
-`file.delete`, `file.create` ve `net.accept` icin LSM kancasi yok.
-Bunlarla yazilan kurallar yukleme aninda hata verir; bu bir eksiklik
-degil, sessiz basarisizligi onleme kararidir. Silme kontrolu icin
-dosya sistemi izinlerini (`chmod`, ACL) kullanin.
+This runs 732 checks and produces one report.
+
+> `deep_verify.sh` refuses to run on a **physical** machine, because it
+> deliberately denies access while testing and could lock the machine
+> you are working on. Run it inside a VM. If you have console access and
+> a known way out, override with:
+>
+> ```bash
+> AXLINUX_ALLOW_PHYSICAL=1 sudo bash tests/deep_verify.sh
+> ```
+
+This restriction applies to the test harness only. AXlinux itself
+installs and runs on physical machines without limitation.
+
+---
+
+## 6. Your first policy
+
+```bash
+axctl init                  # create ~/.axlinux/
+axctl policy edit           # write rules
+axctl policy check          # validate
+axctl policy simulate       # preview the effect
+axctl mode permissive       # observe first
+axctl reload                # apply
+axctl status                # confirm
+```
+
+Start from an example:
+
+```bash
+cp examples/50-guvenli-baslangic.yaml ~/.axlinux/policy.yaml
+axctl policy check
+axctl policy simulate
+```
+
+---
+
+## 7. Uninstall
+
+```bash
+sudo axlinux-remove        # or: sudo ./scripts/install.sh --uninstall
+```
+
+Measured removal result (two consecutive clean cycles):
+
+```
+semodule        : 0
+fcontext        : 0
+local fcontext  : 0
+module file     : 0
+binaries        : 0/4
+```
+
+Configuration files are **backed up before removal** to
+`/var/lib/axlinux/removed-config-<timestamp>/` and the path is printed.
+(RPM normally deletes `%config(noreplace)` files during removal, which
+would lose operator edits.)
+
+Your policy and audit data are preserved:
+
+- `~/.axlinux` (or `$AXLINUX_HOME`)
+- `/var/log/axlinux`
+
+Remove them by hand if you want a completely clean system.
+
+---
+
+## 8. Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `lsm_hooks_active: 0` | `bpf` not in the LSM chain | add `bpf` to the kernel command line, reboot |
+| `bpf_programs_loaded: 0` | BTF missing, or SELinux denies `bpf()` | check `/sys/kernel/btf/vmlinux`; see §2 |
+| `policy_healthy: false` | a policy file failed to load | `journalctl -u axdaemon` names the offending file |
+| "system policy could not be loaded" | one broken file in `policies.d/` breaks **all** of them | run `axctl policy check -f <file>` on each |
+| Service will not start | stale BPF maps | `sudo systemctl stop axdaemon axlog`, remove `/sys/fs/bpf/axlinux`, restart |
+
+### Diagnosing policies
+
+```bash
+sudo journalctl -u axdaemon -f
+sudo axctl logs --limit 50
+axctl policy check -f /etc/axlinux/policies.d/50-mine.yaml
+```
+
+The `cmd/mapdump` and `cmd/mapcmp` tools in `src/go/axdaemon/cmd/`
+compare raw BPF map bytes. They are the only way to tell whether the
+kernel produced exactly the key Go wrote.
+
+---
+
+## Further reading
+
+- [docs/policy-language.md](docs/policy-language.md) — policy reference
+- [docs/cli-reference.md](docs/cli-reference.md) — all commands
+- [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md) — distribution paths
+- [SECURITY-NOTICE.md](SECURITY-NOTICE.md) — safety notes
