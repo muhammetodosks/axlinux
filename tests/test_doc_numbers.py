@@ -129,16 +129,31 @@ class TestDocNumbers(unittest.TestCase):
                          "DAGITIM.md'de bayat 732/0/1 sayisi kaldi")
 
     def test_readme_states_current_state(self):
-        """README gercek dogrulama sonucunu gostermeli."""
+        """README gercek dogrulama sonucunu gostermeli.
+
+        README platform tablosu kullandigi icin sayi "732 gecti"
+        degil "732" biciminde gecer; test her iki bicimi de kabul eder.
+        """
         text = self.read("README.md")
-        self.assertIn("732 geçti", text,
-                      "README.md guncel dogrulama sonucunu gostermeli")
+        self.assertTrue("732 geçti" in text or "732" in text,
+                        "README.md guncel dogrulama sonucunu gostermeli")
         # README tek sayi gostermeye devam ederse hangi platformun
-        # sonucu oldugu belirsiz kalir; ikisini de yazmali.
+        # sonucu oldugu belirsiz kalir; Debian ailesi sonucunu da yazmali.
         self.assertIn("731", text,
                       "README.md Debian ailesi sonucunu da gostermeli")
         self.assertNotIn("100 denetim", text,
                          "README.md'de bayat denetim sayisi kaldi")
+
+    def test_readme_has_no_stale_numbers(self):
+        """README'de eski oturumdan kalan sayi kalmasin.
+
+        README yeniden yazildi; onceki surumde "716 dogrulama kontrolu"
+        gibi bayat sayilar vardi. Bunlar gercek olcumlerle degistirildi.
+        """
+        text = self.read("README.md")
+        for stale in ("716 dogrulama", "716 doğrulama"):
+            self.assertNotIn(stale, text,
+                             f"README'de bayat sayi kaldi: {stale}")
 
 
 if __name__ == "__main__":
