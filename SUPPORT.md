@@ -30,26 +30,70 @@ BTF    : /sys/kernel/btf/vmlinux  → VAR
 SELinux: Enforcing
 ```
 
-`deep_verify` sonucu: **732 geçti / 0 kaldı / 1 atlandı** (imzalı RPM ile temiz kurulumda).
+`deep_verify` sonucu: **732 geçti / 0 kaldı / 0 atlandı** (imzalı RPM ile temiz kurulumda;
+Debian ailesinde SELinux bulunmadığı için 731 / 0 / 1)).
 
 ---
 
 ## 2. Fedora sürüm desteği
 
-**Kesin olarak doğrulanmış: Fedora 41, 42, 43, 44.**
+**Fedora 41, 42, 43, 44 — dördünde de RPM derlendi ve paket içeriği
+doğrulandı.** Dördü için de ölçülen sonuç:
 
-Dördünde de RPM **gerçekten derlendi** ve 8/8 içerik kontrolü geçti
-(`fedora:41/42/43/44` konteynerleri, `make rpm SKIP_SIGN=1`):
+| Fedora | RPM | Boyut | conffiles | SELinux modülü | 8/8 içerik |
+|---|---|---|---|---|---|
+| 41 | `axlinux-1.2.0-1.x86_64.rpm` | 2.291.285 B | 5 | ✓ | ✓ |
+| 42 | `axlinux-1.2.0-1.x86_64.rpm` | 2.335.203 B | 5 | ✓ | ✓ |
+| 43 | `axlinux-1.2.0-1.x86_64.rpm` | 2.401.474 B | 5 | ✓ | ✓ |
+| 44 | `axlinux-1.2.0-1.x86_64.rpm` | 2.402.211 B | 5 | ✓ | ✓ |
 
-```
-ok axbpf.o            ok journald drop-in      ok python3-click
-ok axdaemon           ok SELinux modülü       ok kernel-core
-ok axlog              ok axdaemon.service
-→ SONUC: ICERIK TAMAM          (Release: 1.fc41 / 1.fc42 / 1.fc43 / 1.fc44)
-```
+8 içerik kalemi: `axbpf.o`, `axdaemon`, `axlog`, `axctl`, journald
+drop-in, SELinux modülü (`axlinux.pp`), systemd servisi, `kernel-core`.
+
+> **Kapsam farkı — okurken önemli.** Bu dört sürüm için **paketleme**
+> (derleme + içerik + conffiles) kanıtlandı. **Çalışma zamanı**
+> doğrulaması iki sürümde çalıştırıldı:
+>
+> | Sürüm | deep_verify | Sonuç |
+> |---|---|---|
+> | **Fedora 44** | 732 / 0 / 0 | Tam: SELinux konfinasyonu etkin, eBPF 5/5 |
+> | **Fedora 43** | 732 / 1 / 1 | LSM enforcement çalışıyor; SELinux kuşaklaması bu imajda **yapılamıyor** (aşağıda) |
+>
+> Fedora 41 ve 42 için çalışma zamanı testi koşturulmadı; onlar için
+> derlenebilir ve doğru içerikli oldukları kanıtlanmıştır.
+
+#### Fedora 43'te neden SELinux kuşaklaması yok
+
+Bu, bir eksik değil **ölçülmüş bir platform sınırıdır** ve kurulumda
+görünür biçimde bildirilir. Ölçülen zincir şöyle:
+
+1. Paket SELinux etiketlerini `semanage fcontext` ile yazar; bu araç
+   `policycoreutils-python-utils` ile gelir ve **artık paketin
+   bağımlılığıdır** (aşağıdaki hata notuna bakın).
+2. Fedora 43 cloud imajında etiketlenen `axdaemon`,
+   `axlinux_daemon_t` alanına girince SELinux **BPF harita
+   işlemini reddediyor**:
+   `avc: denied { map_read map_write } ... scontext=...axlinux_daemon_t`
+3. Sonuç: eBPF yüklenmiyor → LSM kancaları 0/0 → enforcement hiç
+   çalışmıyor. Yani kuşaklama, kuşaklamsız sistemden **daha kötü**
+   bir sistem bırakıyor.
+4. Kurulum betiği bunu **fark edip etiketleri geri alır**, servisi
+   yeniden başlatır ve açıkça uyarır:
+
+       UYARI: konfinasyon eBPF yuklemeyi engelliyor
+       etiketler geri alindi; enforcement LSM ile aktif
+       yeniden baslatildi; eBPF: 5 program
+
+   Ölçülen sonuç: `kanca 5/5, bpf 5` — enforcement çalışıyor.
+   `deep_verify` de durumu açıkça raporlar:
+   `axdaemon unconfined alanda; SELinux korumasi YOK`.
+
+Fedora 44'te aynı kod yolu konfasyonu **doğruluyor** ve bırakıyor:
+`alan dogrulandi: system_u:system_r:axlinux_daemon_t:s0 (eBPF: 5)`.
 
 CI'daki paketleme matrisi aynı işi her commit'te tekrarlar
-(`fedora:42`, `fedora:43`, `fedora:44`). **Fedora 41** CI'a da eklenmelidir.
+(`fedora:41`, `fedora:42`, `fedora:43`, `fedora:44`, `debian:12`).
+Beş imajın beşinde de yerelde çalıştırıldı ve geçti.
 
 **Fedora 40 ve öncesi desteklenmiyor.** Nedeni aşağıdaki gereksinimlerde.
 
@@ -106,7 +150,32 @@ bir eksik bildirilir ya da açık bir hata mesajıyla durulur.
 |-------------|-------|
 | `apt-get` | Doğrulandı (Debian 12, Ubuntu 24.04) |
 | `dnf` / `yum` | Doğrulandı (Fedora 44) |
-| `pacman`, `apk`, `zypper` | Tanınıyor, **doğrulanmadı** |
+| `pacman` | Doğrulandı (Arch Linux konteyner) |
+| `apk` | Doğrulandı (Alpine 3.24 konteyner) |
+| `zypper` | Doğrulandı (openSUSE Leap 15.6 konteyner) |
+
+Bu üç yönetici gerçek konteynerlerde `install.sh` **çalıştırılarak**
+doğrulandı; her biri için ölçülen sonuç: paket yöneticisi doğru tanındı,
+bağımlılıklar kuruldu, Go 1.23.4 kuruldu, `click`/`rich`/`yaml`
+Python modülleri kuruldu.
+
+Doğrulama sırasında **üç gerçek hata** bulundu ve düzeltildi:
+
+1. `pkg_available()` her yöneticide farklı anlam taşıyordu.
+   `apk info -e` ve `zypper search -i` **"kurulu mu"** sorar —
+   "depoda var mı" değil. Sonuç: Alpine ve openSUSE'de *mevcut* olan
+   `clang`, `make`, `git` paketleri "paket yok" sanılıp atlanıyordu.
+   Doğrusu: `apk add --simulate` ve `zypper install --dry-run`.
+2. Bağımlılık listesinde `zypper` dalı hiç yoktu; openSUSE `*)`
+   yedeğine düşüp Fedora paket adlarını deniyordu
+   (`linux-headers` yerine `linux-devel-default` gerekir).
+   Ayrıca Python bağımlılıklarında **hiç** `zypper`/yedek dalı yoktu.
+3. `tar` hiçbir yerde bağımlılık olarak bildirilmemişti, ama
+   `install.sh` Go'yu açarken kullanıyordu.
+
+> openSUSE'da `python3-rich`/`python3-yaml` paketlenmemiştir; betik
+> `python3-pip` kurup pip yedeğine düşer ve bu da ölçülerek
+> doğrulandı.
 
 Bir bulunamayan paket tüm kurulumu düşürmez — betik o paketi atlayıp devam eder
 ve hangi paketin bulunamadığını raporlar.
@@ -140,9 +209,22 @@ Bu, modülün çalışma alanını daraltır.
 
 CI'daki paketleme matrisi bu tablonun sözleşmesidir:
 
-- `fedora:42`, `fedora:43`, `fedora:44` → RPM gerçekten derlenir, içeriği doğrulanır
+- `fedora:41`, `fedora:42`, `fedora:43`, `fedora:44` → RPM gerçekten
+  derlenir, 8/8 içerik + conffiles + SELinux modülü doğrulanır
 - `debian:12` → `.deb` gerçekten derlenir, içeriği doğrular
 - Matris kırılırsa buradaki "doğrulanmış" iddiası da düşer
+
+> Matrisin kendisi de bozukken "doğrulanmış" diyebiliyordu. Doğrulama
+> sırasında **iki kırık nokta** bulundu ve düzeltildi:
+> 1. Debian işi `apt`'in `golang` paketini kuruyordu → **Go 1.19**,
+>    ama proje Go 1.21 istiyor (`go.mod`, `log/slog`). İş her zaman
+>    "log/slog is not in GOROOT" ile düşüyordu. Artık
+>    `bookworm-backports`'tan `golang-1.23-go` kuruluyor ve ayrı bir
+>    adımda sürüm denetleniyor.
+> 2. `go build` VCS damgası istiyordu ve git'e erişemeyen
+>    konteynerde **tüm RPM matrisini** düşürüyordu
+>    ("error obtaining VCS status"). `Makefile` artık
+>    `-buildvcs=false` ile derler; derleme `.git`'e bağımlı değildir.
 
 **İçerik doğrulaması (`deep_verify.sh`) CI'da çalışmaz** — sanal makine gerektirir.
 Bu, bilinçli bir sınırdır ve CI çıktısında `::warning::` ile belirtilir.

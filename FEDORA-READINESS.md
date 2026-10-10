@@ -142,33 +142,58 @@ yüklendi**. Bu, eski davranışta olmuyordu (bkz. §6.1).
 `/etc/passwd`, `/etc/group`, `/etc/os-release`), dosya başına 80 açma,
 `time.perf_counter_ns()`.
 
-| Durum | Ortalama | Medyan |
+| Durum | 3 koşu (µs/açma) | Medyan |
 |---|---|---|
-| **[1] LSM kancası yok** (`--no-enforce`, 0/5) | **11.3 µs** | 11.3 µs |
-| **[2] Kanca bağlı, `mode=disabled`** (5/5) | **17.1 µs** | 16.8 µs |
-| **[3] Kanca bağlı, `mode=enforcing`** (5/5) | **17.7 µs** | 16.9 µs |
+| **[1] LSM kancası yok** (`axdaemon` durmuş, 0/5) | 14.3 · 13.2 · 12.1 | **13.2 µs** |
+| **[2] Kanca bağlı, `mode=disabled`** (5/5) | 12.7 · 16.3 · 17.8 | **16.3 µs** |
+| **[3] Kanca bağlı, `mode=enforcing`** (5/5) | 22.1 · 26.2 · 21.9 | **22.1 µs** |
 
-### Ne ölçtüğümüzü ayırmak önemli
+### Neyin gerçek olduğu, neyin olmadığı
 
-- **Kanca takma maliyeti:** 17.1 − 11.3 = **+5.8 µs** (µs'nin %51'i)
-- **Politika sorgusu maliyeti:** 17.7 − 17.1 = **+0.6 µs** (µs'nin %3.5'i)
+**Politika sorgusu maliyeti gerçek ve ölçülebilir.**
+Medyan fark 22.1 − 16.3 = **+5.8 µs**, ve bu iki grubun aralıkları
+**çakışmaz** ([2] en yüksek 17.8 < [3] en düşük 21.9). Yani enforcement
+gerçekten dosya açma başına ek maliyet getiriyor.
 
-Yani maliyetin **büyük kısmı politika mantığı değil, LSM kancasının
-kendisinin bağlanmasıdır**. Politika sorgusu ihmal edilebilir.
+**Kanca takma maliyeti bu makinede ölçülemedi.**
+Medyan fark +3.1 µs görünüyor, ancak [1] ve [2] aralıkları
+**çakışıyor** ([1] 12.1–14.3, [2] 12.7–17.8): [2]'nin en hızlı koşusu
+[1]'in en yavaş koşusundan daha hızlı. Yani bu fark, koşu-koşu
+gürültüsünden ayırt edilemiyor.
+
+> Bu bölüm daha önce "kanca takma maliyeti +5.8 µs (%51), politika
+> sorgusu +0.6 µs (%3.5)" diyordu ve çıkarımı **ters**ydi. Güncel
+> ölçümde politika maliyeti kanca maliyetinden **büyük** çıkıyor
+> (+5.8 µs vs ölçülemeyen fark). Eski sayılar tek koşuya dayanıyordu;
+> tekrarlı ölçümde üretilemiyor.
+
+### Neden mutlak µs tek başına ölçüt değil
+
+Aynı ölçüm Ubuntu 24.04.5'te Fedora'ya göre **yaklaşık 20 kat** yavaş
+çıkıyordu — çünkü sanal makine ortamı değil AXlinux kancası belirleyici
+olduğu için. Bu yüzden `deep_verify` artık mutlak µs eşiği değil
+**ortam düzeltilmiş göreli oran** uygular ("ortam düzeltilmiş kanca
+maliyeti: 1.01x taban"); mutlak sayılar yalnızca aşağıdaki gibi
+**bu makinede** geçerlidir.
 
 ### Toplam iş yükü (50.000 dosya açma)
 
 Ağır bir tarayıcı açılışını temsil eden sabit iş yükü:
 
-| Mod | Toplam süre | µs/açma | açma/sn |
-|---|---|---|---|
-| `disabled` | 0.254 s → 0.250 s | ~5.0 | ~198.000 |
-| `enforcing` | 0.441 s → 0.438 s | ~8.8 | ~113.700 |
+| Mod | 2 koşu (50.000 açma) | Medyan | µs/açma | açma/sn |
+|---|---|---|---|---|
+| `disabled` | 0.226 s · 0.229 s | **0.228 s** | ~4.55 | ~220.000 |
+| `enforcing` | 0.550 s · 0.567 s | **0.559 s** | ~11.2 | ~89.600 |
 
-**Masaüstü açısından yorum:** 50.000 dosya açma 0.44 saniye yerine
-0.25 saniye sürüyor — **fark 0.19 saniye**. Bu, tarayıcı açılışı
-gibi gerçek bir iş yükünde algılanamaz. Elde edilen geçilir
-(113.000 açma/sn) bir masaüstünün asla ulaşamayacağı bir hızdır.
+**Masaüstü açısından yorum:** 50.000 dosya açma enforcing'de 0.23 s
+yerine 0.56 s sürüyor — **fark 0.33 saniye**.
+
+> Bu tablodaki eski değerler (`enforcing` 0.44 s) enforcement
+> maliyetini **fazla iyimser** gösteriyordu. Taze ölçümde enforcement
+> maliyeti iki katına yakın çıktı (0.56 s). Yukarıdaki yorumun
+> *sonucu* değişmedi — 0.33 saniye masaüstü açılışında algılanmaz —
+> ama sayısal değer düzeltildi. Elde edilen enforcement hızı
+> (~90.000 açma/sn) bir masaüstünün asla ulaşamayacağı bir hızdır.
 
 ---
 
@@ -660,7 +685,7 @@ ihtiyaç duymaz.
 | 11 | `install.sh` politika dizinini kurmuyor | reboot kaybı | düzeltildi |
 | 12 | `.deb` 4 ayrı paketleme hatası | politika kaybı/silinmesi | düzeltildi |
 | 13 | `postinst` sabit 1.0.0 yazıyordu | yanlış sürüm | düzeltildi |
-| 14 | Sürüm yükseltme yolu denenmemiş | yükseltme kırık olabilirdi | doğrulandı |
+| 14 | Sürüm yükseltme yolu denenmemişti | yükseltme kırık olabilirdi | **doğrulandı** (1.1.0 → 1.2.0 RPM yükseltmesi ölçüldü) |
 
 1, 2 ve 4 doğrudan ürünün işlevini etkileyen türdendi. 4'ün bulunma
 sebebi ilgili bölümde test **bulunmamasıydı**.

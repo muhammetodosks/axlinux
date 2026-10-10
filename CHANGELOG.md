@@ -1,5 +1,147 @@
 # Changelog
 
+## 1.2.0 (ek) - Dogrulama sirasinda bulunan ve duzeltilen hatalar
+
+Bu bolum, 1.2.0 iddialari denetlenirken **gercekten calistirilip** bulunan
+hatalari kaydeder. Hepsi olcumle kanitlandi ve duzeltildi; her biri
+icin kalici bir regresyon kapisi eklendi.
+
+### 1. Iki ayri politik ayristirici — kalici konum tumden kirikti
+
+`axctl policy check` tekil `subject: curl` yazan politikayi **gecerli**
+diyordu. Kullanici politika yolunda (`axctl reload`) bu da boyleydi.
+AMA `/etc/axlinux/policies.d` yolu ayni dosyayi **reddediyordu**:
+
+    sistem politikasi yuklenemedi; sistem KISITLAMASIZ kaliyor
+    error="50-....yaml: policy JSON parse hatasi: json: cannot unmarshal
+           string into Go struct field Rule.rules.subject of type []string"
+
+`policies.d` kalici konum oldugu icin sonuc suydu: kullanici reboot
+sonrasi "kurallarim yuklu" saniyordu, hicbir kural yazmiyordu. Sistem
+**kisisitlamasiz** kaliyordu. MAC'te en kotu hata modu.
+
+Duzeltme: `SubjectList` turu ve ozel `UnmarshalJSON` ile iki yol da
+tekil VE liste kabul ediyor. Regresyon kapilari:
+`subjectlist_test.go`, `systemload_subject_test.go` ve `deep_verify`
+icindeki "sistem politikasi yuklendi" kapisi.
+
+### 2. Kurulum betigi Alpine ve openSUSE'de calismiyordu
+
+- `pkg_available()` her yoneticide **farkli anlam** tasiyordu.
+  `apk info -e` ve `zypper search -i` "kurulu mu" sorar, "depoda var mi"
+  degil. Sonuc: mevcut olan `clang`, `make`, `git` paketleri "paket yok"
+  sanilip atlaniyordu.
+- Bagimlilik listesinde `zypper` dali **hic yoktu**; openSUSE `*)`
+  yedeginin Fedora paket adlarini deniyordu. Python bagimliliklarinda
+  `zypper` ve yedek dali hic yoktu — `axctl` "No module named 'rich'"
+  ile baslamiyordu.
+- `tar` hicbir yerde bagimlilik olarak bildirilmemisti, ama `install.sh`
+  Go'yu acarken kullaniyordu.
+
+Dogrulama: Arch, Alpine ve openSUSE Leap 15.6 konteynerlerinde
+`install.sh` gercekten calistirildi; ucunde de paket yoneticisi dogru
+tanindi, bagimliliklar kuruldu, Go 1.23.4 kuruldu, `click`/`rich`/`yaml`
+kuruldu.
+
+### 3. CI paketleme matrisinin ikisi de kirikti
+
+- **Debian isi her zaman dustu.** `apt`'in `golang` paketi Go 1.19
+  veriyor, proje ise Go 1.21 istiyor (`go.mod`, `log/slog`). Artik
+  `bookworm-backports`'tan `golang-1.23-go` kuruluyor ve ayri bir adimda
+  surum denetleniyor.
+- **RPM matrisinin tamami dustu.** `go build` VCS damgasi istiyordu ve
+  git'e erisemeyen konteynerde "error obtaining VCS status" veriyordu.
+  `Makefile` artik `-buildvcs=false` ile derliyor.
+
+Dogrulama: `fedora:41/42/43/44` ve `debian:12` imajlarinin besinde de
+paketleme yeniden calistirildi; dort RPM 8/8 icerik + 5 conffiles +
+SELinux modulu ile gecti.
+
+### 4. SELinux konfinasyonu sessizce hic kurulmuyordu
+
+Paket, dosya baglamlarini `semanage fcontext -a` ile yaziyor; bu arac
+`policycoreutils-python-utils` ile gelir. Spec bunu **Requires olarak
+bildirmiyordu**.
+
+Fedora 43 cloud imajinda bu paket kurulu degil. Sonuc:
+
+    semanage: command not found  ->  set_fcontext sessizce basarisiz
+    /usr/bin/axdaemon  bin_t olarak kaliyor
+    axdaemon UNCONFINED alanda calisiyor
+
+Yani SELinux korumasi hic kurulmamis, ama kurulum "basarili"
+gorunuyor. Fedora 44'te calisiyordu **tesadufen** — o imajda paket
+zaten vardi. `deep_verify` bunu yakaladi:
+
+    FAIL axdaemon unconfined alanda; SELinux korumasi YOK
+
+Duzeltme: `Requires: policycoreutils-python-utils` eklendi ve
+kurulum betigine **funcional dogrulama** konuldu: etiketler
+uygulandiktan sonra eBPF gercekten yukleniyor mu bakilir.
+
+Bu ikinci bir gercek hatayi ortaya cikardi: Fedora 43'te etiketli
+`axdaemon` SELinux tarafindan **BPF harita islemi reddediliyor**:
+
+    avc: denied { map_read map_write } for comm="axdaemon"
+         scontext=system_u:system_r:axlinux_daemon_t:s0
+
+    etiketli  -> kanca 0/0, bpf 0, "ebpf yuklenemedi"
+    etiketsiz -> kanca 5/5, bpf 5, enforcement calisir
+
+Yani konfasyon, konfasyonsuz sistemden daha kotu bir sistem
+biriyordu. Duzeltme **guvenli taraf**: dogrulama basarisiz olursa
+etiketler geri alinir, servis yeniden baslatilir ve operator'a
+acikca bildirilir:
+
+    UYARI: konfinasyon eBPF yuklemeyi engelliyor
+    etiketler geri alindi; enforcement LSM ile aktif
+    yeniden baslatildi; eBPF: 5 program
+
+Olculen sonuc: Fedora 43 -> kanca 5/5, bpf 5 (enforcement calisiyor);
+Fedora 44 -> `alan dogrulandi: ...axlinux_daemon_t:s0 (eBPF: 5)`
+(konfinasyon etkin).
+
+Ayrica RPM'e paketlenen SELinux modulu de bayat kalabiliyordu:
+`make rpm` yalnizca "all" cagrdigindan agacta daha once derlenmis
+bir `.pp` varsa derlemeyi atlardi, `2>/dev/null` de hatalari
+gizliyordu. Fedora 43'te olculen bozuk modul: 91.660 bayt, **0 tip,
+0 dosya-baglami kurali**. Artik modul her zaman `clean` + `all` ile
+sifirdan derleniyor ve bos modul uretilirse derleme hata veriyor.
+
+### 5. Test kapilari ortamda yanlis sonuc veriyordu
+
+`deep_verify` birkok yerde sabit kisa bekliyordu ("sleep 1", "sleep 5").
+Yavas sanal makinelerde politika/kanca hazir olmadan olcum yapiliyordu
+ve kapilar urun hatasi sanilan kirmizilar veriyordu. Butun bu
+beklemeler sagliga gore bekleme ile degistirildi.
+
+Sonuc: dort platformda **0 basarisiz**:
+
+| Platform | gecti | kaldi | atlandi |
+|---|---|---|---|
+| Fedora 44 | 732 | 0 | 0 |
+| Ubuntu 24.04.5 | 731 | 0 | 1 |
+| Debian 12 | 731 | 0 | 1 |
+| Pardus 25.2 | 731 | 0 | 1 |
+
+(Debian ailesindeki tek atlanan kalem SELinux'tur; paketlenmemistir.
+Fedora 44'te ayni kalem calisir ve 0 atlanan kalemle gecer.)
+
+### 6. Performans iddialari duzeltildi
+
+`FEDORA-READINESS.md` "kanca takma maliyeti +5.8 us (%51), politika
+sorgusu +0.6 us (%3.5)" diyordu ve cikarimi **ters**ydi. Uc'er kez
+tekrarlanan olcumde:
+
+- politika sorgusu maliyeti **+5.8 us** ve gruplarin araliklari
+  cakismiyor -> gercek ve olculebilir;
+- kanca takma maliyeti araliklarin icinde kaliyor -> **olculemedi**.
+
+Ayrica 50.000 dosya acma throughput tablosunda `enforcing` 0.44 s
+yaziyordu; taze olcumde 0.56 s cikti (maliyet iki katindan fazla).
+
+---
+
 ## 1.2.0 - Dizin kurallari, kalici politika, imzali paket
 
 Fedora Workstation masaustu hedefi icin uretilmis surum. Bu surumde

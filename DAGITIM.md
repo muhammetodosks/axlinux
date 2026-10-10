@@ -28,9 +28,15 @@ gerçekten eBPF'den geçirildi.
 
 | Doğrulanan | Sonuç |
 |---|---|
-| Ubuntu 24.04.5 LTS | 732/0/1 · 5/5 eBPF programı · 5/5 kanca · audit sağlıklı |
-| Debian 12 (bookworm) | 732/0/1 · 5/5 · 5/5 · audit sağlıklı |
-| Pardus 25.2 (yirmibes) | 732/0/1 · 5/5 · 5/5 · audit sağlıklı |
+| Fedora 44 (Cloud) | 732/0/0 · imzalı RPM · SELinux Enforcing · 5/5 kanca |
+| Fedora 43 (Cloud) | 732/1/1 · LSM enforcement çalışıyor (kanca 5/5) · SELinux kuşaklaması bu imajda yapılamıyor, kurulumda uyarıyla geri alınıyor |
+| Ubuntu 24.04.5 LTS | 731/0/1 · 5/5 eBPF programı · 5/5 kanca · audit sağlıklı |
+| Debian 12 (bookworm) | 731/0/1 · 5/5 · 5/5 · audit sağlıklı |
+| Pardus 25.2 (yirmibes) | 731/0/1 · 5/5 · 5/5 · audit sağlıklı |
+
+`731/0/1` satırlarındaki tek atlanan kalem **SELinux'tur**: Debian
+ailesi SELinux sağlamaz, bu bir eksik değil platform farkıdır.
+Fedora 44'te aynı kalem çalışır ve 0 atlanan kalemle geçer.
 
 Kapsanan alanlar: tüm CLI komutları, öğrenme modu baştan sona, 5 LSM
 kancası, 6 aksiyon türü, kalıcı JSONL audit, üç mod ve acil kapatma,
@@ -376,7 +382,7 @@ Kurulumdan sonra kendi doğrulamanı çalıştır:
 # hızlı: tek komut
 sudo axctl status
 
-# kapsamlı: 10 bölüm, 100 denetim (FİZİKSEL MAKİNEDE ÇALIŞMAZ)
+# kapsamlı: 8 adlandırılmış bölüm (K–R), 732 kontrol (FİZİKSEL MAKİNEDE ÇALIŞMAZ)
 sudo bash tests/deep_verify.sh
 
 # tek bölüm

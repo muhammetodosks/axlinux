@@ -1,5 +1,8 @@
 # AXlinux 1.2.0 — Dağıtım Hazırlık Raporu
 
+Doğrulama kanıtı ve bulunan hatalar: [`DOGRULAMA-RAPORU.md`](DOGRULAMA-RAPORU.md)
+
+
 **Tarih:** 7 Ekim 2026
 **Sürüm:** `axlinux-1.2.0-1.fc44.x86_64`
 **Durum:** ✅ Dağıtıma hazır — 9 maddenin tamamı gerçek düzeltme + ölçülmüş kanıtla kapatıldı;
@@ -249,7 +252,7 @@ Header OpenPGP V4 RSA/SHA512 signature: OK
 
 **Testler:**
 ```
-deep_verify.sh : 732 geçti / 0 kaldı / 1 atlandı   (imzalı RPM ile temiz kurulumda)
+deep_verify.sh : 732 geçti / 0 kaldı / 0 atlandı   (Fedora 44, imzalı RPM, temiz kurulummda)
 axdaemon       : 10 paket, 0 hata
 axlog          :  3 paket, 0 hata
 python         : 179 passed + 20 subtests

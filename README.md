@@ -2,10 +2,15 @@
 
 > **Dağıtım hazır mı? → [`DAGITIM-READY.md`](DAGITIM-READY.md)**
 > 1.2.0 için dokuz maddenin tamamı gerçek düzeltme + ölçülmüş kanıtla
-> kapatıldı: `deep_verify` **732 geçti / 0 kaldı / 1 atlandı**, imzalı RPM,
-> Debian 12.15 kurulumu, journald sınırları, %52 disk.
+> kapatıldı: `deep_verify` **Fedora 44'te 732 geçti / 0 kaldı / 0 atlandı**,
+> Ubuntu 24.04.5 ve Pardus 25.2'de **731 geçti / 0 kaldı / 1 atlandı**, imzalı
+> RPM, journald sınırları, %52 disk.
 >
 > Ayrıntılı ölçüm tabloları: [`FEDORA-READINESS.md`](FEDORA-READINESS.md)
+>
+> Tüm belge iddialarının nasıl doğrulandığı, hangi ölçümün neyi
+> kanıtladığı ve doğrulama sırasında bulunan gerçek ürün hataları:
+> [`DOGRULAMA-RAPORU.md`](DOGRULAMA-RAPORU.md)
 >
 > **Hangi sistemler destekleniyor?** [`SUPPORT.md`](SUPPORT.md)
 
@@ -193,8 +198,10 @@ Ayrıntı: [docs/challenges-risks.md](docs/challenges-risks.md)
 ## Durum
 
 Sürüm **1.2.0**. Üç dağıtım yolunda (RPM, `install.sh`, `.deb`) gerçek
-enforcement ile uçtan uca doğrulandı: `deep_verify` **732 geçti / 0 kaldı /
-1 atlandı**, Go 13 paket, Python 179 + 20 alt test. Özet:
+enforcement ile uçtan uca doğrulandı. `deep_verify`: **Fedora 44 → 732 geçti /
+0 kaldı / 0 atlandı**, **Ubuntu 24.04.5 → 731 / 0 / 1**, **Pardus 25.2 →
+731 / 0 / 1** (tek skip: Debian ailesinde SELinux yok). Go 13 paket,
+Python 179 + 20 alt test. Özet:
 [`DAGITIM-READY.md`](DAGITIM-READY.md).
 
 | Bileşen | Durum | Kanıt |

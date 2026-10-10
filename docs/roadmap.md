@@ -18,7 +18,9 @@ işaretliyordu; sürüm 1.0.0 olduğunda bu yanlış izlenim bırakıyordu.
 
 ### Doğrulama
 
-- [x] Kapsamlı test paketi (`tests/deep_verify.sh`, 10 bölüm / 100 denetim)
+- [x] Kapsamlı test paketi (`tests/deep_verify.sh`) — 8 adlandırılmış
+      bölüm (K–R) ve **ölçülmüş** 732 kontrol (Fedora 44: 732 geçti /
+      0 kaldı / 0 atlandı; Debian ailesi: 731 / 0 / 1)
 - [x] Fiziksel makine koruması (test VM dışında çalışmayı reddeder)
 - [x] Python ↔ Go ↔ eBPF sözleşme testleri
 - [x] Belge–CLI denetimi (`tests/test_docs.py`)
