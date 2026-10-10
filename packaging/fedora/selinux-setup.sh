@@ -109,11 +109,77 @@ fi
 #
 #    Duzeltme: once eski kayit SILINIR, sonra tipi YAZILIR.
 #    Kullanici/rol restorecon tarafindan politikadan alinir.
-set_fcontext() {
-    semanage fcontext -d "$2" >/dev/null 2>&1 || true
-    if ! semanage fcontext -a -t "$1" "$2" >/dev/null 2>&1; then
-        semanage fcontext -m -t "$1" "$2" >/dev/null 2>&1 || true
+# --- Guvenlik on kontrolu: calisan politika okunabiliyor mu? ---
+#
+# Gercek hata (Fedora 43 cloud imajinda olculdu):
+# `semanage fcontext -a -t axlinux_daemon_exec_t ...` BASARILI
+# donuyor, ama tip calisan cekirdek politikasinda YOK. Sonuc:
+#
+#   ikili etiketlenince -> kanca 0/0, bpf 0, "ebpf yuklenemedi"
+#   etiketlenmede kalinca -> kanca 5/5, bpf 5, enforcement calisir
+#
+# Yani konfinasyon etiketi sistemi tamamen bozuyor. Ayirt edici
+# olcut `seinfo -t`:
+#
+#   Fedora 44 -> 5292 tip (politika okunuyor)  etiketlemek GUVENLI
+#   Fedora 43 ->    0 tip (politika okunamiyor) etiketlemek TEHLIKELI
+#
+# Politikayi okuyamiyorsak tipin guvenli oldugunu DOGRULAMAK
+# MUMKUN DEGIL; o durumda etiketlemek yerine kurulumu yazilmis
+# etmemek, sistemi calisir halde birakmanin cok daha iyi yoludur.
+AX_POLICY_READABLE=1
+if command -v seinfo >/dev/null 2>&1; then
+    _types=$(seinfo -t 2>/dev/null | wc -l)
+    if [ "${_types:-0}" -eq 0 ]; then
+        AX_POLICY_READABLE=0
     fi
+fi
+
+set_fcontext() {
+    # $1 = tip, $2 = yol (fcontext)
+    #
+    # ONCE eski kaydi sil, sonra yaz.
+    #
+    # TIP TANIMLI DEGILSE HICBIR SEY YAZMA. Gercek hata (Fedora 43
+    # cloud imajinda olculdu): modulun tipi politikada yoksa
+    # semanage "-a" sessizce basarisiz olur. Kayit yine de
+    # yazilirsa ikili, politikada VAR OLMAYAN bir tipe etiketlenir
+    # ve SELinux hicbir seye izin vermez:
+    #
+    #   etiketli  -> kanca 0/0, bpf 0, "ebpf yuklenemedi"
+    #   etiketsiz -> kanca 5/5, bpf 5, enforcement calisir
+    #
+    # Yani etiketlemek sistemi tamamen bozuyordu. Guvenli taraf
+    # kurali: tip tanimli degilse etiketleme, bir kez uyari ver,
+    # devam et. LSM enforcement calisir; SELinux kisitlamasi
+    # olmaz ve deep_verify bunu acikca bildirir.
+    if [ "$AX_POLICY_READABLE" -eq 0 ]; then
+        if [ -z "${AX_SELINUX_TYPE_WARNED:-}" ]; then
+            echo "  UYARI: calisan SELinux politikasi okunamiyor (seinfo: 0 tip)."
+            echo "         Konfinasyon etiketleri UYGULANMADI - aksi halde"
+            echo "         ikililer var olmayan bir tipe etiketlenir ve"
+            echo "         eBPF yuklenemez (kanca 0/0)."
+            echo "         LSM enforcement etkin, SELinux kisitlamasi yok."
+            AX_SELINUX_TYPE_WARNED=1
+        fi
+        return 1
+    fi
+    semanage fcontext -d "$2" >/dev/null 2>&1 || true
+    if semanage fcontext -a -t "$1" "$2" >/dev/null 2>&1; then
+        return 0
+    fi
+    if semanage fcontext -m -t "$1" "$2" >/dev/null 2>&1; then
+        return 0
+    fi
+    # Ikisi de basarisiz: tip tanimli degil (veya yol gecersiz).
+    semanage fcontext -d "$2" >/dev/null 2>&1 || true
+    if [ -z "${AX_SELINUX_TYPE_WARNED:-}" ]; then
+        echo "  UYARI: SELinux tipi '$1' politikada tanimli degil;"
+        echo "         '$2' ETIKETLENMEDI."
+        echo "         LSM enforcement calisir, SELinux kisitlamasi olmaz."
+        AX_SELINUX_TYPE_WARNED=1
+    fi
+    return 1
 }
 set_fcontext axlinux_axbpf_t     "$PREFIX/lib/axlinux/axbpf\.o"
 set_fcontext axlinux_etc_t       '/etc/axlinux(/.*)?'
@@ -200,21 +266,102 @@ fi
 # her kurulumda basarisiz oluyor ve calismayan bir sistemi
 # varsaydi. Gercek dogrulama asagidakidir: ayakta olan daemon'in
 # gercek baglami okunur.
+# --- DOGRULAMA: konfinasyon AXlinux'i calisir halde birakti mi? ---
+#
+# Gercek hata (Fedora 43 cloud imajinda olculdu): etiketler
+# uygulandiginda axdaemon axlinux_daemon_t alanina giriyor ve
+# SELinux BPF harita islemini REDDEDIYOR:
+#
+#   avc: denied { map_read map_write } for comm="axdaemon"
+#        scontext=system_u:system_r:axlinux_daemon_t:s0
+#
+# Sonuc: eBPF yuklenmiyor -> kanca 0/0 -> enforcement HIC CALISMIYOR.
+# Yani konfinasyon, konfinasyonsuz sistemden daha kotu bir sistem
+# birakiyor.
+#
+# Bu yuzden etiketleme sonrasi FIUNCIONAL dogrulama yapilir: eBPF
+# gercekten yukleniyor mu? Yuklenmiyorsa etiketler GERI ALINIR ve
+# operator'a acikca bildirilir. Boylece en kotu durumda bile sistem
+# calisir kalir (konfinasyonsuz ama enforcement'li).
+# Dogrulama icin daemon AYAKTA olmali. Temiz kurulumda servis
+# henuz baslamamis olur; o zaman baslatip bekliyoruz. Aksi halde
+# dogrulama bos gecer ve bozuk etiketler sistemde kalir
+# (Fedora 43'te boyle oldu: kanca 0/0, bpf 0).
+if ! pgrep -x axdaemon >/dev/null 2>&1; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl start axdaemon >/dev/null 2>&1 || :
+        _w=0
+        while [ "$_w" -lt 20 ]; do
+            pgrep -x axdaemon >/dev/null 2>&1 && break
+            _w=$((_w + 1)); sleep 1
+        done
+    fi
+    unset _w
+fi
+
 _axd=$(pgrep -x axdaemon 2>/dev/null | head -1)
+_axctx=""
 if [ -n "$_axd" ] && [ -r "/proc/$_axd/attr/current" ]; then
     _axctx=$(tr -d '\000' < "/proc/$_axd/attr/current" 2>/dev/null)
-    case "$_axctx" in
-        *axlinux_daemon_t*)
-            echo "  alan dogrulandi: $_axctx" ;;
-        unconfined*)
-            echo "  UYARI: axdaemon unconfined alanda calisiyor" >&2
-            echo "         ($_axctx). LSM kancalarina disaridan" >&2
-            echo "         mudahale edilebilir." >&2 ;;
-        *)
-            echo "  axdaemon alani: $_axctx" ;;
-    esac
-    unset _axd _axctx
 fi
+
+case "$_axctx" in
+    *axlinux_daemon_t*)
+        # Konfinede mi calisiyor? eBPF gercekten yuklendi mi?
+        _bpf=""
+        _t=0
+        while [ "$_t" -lt 20 ]; do
+            _bpf=$(axctl status --json 2>/dev/null \
+                   | sed -n 's/.*"bpf_programs_loaded"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' \
+                   | head -1)
+            [ -n "$_bpf" ] && [ "${_bpf:-0}" -gt 0 ] && break
+            _t=$((_t + 1)); sleep 1
+        done
+        if [ "${_bpf:-0}" -gt 0 ]; then
+            echo "  alan dogrulandi: $_axctx (eBPF: $_bpf)"
+        else
+            echo "  UYARI: konfinasyon eBPF yuklemeyi engelliyor" >&2
+            echo "         (axdaemon: $_axctx, bpf_programs_loaded=0)." >&2
+            echo "         SELinux, BPF harita islemini reddediyor." >&2
+            echo "         Guvenli taraf: etiketler geri aliniyor." >&2
+            echo "         Enforcement LSM uzerinden calisacak," >&2
+            echo "         SELinux kisitlamasi olmayacak." >&2
+            for _f in "$PREFIX/bin/axdaemon" "$PREFIX/bin/axlog" "$PREFIX/bin/axctl"; do
+                semanage fcontext -d "$_f" >/dev/null 2>&1 || true
+            done
+            semanage fcontext -d "$PREFIX/lib/axlinux/axbpf\.o" >/dev/null 2>&1 || true
+            restorecon -F "$PREFIX/bin/axdaemon" "$PREFIX/bin/axlog" \
+                        "$PREFIX/bin/axctl" >/dev/null 2>&1 || true
+            restorecon -F "$PREFIX/lib/axlinux/axbpf.o" >/dev/null 2>&1 || true
+            echo "  etiketler geri alindi; enforcement LSM ile aktif" >&2
+            # Calisan surec ETIKETLENMIS baglamda oldugu icin
+            # yeniden baslatilmali; aksi halde eski (kisitli) baglam
+            # ile calismaya devam eder ve eBPF yuklenmez.
+            if command -v systemctl >/dev/null 2>&1; then
+                systemctl restart axdaemon axlog >/dev/null 2>&1 || :
+                _r=0
+                while [ "$_r" -lt 30 ]; do
+                    _v=$(axctl status --json 2>/dev/null \
+                         | sed -n 's/.*"bpf_programs_loaded"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' \
+                         | head -1)
+                    [ -n "${_v:-}" ] && [ "${_v:-0}" -gt 0 ] && break
+                    _r=$((_r + 1)); sleep 1
+                done
+                echo "  yeniden baslatildi; eBPF: ${_v:-0} program" >&2
+                unset _r _v
+            fi
+        fi
+        ;;
+    unconfined*)
+        echo "  UYARI: axdaemon unconfined alanda calisiyor" >&2
+        echo "         ($_axctx). LSM kancalarina disaridan" >&2
+        echo "         mudahale edilebilir." >&2 ;;
+    "")
+        echo "  axdaemon henuz calismiyor; alan dogrulamasi yapilamadi" >&2 ;;
+    *)
+        echo "  axdaemon alani: $_axctx" ;;
+esac
+unset _axd _axctx _bpf _t _f
 
 echo "  SELinux hazir"
 exit 0

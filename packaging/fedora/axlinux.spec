@@ -47,6 +47,20 @@ Requires:       python3-click
 Requires:       python3-rich
 Requires:       python3-yaml
 Requires:       kernel-core
+# AXlinux'in SELinux KORUMASI bu pakete baglidir; bu olmadan
+# paket sessizce yarim kurulur.
+#
+# GERCEK HATA: `selinux-setup.sh` dosya baglamlarini
+# `semanage fcontext -a` ile yaziyor, ama semanage bu pakette
+# gelir. Fedora 44 cloud imajinda tesadufen KURULU oldugu icin
+# orada calisiyordu; Fedora 43 cloud imajinda KURULU DEGIL.
+#
+# Sonuc Fedora 43'te olculdu: `set_fcontext` sessizce basarisiz
+# oluyor, `/usr/bin/axdaemon` bin_t olarak kaliyor ve daemon
+# UNCONFINED alanda calisiyor. Yani SELinux korumasi hic yok -
+# ama kurulum "basarili" gorunuyor. deep_verify bunu yakaladi:
+#   FAIL axdaemon unconfined alanda; SELinux korumasi YOK
+Requires:       policycoreutils-python-utils
 Recommends:     bpftool
 
 %description

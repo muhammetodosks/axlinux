@@ -83,8 +83,22 @@ verify: bpf
 # --- Go ---
 go:
 	@echo "== Go =="
-	@cd $(GO_DAEMON) && $(GO) build -ldflags "-X main.Version=$(VERSION)" -o axdaemon .
-	@cd $(GO_LOG)    && $(GO) build -ldflags "-X main.Version=$(VERSION)" -o axlog .
+	@# -buildvcs=false: derleme, git'e GECMESIN.
+	@#
+	@# Go varsayilan olarak VCS damgasi (commit/olusturma zamani)
+	@# ekler ve bunun icin .git'e erisir. Kapalari konteynerde
+	@# (CI, podman/docker, paketleme matrisi) ve .git'i olmayan
+	@# bir kaynak agacinda bu ADIM "error obtaining VCS status:
+	@# exit status 128" ile TUM derlemeyi dusuruyordu; Fedora
+	@# 41/42/43/44 ve Debian 12 matrisinin tamami bu yuzden
+	@# basarisiz oluyordu.
+	@#
+	@# Paketlenmis ciktida VCS damgasi zaten kullanilmaz; surum
+	@# bilgisi -ldflags ile acikca geciriliyor. Bu yuzden kapatmak
+	@# dogru: derleme artik .git'in varligina/yoklukluguna bagli
+	@# degildir.
+	@cd $(GO_DAEMON) && $(GO) build -buildvcs=false -ldflags "-X main.Version=$(VERSION)" -o axdaemon .
+	@cd $(GO_LOG)    && $(GO) build -buildvcs=false -ldflags "-X main.Version=$(VERSION)" -o axlog .
 	@echo "   axdaemon, axlog hazir"
 	@# Derleme ciktilari root'a ait kalirsa kullanicinin deposu
 	@# silinemez: "rm -rf axlinux" -> "Permission denied". Ayni
@@ -352,9 +366,37 @@ rpm-verify-sign:
 # zaten agac durumunda, derlenecek bir sey yok.
 rpm: bpf go
 	@echo "== RPM: SELinux modulu =="
-	@$(MAKE) -C $(SELINUX_DIR) 2>/dev/null \
+	@# SELinux modulu HER ZAMAN sifirdan derlenir ("clean all").
+	@#
+	@# GERCEK HATA: burada sadece "all" cagriliyordu. Ayrica
+	@# "2>/dev/null" ile hata ciktisi ATILIYORDU. Calisma agaci
+	@# icinde daha once derlenmis bir axlinux.pp bulundugunda make
+	@# onu "guncel" sayip derlemeyi ATLADI; RPM'e o bayat modul
+	@# paketlendi.
+	@#
+	@# Sonuc Fedora 43'de olculdu: kurulan modul 91.660 bayt,
+	@# icinde 0 tip ve 0 dosya-baglami kurali vardi. Modul "kuruldu"
+	@# gorunuyordu ama hicbir seyi etiketlemiyordu; /usr/bin/axdaemon
+	@# bin_t olarak kaliyor ve daemon UNCONFINED alanda calisiyordu.
+	@# Yani SELinux korumasi sessizce YOKTU.
+	@#
+	@# Duzeltme: once "clean" sonra "all"; hata ciktisi gizlenmez.
+	@$(MAKE) -C $(SELINUX_DIR) clean >/dev/null 2>&1
+	@$(MAKE) -C $(SELINUX_DIR) all \
 	    || { echo "HATA: SELinux modulu derlenemedi."; \
 	         echo "  selinux-policy-devel kurulu degil mi?"; exit 1; }
+	@# Modulun gercekten icerik tasidigini DOGRULA. Bos modul
+	@# (0 tip) kurulmus gibi gorunup koruma saglamaz; bu, kurulum
+	@# sonrasi ancak "0 tip" diye anlasilir. Derlemede yakalanir.
+	@_pp="$$(ls -1 $(SELINUX_DIR)/axlinux.pp 2>/dev/null | head -1)"; \
+	 if [ -z "$$_pp" ]; then echo "HATA: axlinux.pp uretilmedi"; exit 1; fi; \
+	 if ! command -v checkmodule >/dev/null 2>&1; then \
+	     echo "  SELinux modul boyutu: $$(stat -c %s "$$_pp") bayt"; \
+	 else \
+	     if checkmodule "$$_pp" 2>/dev/null | grep -qE '^0 type'; then \
+	         echo "HATA: SELinux modulu BOS (0 tip) uretildi"; exit 1; \
+	     fi; \
+	 fi
 	@echo "== RPM: paket =="
 	@rm -rf .rpmbuild
 	@mkdir -p .rpmbuild/SOURCES

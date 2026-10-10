@@ -50,3 +50,18 @@ venv/
 
 # Bytecode buraya yonlendirilir; kaynak agaci temiz kalsin
 .build/
+
+# rpmbuild calisma dizini (Makefile uretir)
+.rpmbuild/
+
+# SELinux modul derleme artiklari.
+#
+# ONEMLI: axlinux.pp ASLA repoda tutulmazdi degil, tutuldugu
+# surece "make rpm" yalnizca "all" cagrdigindan mevcut .pp'yi
+# "guncel" sanip DERLEMeyi atlardi; RPM'e bayat modul
+# paketleniyordu. Fedora 43'te olculen bozuk modul: 91.660 bayt,
+# icinde 0 tip ve 0 dosya-baglami kurali - SELinux korumasi
+# sessizce hic kurulmuyordu. Modul her zaman "clean" + "all"
+# ile sifirdan derlenir; burasi sadece cikti dizinidir.
+packaging/fedora/*.pp
+packaging/fedora/tmp/
