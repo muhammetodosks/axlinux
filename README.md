@@ -23,7 +23,7 @@ Tek komutla çalışır, `cat ~/.ssh/id_rsa` çıktısı `Operation not permitte
 
 > ⚠️ **Bu yazılım yalnızca sanal makinede çalıştırılır.**
 > Erişim denetimi uygular; ana makinede çalıştırılırsa sistemi kilitleyebilir.
-> `axctl` bunu ayrıca denetler ve reddeder. Ayrıntı: [Güvenlik](#güvenlik).
+> `axctl` bunu ayrıca denetler ve reddeder. Ayrıntı: [Güvenlik](#güvenlik) · [GUVENLIK-NOTU.md](GUVENLIK-NOTU.md)
 
 ---
 

@@ -19,17 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-NOTE ON SECURITY
-
-This software enforces access control. A misconfigured policy can lock you
-out of your own system. Before enforcing anything:
-
-  1. Validate:   axctl policy check
-  2. Preview:    axctl policy simulate
-  3. Test safely: axctl mode permissive   (logs, does not block)
-  4. Emergency exit: axctl mode disabled
-
-`axctl mode disabled` always works and removes all restrictions.
