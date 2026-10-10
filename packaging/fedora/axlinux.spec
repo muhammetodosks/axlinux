@@ -259,6 +259,41 @@ if [ $1 -eq 0 ]; then
     echo "    ~/.axlinux, \$AXLINUX_HOME, /var/log/axlinux"
     echo "  Tam silmek icin bu dizinleri elle kaldirin."
 
+    # CONFFILES KORUNMASI - olculerek bulundu.
+    #
+    # SORUN: %config(noreplace) ile etiketlenen dosyalar rpm tarafindan
+    # "duzenlenmemis" sayilir ve kaldirmada SILINIR. Yani operator
+    # politika dosyasini kendi duzenlediyse, dnf remove sonrasi dosya
+    # KAYBOLURDU. Oysa politika kullanici verisidir ve yedeklenmelidir.
+    #
+    # Olcum (once / sonra):
+    #   /etc/axlinux/desktop.yaml                       SILINDI
+    #   /etc/systemd/journald.conf.d/10-axlinux.conf    SILINDI
+    #   /etc/axlinux/policies.d/00-sample-workstation..  SILINDI
+    #
+    # Duzeltme: kaldirmadan ONCE bu dosyalar imzalanmamis yedek
+    # dizinine tasinir. rpm onlari zaten silecek; yedek kalir.
+    if [ -d /etc/axlinux ] || [ -d %{_sysconfdir}/systemd/journald.conf.d ]; then
+        _bk="/var/lib/axlinux/removed-config-"
+        _bk="$_bk$(date +%%Y%%m%%d-%%H%%M%%S)"
+        for _f in %{_sysconfdir}/axlinux/desktop.yaml \
+                   %{_sysconfdir}/axlinux/minimal.yaml \
+                   %{_sysconfdir}/axlinux/web-server.yaml \
+                   %{_sysconfdir}/axlinux/policies.d/00-sample-workstation.yaml \
+                   %{_sysconfdir}/systemd/journald.conf.d/10-axlinux.conf; do
+            if [ -f "$_f" ]; then
+                mkdir -p "$_bk" 2>/dev/null
+                cp -p "$_f" "$_bk/" 2>/dev/null || :
+            fi
+        done
+        if [ -d "$_bk" ]; then
+            echo "  Yapilandirma yedeklendi: $_bk"
+            echo "  (politika dosyalari kaldirmada silinir; yedekten geri alabilirsiniz)"
+        fi
+        unset _bk
+    fi
+    unset _f
+
     # SIRA KRITIK - olculerek bulundu:
     #
     #   1) /usr/bin/axdaemon, axlog, axctl icin YEREL fcontext
