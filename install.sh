@@ -157,8 +157,19 @@ pkg_available() {
         apt-get) apt-cache show "$1" >/dev/null 2>&1 ;;
         dnf|yum) dnf list "$1" >/dev/null 2>&1 ;;
         pacman)  pacman -Si "$1" >/dev/null 2>&1 ;;
-        apk)     apk info -e "$1" >/dev/null 2>&1 ;;
-        zypper)  zypper --non-interactive search -i "$1" >/dev/null 2>&1 ;;
+        # DIKKAT: burada "paket KURULU mu" degil "paket KURULABILIR mi"
+        # soruluyor. Onceki kullanim buydu ve IKISI DE HATALIYDI:
+        #   apk info -e <p>              -> "kurulu mu" (depoda olsa da
+        #                                   kurulu degilse 1 doner)
+        #   zypper search -i <p>         -> ayni anlam (kurulu olanlar)
+        # Sonuc: Alpine ve openSUSE'de MEVCUT olan clang, make, git
+        # gibi paketler "paket yok" sanilip atlaniyordu; kurulum
+        # "kurulamayan araclar" ile basarisiz oluyordu.
+        # Dogrulanmis dogru kontroller (olmayan paket icin rc=1):
+        #   apk add --no-cache --simulate <p>
+        #   zypper --non-interactive install --dry-run <p>
+        apk)     apk add --no-cache --simulate "$1" >/dev/null 2>&1 ;;
+        zypper)  zypper --non-interactive install --dry-run "$1" >/dev/null 2>&1 ;;
         *) return 0 ;;
     esac
 }
@@ -422,7 +433,7 @@ ok "paket yoneticisi: $PKGMGR"
 # Kurulumdan sonra gercekten var olacaklar. bpftool surume ozel
 # bir paket oldugu icin ayrica ele alinir (OPTIONAL_PKGS).
 NEED=""
-for t in clang llvm-objdump make gcc git python3 rsync curl; do
+for t in clang llvm-objdump make gcc git python3 rsync curl tar; do
     has "$t" || NEED="$NEED $t"
 done
 
@@ -467,13 +478,29 @@ else
                                 selinux-policy-devel policycoreutils \
                                 selinux-policy-targeted ;;
         pacman)  install_pkgs clang llvm libbpf libbpf-devel linux-headers \
-                              python-pytest base-devel git rsync curl \
+                              python-pytest base-devel git rsync curl tar \
                               netcat-openbsd ;;
         apk)     install_pkgs clang llvm libbpf-dev linux-headers \
-                              py3-pytest build-base git rsync curl \
+                              py3-pytest build-base git rsync curl tar \
                               netcat-openbsd ;;
+        # openSUSE: paket adlari Fedora/Debian ile AYNI DEGIL.
+        #   linux-headers  -> linux-devel-default
+        #   base-devel     -> (ayri kurulur)
+        # Onceki hâlde zypper buraya hic girmiyor, "*" yedeginin
+        # Fedora adlarini deniyor ve "linux-headers" bulunamayinca
+        # kurulum yarim kaliyordu.
+        # python3-pip SART: Leap 15.6'da python3-rich ve
+        # python3-yaml PAKETLENMEMIS. Asagidaki pip yedegi ancak
+        # pip3 varsa calisir; pip3 kurulu degilse yedek de sessizce
+        # devre disi kalir ve axctl "No module named 'rich'" ile
+        # baslamaz. Bu yuzden python3-pip once kurulur.
+        zypper)  install_pkgs clang llvm libbpf libbpf-devel \
+                              linux-devel-default python3-pytest \
+                              gcc make git rsync curl ca-certificates tar \
+                              bpftool netcat-openbsd python3-pip \
+                              policycoreutils-devel selinux-policy-devel ;;
         *)       install_pkgs clang llvm libbpf-devel linux-headers \
-                              python3-pytest base-devel git rsync curl \
+                              python3-pytest base-devel git rsync curl tar \
                               netcat-openbsd ;;
     esac
     untick
@@ -481,7 +508,7 @@ else
     has bpftool || has /usr/sbin/bpftool || has /usr/bin/bpftool || \
         install_pkgs bpftool
     MISS=""
-    for t in clang llvm-objdump make gcc git python3 rsync curl; do
+    for t in clang llvm-objdump make gcc git python3 rsync curl tar; do
         has "$t" || MISS="$MISS $t"
     done
     if [ -n "$MISS" ]; then
@@ -534,6 +561,11 @@ if [ -n "$PY_MISS" ]; then
         dnf|yum) install_pkgs python3-click python3-rich python3-yaml ;;
         pacman)  install_pkgs python-click python-rich python-yaml ;;
         apk)     install_pkgs py3-click py3-rich py3-yaml ;;
+        # Onceki hâlde burada zypper (ve hicbir yedek) dalı yoktu:
+        # openSUSE'de Python bagimliliklari HIC kurulmuyordu ve
+        # axctl calisirken "ModuleNotFoundError: click" veriyordu.
+        zypper)  install_pkgs python3-click python3-rich python3-yaml ;;
+        *)       install_pkgs python3-click python3-rich python3-yaml ;;
     esac
     untick
     # apt bulamazsa pip ile denenir (ozellikle cloud imajlarda)
