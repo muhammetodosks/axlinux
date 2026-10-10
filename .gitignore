@@ -26,8 +26,16 @@ venv/
 # tespitinde kullanildi, uretim kodu degildir.
 # NOT: kok dizine gore yazilir, onceki "axlinux/src/..." yazimi
 # yanlitti ve hicbir seyi dislamiyordu.
-/src/go/axdaemon/cmd/mapcmp/
-/src/go/axdaemon/cmd/mapdump/
+# NOT: cmd/mapcmp ve cmd/mapdump artik IGNORE EDILMEZ.
+# Bunlar teşhis araclari ve kaynak kodun parcasidir:
+#   mapdump  iki eBPF map'inin ham baytlarini karsilastirir
+#   mapcmp   deny_map anahtari ile cekirdegin urettigi key'i
+#            bayt duzeyinde karsilastirir
+# Once kisaca harici bir arac sanildi ve depoya girmeleri engellendi.
+# Oysa "key dogru yaziliyor mu" sorusunu YALNIZCA bu araclar
+# cevaplayabilir; Go tarafi key uretirken hata yaparsa diger
+# hicbir test yakalayamaz. Iki arac da derlenip calistigi
+# dogrulandi, bu yuzden repoya alindi.
 
 # Test artiklari. verify_all.sh gecici dosyalari /tmp altinda
 # uretir, ama bir testin yarida kesilmesi veya TMPDIR degismesi
