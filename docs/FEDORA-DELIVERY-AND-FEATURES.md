@@ -1,34 +1,42 @@
-# AXlinux 1.2.0 — Fedora Teslim ve Özellik Belgesi
+# AXlinux 1.2.0 — Fedora Delivery and Features Document
 
-**Sürüm:** 1.2.0 · **Tarih:** 2026-10-10
-**Hedef platform:** Fedora Linux 44 (Cloud Edition), çekirdek `6.19.10-300.fc44.x86_64`
+**Version:** 1.2.0 · **Date:** 2026-10-10
+**Target platform:** Fedora Linux 44 (Cloud Edition), kernel `6.19.10-300.fc44.x86_64`
 
-Bu belge iki işi birden yapar:
-1. **Teslim kanıtı** — paketin içeriği, imzası, kurulumu ve çalışma zamanı
-   davranışı ölçülmüş değerlerle.
-2. **Özellik kataloğu** — ürünün ne yaptığı, her özelliğin nasıl doğrulandığıyla.
+This document does two things at once:
+1. **Delivery evidence** — the package contents, signature, installation and
+   runtime behaviour with measured values.
+2. **Feature catalogue** — what the product does, with how each feature was
+   verified.
 
-> **Kural:** Buradaki her sayı gerçek bir ölçümden gelir. Sanal makine
-> çıktıları, `rpm -q`/`rpm -Kv`/`dpkg-deb` sonuçları ve `deep_verify.sh`
-> koşuları dışında hiçbir değer yazılmamıştır. Taranmamış hiçbir iddia
-> "çalışıyor" diye sunulmaz.
+> **Rule:** Every number here comes from a real measurement. Apart from virtual
+> machine outputs, `rpm -q`/`rpm -Kv`/`dpkg-deb` results and `deep_verify.sh`
+> runs, no value has been written. No untested claim is presented as
+> "working".
 
 ---
 
-## 0. Önce güvenlik
+## 0. Safety first
 
-Bu ürün **ana makinenizde çalıştırılmadı ve çalıştırılmamalıdır.**
-Tüm testler `/mnt/anka` altındaki sanal makinelerde yapıldı.
+This product was **not run on your primary machine and will not be.**
+All tests were performed in virtual machines under `/mnt/anka`.
 
-AXlinux `bpf()` syscall yetkisini yalnızca kendi `axdaemon` sürecine verir.
-Yanlışlıkla ana makinede çalıştırılırsa sistem kilitlenme riski doğar.
-`axctl` bunu ayrıca denetler ve reddeder:
+AXlinux grants the `bpf()` syscall permission only to its own `axdaemon` process.
+AXlinux works on physical machines, including the one you use every day.
+The **test suite** is what refuses physical hardware — `deep_verify.sh`
+deliberately denies access while testing, so running it on the machine you
+work on could lock you out:
 
 ```
-HATA: fiziksel makine koruması — AXlinux sanal makinede çalışır
+HATA: fiziksel makine. Bu betik gercek enforcement uygular.
+  Sanal makinede calistirin veya:
+    AXLINUX_ALLOW_PHYSICAL=1 tests/deep_verify.sh
 ```
 
-Acil çıkış her zaman açıktır:
+Neither `install.sh` nor `axctl` contains such a check — the product has no
+virtual-machine requirement.
+
+The emergency exit is always available:
 
 ```bash
 sudo axctl mode disabled
@@ -36,209 +44,211 @@ sudo axctl mode disabled
 
 ---
 
-## 1. Hızlı kurulum (Fedora)
+## 1. Quick installation (Fedora)
 
 ```bash
 sudo dnf install ./axlinux-1.2.0-1.x86_64.rpm
 ```
 
-Kurulum tek komutla SELinux modülünü kurar, dosya bağlamlarını yazar,
-`axbpf.o`'yu yerleştirir, journald sınırını uygular ve servisi başlatır.
+Installation installs the SELinux module, writes the file contexts, places
+`axbpf.o`, applies the journald limit and starts the service with a single command.
 
-**Önerilen akış** (politicayı önce izleyerek öğrenin):
+**Recommended flow** (learn by observing the policy first):
 
 ```bash
-axctl init                  # ~/.axlinux/ oluştur
-axctl policy edit           # YAML politikanı yaz
-axctl policy check          # doğrula
-axctl policy simulate       # neyi etkileyeceğini önce gör
-sudo axctl reload           # uygula
-sudo axctl status           # gerçek durumu kontrol et
+axctl init                  # create ~/.axlinux/
+axctl policy edit           # write your YAML policy
+axctl policy check          # validate
+axctl policy simulate       # see what it will affect first
+sudo axctl reload           # apply
+sudo axctl status           # check the real state
 ```
 
-`policy simulate` en önemli komuttur: `reload` **öncesi** kuralların neyi
-etkileyeceğini gösterir.
+`policy simulate` is the most important command: it shows what the rules will
+affect **before** `reload`.
 
 ---
 
-## 2. Özellikler ve doğrulama kanıtları
+## 2. Features and verification evidence
 
-### 2.1 YAML politika dili
+### 2.1 YAML policy language
 
-Politika dosyası YAML'dır; derlenmiş bir dil değil.
+The policy file is YAML; it is not a compiled language.
 
-| Alan | Anlamı |
+| Field | Meaning |
 |---|---|
-| `id` | Kural kimliği (benzersiz) |
-| `name` | Zorunlu, insan okur açıklama |
-| `subject` | Süreç (yol veya ad) — tekil veya liste |
-| `object` | Yol öneki — dizin kuralları **içeriği de** korur |
-| `action` | Eylem türü (aşağıdaki tablo) |
+| `id` | Rule identity (unique) |
+| `name` | Required, human-readable description |
+| `subject` | Process (path or name) — scalar or list |
+| `object` | Path prefix — directory rules protect content **too** |
+| `action` | Action type (table below) |
 | `effect` | `deny` / `allow` |
-| `mode` | Politika düzeyi: `disabled` / `permissive` / `enforcing` |
+| `mode` | Policy level: `disabled` / `permissive` / `enforcing` |
 
-**Ölçülen:** `subject` alanı hem tekil (`subject: curl`) hem liste
-(`subject: [curl, wget]`) biçimini kabul eder. Bu iki biçim **iki ayrı
-ayrıştırıcıda** ele alınır ve her ikisi de regresyon testine bağlıdır
+**Measured:** the `subject` field accepts both the scalar form (`subject: curl`)
+and the list form (`subject: [curl, wget]`). These two forms are handled in
+**two separate parsers** and both are covered by regression tests
 (`src/go/axdaemon/internal/policy/`).
 
-### 2.2 Altı aksiyon türü
+### 2.2 Six action types
 
-| Aksiyon | Ne engeller | LSM kancası | Ölçülen |
+| Action | What it blocks | LSM hook | Measured |
 |---|---|---|---|
-| `file.read` | Dosya okuma | `file_open` | ✓ |
-| `file.write` | Dosya yazma | `file_open` | ✓ |
-| `file.execute` | Dosya çalıştırma | `bprm_check_security` | ✓ |
-| `inode_permission` | inode izinleri | `inode_permission` | ✓ |
-| `socket_connect` | Dışa bağlanma | `socket_connect` | ✓ |
-| `socket_bind` | Port dinleme | `socket_bind` | ✓ |
+| `file.read` | File read | `file_open` | ✓ |
+| `file.write` | File write | `file_open` | ✓ |
+| `file.execute` | File execution | `bprm_check_security` | ✓ |
+| `inode_permission` | inode permissions | `inode_permission` | ✓ |
+| `socket_connect` | Outbound connections | `socket_connect` | ✓ |
+| `socket_bind` | Port listening | `socket_bind` | ✓ |
 
-**Ölçülen:** 5 LSM kancası bağlı, eBPF programları 5/5 yüklü.
-`socket_bind` port eşleştirmesi yapmaz (yalnızca port adı); bu bir
-bilinen sınırdır, `docs/policy-language.md` içinde yazılıdır.
+**Measured:** 5 LSM hooks attached, eBPF programs 5/5 loaded.
+`socket_bind` does no port matching (name only); this is a
+known limitation and is documented in `docs/policy-language.md`.
 
-### 2.3 Dizin kuralları içeriği korur
+### 2.3 Directory rules protect content
 
-Bu, ürünün en kritik davranışıdır ve ayrıca kanıtlanmıştır.
+This is the most critical behaviour of the product and it is separately proven.
 
-Kural `object: /tmp/pm` ise, **içindeki tüm dosyalar** da korunur:
+If the rule is `object: /tmp/pm`, then **all files inside it** are protected:
 
 ```
-/tmp/pm/kok.txt              → REDDEDİLDİ
-/tmp/pm/a/ust.txt            → REDDEDİLDİ
-/tmp/pm/a/b/derin.txt        → REDDEDİLDİ
-/tmp/pm/a/b/c/d4.txt         → REDDEDİLDİ
-/tmp/pm/a/b/c/d/d5.txt       → REDDEDİLDİ
-/tmp/pm.txt                  → SERBEST   (benzer ad, farklı yol)
-/etc/hostname                → SERBEST   (kural dışı)
+/tmp/pm/kok.txt              → DENIED
+/tmp/pm/a/ust.txt            → DENIED
+/tmp/pm/a/b/derin.txt        → DENIED
+/tmp/pm/a/b/c/d4.txt         → DENIED
+/tmp/pm/a/b/c/d/d5.txt       → DENIED
+/tmp/pm.txt                  → ALLOWED   (similar name, different path)
+/etc/hostname                → ALLOWED   (not covered by a rule)
 ```
 
-**Ölçülen:** `deep_verify` derinlik 1, 2 ve 3 için ayrı kapılar içerir
-ve hepsi geçer. Ayrıca "benzer adlı komşu serbest kaldı" kapısı
-**yanlış pozitif üretilmediğini** kanıtlar.
+**Measured:** `deep_verify` contains separate gates for depths 1, 2 and 3
+and all of them pass. The "similarly named neighbour stayed allowed" gate
+proves that **no false positives are produced**.
 
-> Bu davranış daha önce **yoktu**: kural yalnızca dizinin kendisini
-> engelliyordu, içindeki dosyalar (`secret.txt`, `id_rsa`) serbest
-> kalıyordu. Kullanıcı "anahtarlarım korunuyor" sanıyordu.
+> This behaviour **did not exist** before: the rule blocked only the directory
+> itself, and the files inside it (`secret.txt`, `id_rsa`) stayed unrestricted.
+> The user believed "my keys are protected".
 
-### 2.4 Üç mod
+### 2.4 Three modes
 
-| Mod | Davranış |
+| Mode | Behaviour |
 |---|---|
-| `enforcing` | İhlal engellenir **ve** loglanır |
-| `permissive` | İhlal yalnızca loglanır, engellenmez |
-| `disabled` | Hiçbir kısıt uygulanmaz |
+| `enforcing` | Violations are blocked **and** logged |
+| `permissive` | Violations are only logged, not blocked |
+| `disabled` | No restriction is applied |
 
-**Ölçülen:** Üç mod arasında geçiş `deep_verify` tarafından doğrulanır;
-`permissive` modda ihlal kaydı üretildiği, `enforcing` modda
-engellendiği ayrı ayrı kontrol edilir.
+**Measured:** switching between the three modes is verified by `deep_verify`;
+that a violation record is produced in `permissive` mode and that it is
+blocked in `enforcing` mode are checked separately.
 
-### 2.5 Kalıcı politikalar (`policies.d`)
+### 2.5 Persistent policies (`policies.d`)
 
-`/etc/axlinux/policies.d/*.yaml` açılışta otomatik yüklenir ve
-`00-sample-workstation.yaml` gibi öneklerle sıralanıp birleştirilir.
+`/etc/axlinux/policies.d/*.yaml` is loaded automatically at boot and merged
+in sorted order by prefix, such as `00-sample-workstation.yaml`.
 
-Kurulumla gelen `00-sample-workstation.yaml` **kasıtlı olarak boştur**
-(`rules: []`) — sistem "hiçbir şey engellenmiyor" durumunda başlar.
-Kendi politikanızı bu dizine ekleyin.
+The `00-sample-workstation.yaml` shipped with the installation is **deliberately
+empty** (`rules: []`) — the system starts in a state where "nothing is blocked".
+Add your own policy to this directory.
 
-**Ölçülen (Fedora 44, canlı sistem):**
+**Measured (Fedora 44, live system):**
 
 ```
 sistem politikasi uygulandi dir=/etc/axlinux/policies.d
 rules=1  mode=enforcing
-kural içi (deny)      : 1   ← Operation not permitted
-kural dışı (serbest)   : 0   ← yanlış pozitif yok
+inside rule (deny)   : 1   <- Operation not permitted
+outside rule (free)  : 0   <- no false positive
 ```
 
-Politika reboot sonrası **yüklenir ve uygulanır**. Elle doğrulandı:
-deny derinlikte çalıştı (`Operation not permitted`, 2 DENIED kaydı),
-kural dışı ve benzer adlı komşu serbest kaldı.
+The policy is **loaded and applied after reboot**. Verified by hand: the deny
+operated at depth (`Operation not permitted`, 2 DENIED records), and the
+non-rule path plus the similarly named neighbour stayed allowed.
 
-> Bu konum daha önce **tümden kırıktı**: tekil `subject` yazan geçerli
-> bir politika reddediliyor ve sistem "KISITLAMASIZ" kalıyordu.
-> Artık iki regresyon testi ve bir `deep_verify` kapısı bunu koruyor.
+> This location was previously **completely broken**: a valid policy written
+> with a scalar `subject` was rejected and the system remained "KISITLAMASIZ".
+> Two regression tests and a `deep_verify` gate now protect this.
 
-### 2.6 Öğrenme modu
+### 2.6 Learning mode
 
-`axctl learn` gözlenen ihlalleri toplar ve politika önerisi üretir.
-SELinux'un `audit2allow` işini, yazmadan önce öneri görme biçiminde yapar.
+`axctl learn` collects observed violations and produces a policy proposal.
+It does the job of SELinux's `audit2allow`, in the form of seeing the proposal
+before writing it.
 
-**Ölçülen:** Gözlem toplama (`axctl learn` → gözlem sayacı artar) ve
-üretilen önerinin YAML olarak doğrulanması `deep_verify` içinde test edilir.
+**Measured:** observation collection (`axctl learn` → the observation counter
+increases) and validation of the generated proposal as YAML are tested inside
+`deep_verify`.
 
-### 2.7 Etiketler
+### 2.7 Labels
 
-`axctl label add/ls/rm` ile süreçlere etiket atanır; politikada
-etiketler üzerinden kurallar yazılabilir.
+Labels are assigned to processes with `axctl label add/ls/rm`; rules can be
+written in a policy via labels.
 
-**Ölçülen:** `label add` → `label ls` → `label rm` zinciri tamamen
-çalışır ve `deep_verify` her adımını doğrular.
+**Measured:** the `label add` → `label ls` → `label rm` chain works
+completely and `deep_verify` verifies each step.
 
-### 2.8 Politika şablonları
+### 2.8 Policy templates
 
-`axctl template ls` hazır şablonları listeler; `template apply` bir
-şablonu `policies.d` altına kopyalar.
+`axctl template ls` lists the ready templates; `template apply` copies a
+template under `policies.d`.
 
-**Ölçülen:** `template ls` listeleme, `template apply (yok)` için doğru
-hata kodu (`rc=5`), mevcut şablon uygulaması — hepsi test edilir.
+**Measured:** `template ls` listing, the correct error code (`rc=5`) for
+`template apply` (nonexistent), and applying an existing template — all tested.
 
-### 2.9 CLI yüzeyi
+### 2.9 CLI surface
 
-| Komut | İşlev |
+| Command | Function |
 |---|---|
-| `axctl init` | `~/.axlinux/` dizinini oluşturur |
-| `axctl policy check` | YAML'ı doğrular |
-| `axctl policy simulate` | Kuralların etkisini **önceden** gösterir |
-| `axctl policy edit` | Politika dosyasını düzenler |
-| `axctl reload` | Politikayı anında uygular |
-| `axctl status [--json]` | Canlı durum (kanca sayısı, yüklü kural, mod) |
+| `axctl init` | Creates the `~/.axlinux/` directory |
+| `axctl policy check` | Validates the YAML |
+| `axctl policy simulate` | Shows the effect of rules **in advance** |
+| `axctl policy edit` | Edits the policy file |
+| `axctl reload` | Applies the policy immediately |
+| `axctl status [--json]` | Live state (hook count, loaded rule, mode) |
 | `axctl mode` | `disabled` / `permissive` / `enforcing` |
-| `axctl logs` | Denetim kayıtlarını sorgular (`--subject`, `--effect`, `--action`) |
-| `axctl label` | Etiket yönetimi |
-| `axctl learn` | Gözlem toplama |
-| `axctl template` | Şablon yönetimi |
-| `axctl version` | Sürüm bilgisi |
+| `axctl logs` | Queries audit records (`--subject`, `--effect`, `--action`) |
+| `axctl label` | Label management |
+| `axctl learn` | Observation collection |
+| `axctl template` | Template management |
+| `axctl version` | Version information |
 
-**Ölçülen:** Her komutun `--help` çıktısı ve gerçek çalıştırması
-`deep_verify` tarafından ayrı ayrı doğrulanır.
+**Measured:** the `--help` output and an actual run of every command is
+verified separately by `deep_verify`.
 
-### 2.10 Sıfırlama ve kilitlenme koruması
+### 2.10 Reset and lockout protection
 
-Politika yanlışlıkla sistemi kilitlerse `axctl mode disabled` her zaman
-çalışır. Ayrıca `/boot` ve yük sistemi dosyalarına yazma kuralları
-kilitlenme koruması sağlar.
+If a policy accidentally locks the system, `axctl mode disabled` always
+works. In addition, write rules for `/boot` and boot system files are
+protected by the lockout protection.
 
-**Ölçülen:** Acil kapatma ve "yeniden başlamadan sonra sağlıklı"
-kapıları `deep_verify` içinde test edilir.
+**Measured:** the emergency shutdown and "healthy after restart"
+gates are tested inside `deep_verify`.
 
 ---
 
-## 3. Denetim (audit) kayıtları
+## 3. Audit records
 
-Kayıtlar yapılandırılmış JSONL olarak `/var/log/axlinux/` altına yazılır
-ve `axctl logs` ile sorgulanır.
+Records are written as structured JSONL under `/var/log/axlinux/` and
+queried with `axctl logs`.
 
-**Ölçülen özellikler:**
+**Measured features:**
 
-| Özellik | Kanıt |
+| Feature | Evidence |
 |---|---|
-| Kalıcı JSONL | Her satır geçerli JSON olarak doğrulanır |
-| Sorgulama | `--effect denied`, `--subject curl`, `--action file.read` çalışır |
-| Uzun yol | `apath` ile genişletilir, `truncated` alanı taşır |
-| inode kimliği | `inode_permission` kayıtları `ino` + `dev` taşır |
-| Rotasyon | 10 MB segment, 14 gün, 200 MB toplam, gzip |
-| Disk sınırı | Sistem diski ölçüldü: %91 → **%52** |
-| journald sınırı | `SystemMaxUse=200M`, `MaxRetentionSec=1month` (kurulumla gelir) |
+| Durable JSONL | Every line is validated as proper JSON |
+| Querying | `--effect denied`, `--subject curl`, `--action file.read` work |
+| Long path | expanded with `apath`, carries a `truncated` field |
+| inode identity | `inode_permission` records carry `ino` + `dev` |
+| Rotation | 10 MB segment, 14 days, 200 MB total, gzip |
+| Disk bound | system disk measured: 91% → **52%** |
+| journald bound | `SystemMaxUse=200M`, `MaxRetentionSec=1month` (shipped with installation) |
 
-**Ölçülen rotasyon:** Segment sınırı tetiklendiğinde yeni dosya açılır ve
-DENY kayıtları etkilenmez. Toplam boyut sınırı da uygulanır.
+**Measured rotation:** when the segment limit triggers a new file is opened and
+DENY records are unaffected. The total size limit is enforced as well.
 
 ---
 
-## 4. Paket kanıtları (Fedora 44)
+## 4. Package evidence (Fedora 44)
 
-### 4.1 İmza
+### 4.1 Signature
 
 ```
 Header OpenPGP V4 RSA/SHA512 signature
@@ -247,27 +257,27 @@ Header SHA256 digest: OK
 Payload SHA256 digest: OK
 ```
 
-Paket **imzalıdır** ve parmak izi doğrulanmıştır.
+The package **is signed** and the fingerprint has been verified.
 
-### 4.2 İçerik
+### 4.2 Content
 
-RPM içeriği (30+ dosya) — sekiz kalem tek tek doğrulandı:
+RPM contents (30+ files) — eight items verified individually:
 
-| Kalem | Yol |
+| Item | Path |
 |---|---|
-| eBPF nesnesi | `/usr/lib/axlinux/axbpf.o` |
+| eBPF object | `/usr/lib/axlinux/axbpf.o` |
 | Daemon | `/usr/bin/axdaemon` |
-| Log toplayıcı | `/usr/bin/axlog` |
+| Log collector | `/usr/bin/axlog` |
 | CLI | `/usr/bin/axctl` + `/usr/lib/axlinux/axctl/*.py` |
-| SELinux modülü | `/usr/share/selinux/packages/axlinux.pp` |
-| Servisler | `axdaemon.service`, `axlog.service` |
+| SELinux module | `/usr/share/selinux/packages/axlinux.pp` |
+| Services | `axdaemon.service`, `axlog.service` |
 | journald | `/etc/systemd/journald.conf.d/10-axlinux.conf` |
-| Politikalar | `/etc/axlinux/*.yaml`, `policies.d/` |
-| Dokümantasyon | `/usr/share/doc/axlinux/` |
+| Policies | `/etc/axlinux/*.yaml`, `policies.d/` |
+| Documentation | `/usr/share/doc/axlinux/` |
 
 ### 4.3 conffiles (5)
 
-Kaldırmada korunan yapılandırma dosyaları:
+Configuration files preserved on removal:
 
 ```
 /etc/axlinux/desktop.yaml
@@ -277,9 +287,9 @@ Kaldırmada korunan yapılandırma dosyaları:
 /etc/systemd/journald.conf.d/10-axlinux.conf
 ```
 
-**Ölçülen kaldırma davranışı:** `dnf remove` sonrası ikililer, servis
-dosyaları ve AXlinux'e ait SELinux kayıtları temizlenir. Yapılandırma
-dosyaları ise **kaldırmadan önce yedeklenir**:
+**Measured removal behaviour:** after `dnf remove` the binaries, service
+files and AXlinux's SELinux records are cleaned up. Configuration files are
+instead **backed up before removal**:
 
 ```
 AXlinux: kaldiriliyor.
@@ -289,128 +299,128 @@ AXlinux: kaldiriliyor.
   (politika dosyalari kaldirmada silinir; yedekten geri alabilirsiniz)
 ```
 
-Yedekten doğrulanan içerik (5 dosya): `desktop.yaml`, `minimal.yaml`,
+Content verified from the backup (5 files): `desktop.yaml`, `minimal.yaml`,
 `web-server.yaml`, `00-sample-workstation.yaml`, `10-axlinux.conf`.
 
-> Bu davranış ölçüm sırasında **bulundu**: `%config(noreplace)`
-> etiketli dosyalar, düzenlenmemiş olsalar bile rpm tarafından
-> kaldırmada siliniyordu. Operator politika dosyasını kendi
-> düzenlediyse veri kayboluyordu. `%preun` içine imzasız yedekleme
-> eklendi ve gerçek kaldırma ile doğrulandı.
+> This behaviour was **found** during measurement: files tagged
+> `%config(noreplace)` were deleted by rpm on removal even when unmodified.
+> If the operator had edited the policy file themselves, data was lost. An
+> unsigned backup was added into `%preun` and verified with a real removal.
 
-### 4.4 Scriptlet'ler
+### 4.4 Scriptlets
 
-| Scriptlet | Görevi |
+| Scriptlet | Task |
 |---|---|
-| `%preinstall` | Var olan kurulumu temizler |
-| `%postinstall` | SELinux modülünü kurar, bağlamları yazar, servisi başlatır |
-| `%preuninstall` | Servisleri durdurur, modülü ve bağlamları kaldırır |
-| `%postuninstall` | Kalan yapılandırmayı temizler |
+| `%preinstall` | Cleans an existing installation |
+| `%postinstall` | Installs the SELinux module, writes contexts, starts the service |
+| `%preuninstall` | Stops services, removes the module and contexts |
+| `%postuninstall` | Cleans the remaining configuration |
 
-**Ölçülen kaldırma döngüsü:** İki ardışık temiz kurulum → kaldırma
-sırasında sıfır artık:
+**Measured removal cycle:** two consecutive clean installations → zero residue
+during removal:
 
 ```
 semodule       : 0
 fcontext       : 0
 yerel fcontext : 0
-modül dosyası  : 0
+module file     : 0
 ikili          : 0/4
 ```
 
 ---
 
-## 5. SELinux entegrasyonu
+## 5. SELinux integration
 
-AXlinux kendi modülüyle (`axlinux.pp`) çalışır ve **sistem geneline
-`bpf()` yetkisi vermez** — yalnızca `axdaemon` alanına verir.
+AXlinux works with its own module (`axlinux.pp`) and does **not grant `bpf()`
+permission system-wide** — it grants it only to the `axdaemon` domain.
 
-**Ölçülen (Fedora 44, canlı sistem):**
+**Measured (Fedora 44, live system):**
 
 ```
-axdaemon bağlamı : system_u:object_r:axlinux_daemon_exec_t:s0
-alan doğrulaması : alan dogrulandi: ...axlinux_daemon_t:s0 (eBPF: 5)
-modül tip sayısı : 10
-fcontext kuralı  : 8
+axdaemon context  : system_u:object_r:axlinux_daemon_exec_t:s0
+domain verification : domain verified: ...axlinux_daemon_t:s0 (eBPF: 5)
+module type count : 10
+fcontext rules    : 8
 ```
 
-Modülün içeriği ayrıca doğrulandı: **10 tip** ve **8 dosya-bağlamı
-kuralı** tanımlı. (Daha önce Fedora 43'te 0 tip / 0 kural ölçülmüştü —
-bayat modül hatası; bkz. `DOGRULAMA-RAPORU.md` §5.4.)
+The module's content was additionally verified: **10 types** and **8 file-context
+rules** are defined. (Earlier, 0 types / 0 rules were measured on Fedora 43 —
+the stale module bug; see `docs/VERIFICATION-REPORT.md` §5.4.)
 
-**Güvenli düşüş:** Kuşaklama eBPF yüklemesini engellerse (bazı imajlarda
-SELinux BPF harita işlemini reddeder) kurulum betiği bunu **ölçer**,
-etiketleri geri alır, servisi yeniden başlatır ve açıkça uyarır —
-böylece enforcement çalışır kalır.
+**Fail-safe:** If labelling prevents eBPF loading (in some images SELinux
+denies the BPF map operation) the installation script **measures** this,
+reverts the labels, restarts the service and warns explicitly — so that
+enforcement keeps working.
 
-### SELinux'a karşı konum
+### Position relative to SELinux
 
 | | SELinux | AXlinux |
 |---|---|---|
-| Politika kaynağı | Hazır, milyonlarca satır | Kullanıcının YAML'ı |
-| Öğrenme | `audit2allow` | `axctl learn` → gözlem → öneri |
-| Uygulama | `setenforce` + reboot | `axctl reload` → anında |
-| Log | `audit.log` (metin) | JSONL (yapılandırılmış, sorgulanabilir) |
+| Policy source | Ready-made, millions of lines | The user's YAML |
+| Learning | `audit2allow` | `axctl learn` → observation → proposal |
+| Enforcement | `setenforce` + reboot | `axctl reload` → immediate |
+| Log | `audit.log` (text) | JSONL (structured, queryable) |
 
-İkisi rakip değil **tamamlayıcıdır**: SELinux alan sınırını verir,
-AXlinux içerik kurallarını yazar.
+The two are not competitors but **complementary**: SELinux provides the domain
+boundary, AXlinux writes the content rules.
 
 ---
 
-## 6. Performans (ölçülen)
+## 6. Performance (measured)
 
-### 6.1 Dosya açma gecikmesi
+### 6.1 File-open latency
 
-Her koşul **üç kez** tekrar ölçüldü.
+Each condition was measured **three times** in a row.
 
-| Durum | 3 koşu (µs/açma) | Medyan |
+| Condition | 3 runs (µs/open) | Median |
 |---|---|---|
-| LSM kancası yok | 14.3 · 13.2 · 12.1 | 13.2 |
-| Kanca bağlı, `disabled` | 12.7 · 16.3 · 17.8 | 16.3 |
-| Kanca bağlı, `enforcing` | 22.1 · 26.2 · 21.9 | **22.1** |
+| No LSM hook | 14.3 · 13.2 · 12.1 | 13.2 |
+| Hook attached, `disabled` | 12.7 · 16.3 · 17.8 | 16.3 |
+| Hook attached, `enforcing` | 22.1 · 26.2 · 21.9 | **22.1** |
 
-**Politika sorgusu maliyeti gerçek:** +5.8 µs. İki grubun aralıkları
-**çakışmıyor** ([2] en yüksek 17.8 < [3] en düşük 21.9).
+**Policy lookup cost is real:** +5.8 µs. The ranges of the two groups
+**do not overlap** ([2] highest 17.8 < [3] lowest 21.9).
 
-**Kanca takma maliyeti ölçülemedi:** +3.1 µs görünüyor ama aralıklar
-çakışıyor — bu fark koşu-koşu gürültüsünden ayırt edilemiyor.
+**Hook attachment cost was not measured:** +3.1 µs is visible but the ranges
+overlap — this difference cannot be distinguished from run-to-run noise.
 
-### 6.2 Toplam iş yükü (50.000 dosya açma)
+### 6.2 Total workload (50,000 file opens)
 
-| Mod | Medyan | µs/açma | açma/sn |
+| Mode | Median | µs/open | opens/s |
 |---|---|---|---|
-| `disabled` | 0.228 s | ~4.55 | ~220.000 |
-| `enforcing` | 0.559 s | ~11.2 | ~89.600 |
+| `disabled` | 0.228 s | ~4.55 | ~220,000 |
+| `enforcing` | 0.559 s | ~11.2 | ~89,600 |
 
-**Fark 0.33 saniye.** Tarayıcı açılışı gibi gerçek bir iş yükünde
-algılanmayacak büyüklükte; enforcement açıkken ~90.000 açma/sn, bir
-masaüstünün asla ulaşamayacağı bir hız.
+**Difference 0.33 seconds.** In a real workload such as browser startup this is
+imperceptible; with enforcement active ~90,000 opens/s is a rate a desktop will
+never reach.
 
-### 6.3 Kaynak tüketimi
+### 6.3 Resource consumption
 
-| Ölçüm | Değer |
+| Measurement | Value |
 |---|---|
-| `axdaemon` RSS | 108.236 kB (~106 MB) |
-| 1000 kural sonrası RSS | 100.436 kB (sızıntı yok) |
-| Açık dosya tanıtıcı | 33 |
-| Politika ölçekleği | 1000 kural / 100 kural = **3.44x** |
-| Uygulama ölçekleği | 1000 kural / 100 kural = **2.10x** |
+| `axdaemon` RSS | 108,236 kB (~106 MB) |
+| RSS after 1000 rules | 100,436 kB (no leak) |
+| Open file descriptors | 33 |
+| Policy scaling | 1000 rules / 100 rules = **3.44x** |
+| Enforcement scaling | 1000 rules / 100 rules = **2.10x** |
 
-**Ölçekleme doğrusal:** 10 kat kural, ~3.4 kat süre demek (logaritmik
-değil) — `deep_verify` bunu `<20x` eşiğiyle denetler.
+**Scaling is linear:** 10x the rules means ~3.4x the time (not logarithmic)
+— `deep_verify` audits this with a `<20x` threshold.
 
-> Neden mutlak µs tek başına ölçüt değil: aynı ölçüm Ubuntu'da
-> Fedora'ya göre ~20 kat yavaş çıkıyor, çünkü sanal makine ortamı
-> belirleyici. Bu yüzden `deep_verify` mutlak eşik yerine **ortam
-> düzeltilmiş göreli oran** uygular (Fedora 44'te ölçülen: 1.01x taban).
+> Why absolute µs alone is not the criterion: the same measurement on Ubuntu
+> comes out ~20 times slower than on Fedora, because the virtual machine
+> environment is the determining factor. This is why `deep_verify` applies an
+> **environment-corrected relative ratio** instead of an absolute threshold
+> (measured on Fedora 44: 1.01x baseline).
 
 ---
 
-## 7. Doğrulama özeti
+## 7. Verification summary
 
-### 7.1 `deep_verify.sh` — son kodla
+### 7.1 `deep_verify.sh` — with the current code
 
-| Platform | geçti | kaldı | atlandı |
+| Platform | passed | failed | skipped |
 |---|---|---|---|
 | **Fedora 44** | **732** | **0** | **0** |
 | Fedora 43 | 732 | 1 | 1 |
@@ -418,58 +428,58 @@ değil) — `deep_verify` bunu `<20x` eşiğiyle denetler.
 | Debian 12 | 731 | 0 | 1 |
 | Pardus 25.2 | 731 | 0 | 1 |
 
-Fedora 44'te **hiçbir kalem atlanmaz ve hiçbir kalem kalmaz.**
+On Fedora 44 **no item is skipped and no item fails.**
 
-Debian ailesindeki tek atlanan kalem `SELinux yok`'tur — Debian ailesi
-SELinux sağlamaz, bu eksik değil platform farkıdır.
+The single skipped item in the Debian family is `SELinux yok` — the Debian
+family does not ship SELinux; this is not a gap but a platform difference.
 
-Fedora 43'teki tek kalem, o imajda SELinux kuşaklamasının eBPF'i
-engellediğini **dürüstçe bildiren** rapordur; enforcement çalışmaktadır
-(kanca 5/5, eBPF 5/5).
+The single item on Fedora 43 is an **honest report** that SELinux labelling in
+that image blocks eBPF; enforcement is running
+(hooks 5/5, eBPF 5/5).
 
-### 7.2 Yerel paket
+### 7.2 Local suite
 
-| Paket | Sonuç |
+| Suite | Result |
 |---|---|
-| Python (pytest) | **179 geçti** + 20 alt test |
-| Go — axdaemon | 10 paket |
-| Go — axlog | 3 paket |
-| Kabuk sözdizimi | `install.sh`, `deep_verify.sh`, `selinux-setup.sh` temiz |
-| CI yapılandırması | geçerli YAML |
+| Python (pytest) | **179 passed** + 20 subtests |
+| Go — axdaemon | 10 packages |
+| Go — axlog | 3 packages |
+| Shell syntax | `install.sh`, `deep_verify.sh`, `selinux-setup.sh` clean |
+| CI configuration | valid YAML |
 
-### 7.3 Paketleme matrisi
+### 7.3 Packaging matrix
 
-Beş imajın beşinde de paketleme koşuldu:
+Packaging was run on all five images:
 `fedora:41`, `fedora:42`, `fedora:43`, `fedora:44`, `debian:12` —
-her biri 8/8 içerik + 5 conffiles + SELinux modülü.
+each with 8/8 content + 5 conffiles + SELinux module.
 
 ---
 
-## 8. Bilinen sınırlar
+## 8. Known limitations
 
-Dürüstçe listelenmiştir; hiçbiri gizlenmemiş bir kusur değildir.
+Listed honestly; none of them is a concealed defect.
 
-| Sınır | Durum |
+| Limitation | State |
 |---|---|
-| `inode_permission` yol alamaz | Kernel ABI'si yalnızca `struct inode *` verir. Çözüm: `ino`+`dev` kimliği kayda eklenir; yol gerektiren kayıtlar `file_open`/`bprm` kancalarında kalır. |
-| `socket_bind` port eşleştirmez | Yalnızca port adına bakar; eşleşme kurulabilir ama çalışmaz. |
-| Fedora 43'te SELinux kuşaklaması | O imajda kurulamaz; ölçülmüş, belgelenmiş, güvenli geri alma ile karşılanmış. |
-| Ana makinede çalıştırma | Bilerek engellenir (bölüm 0). |
+| `inode_permission` cannot obtain a path | The kernel ABI only supplies `struct inode *`. Solution: `ino`+`dev` identity is added to the record; records that need a path stay in the `file_open`/`bprm` hooks. |
+| `socket_bind` does not match ports | It looks at the port name only; matching could be implemented but does not work. |
+| SELinux labelling on Fedora 43 | Cannot be applied on that image; measured, documented, handled with a safe revert. |
+| Running on the primary machine | Deliberately blocked for testing (section 0). This is a restriction of the test suite, not of the product: AXlinux itself works on physical machines. |
 
 ---
 
-## 9. İndirilen dosyalar
+## 9. Downloadable files
 
-| Dosya | Boyut | SHA-256 (ilk 16) |
+| File | Size | SHA-256 (first 16) |
 |---|---|---|
-| `axlinux-1.2.0-1.x86_64.rpm` | 2.224.480 B | imzalı |
-| `axlinux_1.2.0_amd64.deb` | 5.348.152 B | — |
+| `axlinux-1.2.0-1.x86_64.rpm` | 2,224,480 B | signed |
+| `axlinux_1.2.0_amd64.deb` | 5,348,152 B | — |
 
 | `SHA256SUMS` | — | `sha256sum -c SHA256SUMS` |
 
-Doğrulanmış çıktılar `/mnt/anka/downloads/` altındadır.
+The verified outputs are under `/mnt/anka/downloads/`.
 
-Bütünlük doğrulaması:
+Integrity verification:
 
 ```bash
 sha256sum -c SHA256SUMS
@@ -477,26 +487,27 @@ sha256sum -c SHA256SUMS
 
 ---
 
-## 10. Hızlı doğrulama (kendi makinenizde)
+## 10. Quick verification (on your own machine)
 
-Kurulumdan sonra kendi sisteminizde şunu çalıştırın:
+After installation, run the following on your own system:
 
 ```bash
 sudo axctl status
 ```
 
-Şunları görmelisiniz:
+You should see:
 
 - `lsm_hooks_active = 5`, `lsm_hooks_total = 5`
 - `bpf_programs_loaded = 5`
-- `mode` — şu an hangi modda
+- `mode` — which mode is currently active
 - `policy_healthy = true`
 
-Ardından tam doğrulama paketi:
+Then the full verification suite:
 
 ```bash
 sudo bash tests/deep_verify.sh
 ```
 
-Bu, 732 kontrolü çalıştırır ve tek bir rapor üretir.
-Fiziksel makinede çalışmayı reddeder.
+This runs 732 checks and produces a single report.
+`deep_verify.sh` refuses to run its enforcement tests on a physical machine —
+that is a restriction of the test suite, not of the product.

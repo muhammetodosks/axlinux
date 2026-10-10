@@ -1,293 +1,298 @@
-# AXlinux Zorluklar ve Riskler
+# AXlinux Challenges and Risks
 
-## Kritik Risk: Sistem Kilitlenmesi (Lockout)
+## Critical Risk: System Lockout
 
-**Bu, AXlinux'in en tehlikeli hata modudur ve tasarım gereği mühürlenmiştir.**
+**This is AXlinux's most dangerous failure mode, and it is sealed shut by design.**
 
-Bir kural `bash`, `sudo`, `sshd` veya `systemd` gibi kritik bir sürece
-uygulanırsa sistem kendini kilitler: o sürecin tüm çocuk süreçleri
-engellenir, oturum kapanır ve kullanıcı sisteme erişemez. Bu shell'den
-kurtarma mümkün değildir; yalnızca fiziksel reboot gerekir.
+If a rule is applied to a critical process such as `bash`, `sudo`, `sshd`
+or `systemd`, the system locks itself: every child process of that process
+is blocked, the session is terminated and the user can no longer reach the
+system. Recovery from a shell is impossible; only a physical reboot will do.
 
-**Önlem** (`ax_protected`, `src/bpf/axbpf.h`):
+**Countermeasure** (`ax_protected`, `src/bpf/axbpf.h`):
 
-Aşağıdaki süreçler **hiçbir kurala tabi değildir**; programlar onlar için
-doğrudan `0` döner. Policy "bash /bin/echo çalıştıramaz" dese bile:
+The following processes are **subject to no rule at all**; programs return
+`0` for them directly. Even if a policy says "bash must not run /bin/echo":
 
-- `bash`, `sh`, `dash`, `zsh`, `fish` — kullanıcı oturumu açık kalır
-- `sudo`, `su`, `doas` — mod değiştirilebilir, müdahale edilebilir
-- `sshd`, `login`, `agetty` — uzaktan/yerel bağlantı mümkün kalır
-- `systemd`, `dbus-daemon`, `polkitd`, `NetworkManager` — oturum ve
-  ağ çalışmaya devam eder
+- `bash`, `sh`, `dash`, `zsh`, `fish` — the user session stays open
+- `sudo`, `su`, `doas` — the mode can still be changed and intervened with
+- `sshd`, `login`, `agetty` — remote/local connection remains possible
+- `systemd`, `dbus-daemon`, `polkitd`, `NetworkManager` — the session and
+  the network keep working
 
-Liste **bilinçli olarak kısadır**: yalnızca **kurtarma yolunu**
-kapsar. Her aday şu sorudan geçer:
+The list is **deliberately short**: it covers the **recovery path** only.
+Every candidate has to pass this question:
 
-> "Engellersem sisteme tekrar erişebilir miyim?" → hayır ise korunur.
+> "If I block it, can I still reach the system again?" → if no, it is kept.
 
-Bu soru neden tek başına yeterli: **dil çalıştırıcıları korunmaz.**
-`python3`, `node`, `perl`, `ruby`, `npm` listede değildir.
+Why this question is sufficient on its own: **language runtimes are not
+protected.** `python3`, `node`, `perl`, `ruby`, `npm` are not on the list.
 
-Çünkü çoğu gerçek uygulama bir yorumlayıcıdan çalışır. Onları
-korumak "python3 /etc/shadow okuyamaz", "node ağa çıkamaz" gibi MAC'in
-en sık kullanılan kurallarını yazılamaz hâle getirirdi — ürün
-kullanılamaz olurdu. Ve kazanılan tek şey sıfırdı: bir yorumlayıcıyı
-engellemek kilitlenme **yaratmaz**, çünkü kullanıcı zaten korumalı bir
-kabuğa sahiptir.
+Because most real applications run from an interpreter. Protecting them
+would make it impossible to write the rules MAC systems are used for most
+often — such as "python3 cannot read /etc/shadow" or "node cannot reach
+the network" — and the product would become unusable. And the gain would
+be zero: blocking an interpreter creates **no lockout**, because the user
+already has a protected shell.
 
-Buna karşılık `firefox`, `nginx`, `curl` gibi uygulamalar da listede
-değil — onlar zaten hedef.
+By the same token, applications such as `firefox`, `nginx` and `curl` are
+not on the list either — they are targets in the first place.
 
-**Doğrulama**: `tests/test_protection.py` korunan ve korunmaması
-gereken süreçleri statik olarak denetler (her iki yönde);
-`tests/verify_all.sh` adım 8'de canlı olarak kanıtlar.
+**Verification**: `tests/test_protection.py` audits protected and
+must-not-be-protected processes statically (in both directions);
+`tests/verify_all.sh` proves it live in step 8.
 
-**Politika yazarken**: `subject` alanına `bash`, `sudo`, `systemd`
-gibi bir süreç adı yazmak **yükleme anında hata verir**; kural hiç
-yazılmaz. `python3` gibi bir yorumlayıcı yazmak ise normaldir ve
-kurallar uygulanır.
+**When writing a policy**: writing a process name such as `bash`, `sudo`
+or `systemd` into the `subject` field **fails at load time with an error**;
+the rule is not written at all. Writing an interpreter such as `python3` is
+normal and the rules are enforced.
 
-## Teknik Zorluklar
+## Technical Challenges
 
-### 1. eBPF LSM Koşulları
+### 1. eBPF LSM Requirements
 
-**Zorluk**: `CONFIG_BPF_LSM=y` ve kernel 5.15+ gerektirir.
+**Challenge**: Requires `CONFIG_BPF_LSM=y` and kernel 5.15+.
 
-**Çözüm**:
-- Kernel < 5.15'te graceful fallback: "AXlinux sadece audit modunda çalışıyor"
-- Dağıtım bazlı ön kontrol: `bash install.sh` 2. adımı (Ortam denetimi) ve `axctl status`
-- **Doğrulanmış derleme: Fedora 41, 42, 43, 44.** Debian 12 ve
-  Ubuntu 24.04 için `.deb` gerçekten kuruldu ve çalıştırıldı.
-  Kanıt ve ayrıntı: [`SUPPORT.md`](../SUPPORT.md)
-- **DİKKAT:** Bu dosya daha önce "Ubuntu 22.04+, Fedora 35+,
-  Debian 12+ desteklenir" diyordu. Ölçüm yapıldı ve doğrulanmış
-  tablo **Fedora 41–44** ile Ubuntu 24.04 / Debian 12'dir.
-  35–40 arası için derleme kanıtı **yoktur**; tahmin olarak
-  desteklenen sürüm listesine alınmamalıdır.
-- Kurulum, sürüm **numarasına** değil yeteneğe bakar: BTF var mı,
-  `bpf` LSM zincirinde mi. Yetenek varsa sürüm numarası önemsizdir.
+**Solution**:
+- Graceful fallback on kernel < 5.15: "AXlinux is running in audit mode only"
+- Distribution-based pre-check: step 2 (environment audit) of `bash install.sh` and `axctl status`
+- **Verified builds: Fedora 41, 42, 43, 44.** For Debian 12 and
+  Ubuntu 24.04 the `.deb` package was actually installed and run.
+  Evidence and details: [`SUPPORT.md`](../SUPPORT.md)
+- **CAUTION:** This file previously stated "Ubuntu 22.04+, Fedora 35+,
+  Debian 12+ are supported". Measurements were taken and the verified
+  table is **Fedora 41–44** together with Ubuntu 24.04 / Debian 12.
+  There is **no** build evidence for 35–40; they must not be added to the
+  list of supported versions on the basis of an estimate.
+- Installation looks at capability, not at the version **number**: whether
+  BTF is present, whether `bpf` is in the LSM chain. If the capability is
+  there, the version number is irrelevant.
 
-**Risk**: Eski distro'larda çalışmaz.
+**Risk**: Does not work on older distributions.
 
-### 2. eBPF Map Boyutu
+### 2. eBPF Map Size
 
-**Zorluk**: eBPF map'leri sınırlı boyutta (genelde ~16MB).
+**Challenge**: eBPF maps have a limited size (typically ~16MB).
 
-**Çözüm**:
-- Sadece aktif politikayı tut (tüm sistemi değil)
-- LRU map kullan (en az kullanılanı at)
-- Politika compression (gzip)
+**Solution**:
+- Store only the active policy (not the whole system)
+- Use LRU maps (evict the least recently used)
+- Policy compression (gzip)
 
-**Risk**: Çok büyük politikalar (~10K+ kural) tutmayabilir.
+**Risk**: Very large policies (~10K+ rules) may not fit.
 
-### 3. Process Adı Çakışması
+### 3. Process Name Collision
 
-**Zorluk**: `comm` sadece 16 karakter. `google-chrome` → `google-chrome` (tam), `nginx: worker` → `nginx`.
+**Challenge**: `comm` is only 16 characters. `google-chrome` → `google-chrome` (exact), `nginx: worker` → `nginx`.
 
-**Çözüm**:
+**Solution**:
 - Prefix matching
-- PID tracking (geçici)
-- Label'lara alternatif: executable path (`/usr/bin/python3`)
+- PID tracking (temporary)
+- Alternative to labels: executable path (`/usr/bin/python3`)
 
-**Risk**: Yanlış process eşleşmesi.
+**Risk**: Wrong process is matched.
 
 ### 4. Path Resolution
 
-**Zorluk**: eBPF'de path çözümleme zor. `~/.ssh` → `/home/user/.ssh` dönüşümü kernel'de yapılamaz.
+**Challenge**: Path resolution in eBPF is hard. The `~/.ssh` → `/home/user/.ssh` conversion cannot be performed in the kernel.
 
-**Çözüm**:
-- Kullanıcı tarafında ön işleme: `~` → ev dizini
-- eBPF'de sadece prefix matching
-- `realpath()` syscall hook (gelecek)
+**Solution**:
+- Pre-processing on the user side: `~` → home directory
+- Prefix matching only in eBPF
+- `realpath()` syscall hook (future)
 
-**Risk**: Sembolik link'ler ve `..` path'leri atlanabilir.
+**Risk**: Symbolic links and `..` path components may be skipped.
 
-### 4.1. `bpf_d_path` Kullanılamaz (kritik)
+### 4.1. `bpf_d_path` Is Unusable (critical)
 
-**Belirti**: Derleme ve yükleme başarılı, 5/5 kanca bağlı, daemon
-`enforcement_active: true` ve "1 kural yüklendi" diyor — ama **hiçbir
-yol kuralı tutmuyor**, audit boş.
+**Symptom**: Build and load succeed, 5/5 hooks are attached, the daemon
+reports `enforcement_active: true` and says "1 rule loaded" — but **no
+path rule ever matches**, and the audit log is empty.
 
-**Kök neden**: `bpf_d_path` bu projede kullanılamaz. libbpf 1.3.0 onu
-global bir fonksiyon işaretçisi olarak tanımlar; BPF'ye çağrı olarak
-derlendiğinde hedef tampona yazım **iki konuma birden** düşer:
+**Root cause**: `bpf_d_path` is unusable in this project. libbpf 1.3.0
+declares it as a global function pointer; when compiled as a call into
+BPF, the write to the destination buffer **lands in two places at once**:
 
-- doğru offset (yol alanı)
-- **242 byte kaymış** ikinci bir konum
+- at the correct offset (the path field)
+- at a second location **242 bytes further on**
 
-Sonuç: `comm` ve `action` doğru, `path` alanı çöplü → hash hiç eşleşmez.
-Kural "yüklendi" görünür ama hiçbir şey engellenmez. Bu, MAC'te en
-kötü hata biçimidir: **sessiz başarısızlık**.
+Result: `comm` and `action` are correct, the `path` field is garbage → the
+hash never matches. The rule appears to be "loaded" but nothing is
+blocked. This is the worst possible failure form in a MAC system:
+**silent failure**.
 
-Kanıt, çekirdeğin ürettiği 276 baytın Go'nun yazdığı 276 baytla
-bayt bayt karşılaştırılmasıyla elde edildi; iki metin aynı görünüyordu
-(`comm=cat`, `path=/etc/hostname`) ama ham baytlar offset 242'den
-itibaren ayrışıyordu.
+The evidence was obtained by comparing, byte by byte, the 276 bytes
+produced by the kernel with the 276 bytes written by Go; the two texts
+looked identical (`comm=cat`, `path=/etc/hostname`) but the raw bytes
+diverged from offset 242 onwards.
 
-**Çözüm** (`ax_fill_path`, `src/bpf/axbpf.h`): yol alanı 8 sabit bloğa
-bölünür (`char path[8][32]`), her bileşen kendi bloğuna yazılır.
-Bölme ve birleştirme Go tarafında yapılır. Toplam anahtar boyutu
-değişmez: 16 + 8×32 + 4 = **276 byte**.
+**Solution** (`ax_fill_path`, `src/bpf/axbpf.h`): the path field is split
+into 8 fixed blocks (`char path[8][32]`), and each component is written to
+its own block. Splitting and joining are performed on the Go side. The
+total key size does not change: 16 + 8×32 + 4 = **276 bytes**.
 
-**Tasarım kuralları** (bu çözümü bozmadan önce bilin):
+**Design rules** (know these before you break this solution):
 
-1. **Hedef ve boyut sabit olmalı.** `bpf_probe_read_kernel(dst, len, src)`
-   için `dst` ve `len` derleme zamanında sabitse verifier sınırı görür.
-   Çalışma anında hesaplanan `dst[pos]` reddedilir.
-2. **Her iki geçiş de unroll'lenmeli.** Runtime döngüde verifier döngü
-   gövdesini her yineleme için yeniden doğrular; 63 × program boyutu
-   1M instruction sınırını aşar. İç içe unroll ise 512 byte stack
-   sınırını aşar.
-3. **`bpf_probe_read_kernel_str` kullanmayın.** İçinde 256 adımlık gizli
-   bir unroll vardır; slot başına çağrıldığında programı 40 kat şişirir.
-   Sabit boyutlu `bpf_probe_read_kernel` + elle NUL aynı işi yapar.
-4. **Kök bileşen yazılmaz.** Go tarafı kök içeriği üretmez; eBPF tarafı
-   de yazmaz, aksi halde blok 0'da `"//"` oluşur ve anahtarlar eşleşmez.
-5. **`bpf_map_lookup_elem` sonrası harici pointer yazma yapılmaz.**
-   Verifier pointer'ı "unbounded" işaretler. Bu yüzden audit alanları
-   map aramasından **önce** doldurulur.
+1. **Destination and size must be constant.** For
+   `bpf_probe_read_kernel(dst, len, src)`, if `dst` and `len` are constant
+   at compile time the verifier sees the bound. `dst[pos]` computed at
+   runtime is rejected.
+2. **Both passes must be unrolled.** With a runtime loop the verifier
+   re-validates the loop body for every iteration; 63 × program size
+   exceeds the 1M instruction limit. Nested unrolling, in turn, exceeds
+   the 512 byte stack limit.
+3. **Do not use `bpf_probe_read_kernel_str`.** It contains a hidden
+   256-step unroll internally; called once per slot it inflates the
+   program 40-fold. Fixed-size `bpf_probe_read_kernel` plus a manual NUL
+   does the same job.
+4. **The root component is not written.** The Go side does not generate
+   root content, and neither does the eBPF side; otherwise `"//"` appears
+   in block 0 and the keys do not match.
+5. **No external pointer writes after `bpf_map_lookup_elem`.**
+   The verifier marks the pointer as "unbounded". That is why the audit
+   fields are populated **before** the map lookup.
 
-**Sözleşme kilidi**: `struct policy_key` ve `struct audit_event`
-boyutları C tarafından bağımsız hesaplanıp Go struct ile
-karşılaştırılır (`internal/maps/contract_test.go`,
-`internal/audit/audit_test.go`). Bu testler düz (256 byte) ve bloklu
-(8×32) dizi düzenlerini ikisini de tanır.
+**Contract lock**: the sizes of `struct policy_key` and `struct audit_event`
+are computed independently on the C side and compared against the Go struct
+(`internal/maps/contract_test.go`, `internal/audit/audit_test.go`). These
+tests recognise both the flat (256 byte) and the blocked (8×32) array
+layouts.
 
-### 5. Performans
+### 5. Performance
 
-**Zorluk**: Her sistem çağrısında eBPF map araması.
+**Challenge**: An eBPF map lookup on every system call.
 
-**Çözüm**:
+**Solution**:
 - LRU cache map
-- First-hit kısa devre
-- Per-CPU map'ler (lock-free)
+- First-hit short-circuit
+- Per-CPU maps (lock-free)
 
-**Risk**: ~1-3% overhead kabul edilebilir.
+**Risk**: ~1-3% overhead is acceptable.
 
-### 6. Audit Log Patlaması
+### 6. Audit Log Explosion
 
-**Zorluk**: enforcing modda binlerce deny/saat.
+**Challenge**: Thousands of denies per hour in enforcing mode.
 
-**Çözüm**:
-- Rate limiting (kural başına max 1 log/sn)
-- Aggregate log (aynı kural+obje → tek log)
-- Ring buffer (son 10K kayıt)
+**Solution**:
+- Rate limiting (max 1 log/sec per rule)
+- Aggregate logging (same rule+object → one log entry)
+- Ring buffer (last 10K records)
 
-**Risk**: Log disk'i dolar.
+**Risk**: The log fills the disk.
 
-## Güvenlik Zorlukları
+## Security Challenges
 
-### 7. Kullanıcı Yanlışlığı
+### 7. User Error
 
-**Zorluk**: Kullanıcı kendini kilitler.
+**Challenge**: The user locks themselves out.
 
-**Çözüm**:
-- Simulate modu (her zaman ücretsiz)
-- `axctl mode disabled` her zaman çalışır
-- `axctl reload --force-empty` acil çıkış
-- Config backup (her reload'den önce)
+**Solution**:
+- Simulate mode (always free)
+- `axctl mode disabled` always works
+- `axctl reload --force-empty` as emergency exit
+- Config backup (before every reload)
 
-**Risk**: Kullanıcı sistemi başlatamaz hale getirebilir.
+**Risk**: The user can render the system unbootable.
 
-### 8. eBPF Program Güvenliği
+### 8. eBPF Program Safety
 
-**Zorluk**: eBPF programları kernel çekirdeğinde çalışır.
+**Challenge**: eBPF programs run inside the kernel core.
 
-**Çözüm**:
-- Verifier (eBPF verifier zaten var)
-- Minimal C, sadece LSM kancaları
-- `CAP_BPF` yetkisi gerekli
+**Solution**:
+- Verifier (the eBPF verifier already exists)
+- Minimal C, LSM hooks only
+- `CAP_BPF` privilege required
 
-**Risk**: eBPF programı bug'lı ise kernel panic.
+**Risk**: If the eBPF program has a bug, the kernel panics.
 
-### 9. Yetki Yükseltme
+### 9. Privilege Escalation
 
-**Zorluk**: root her şeyi geçer.
+**Challenge**: Root bypasses everything.
 
-**Çözüm**:
-- AXlinux sadece non-root kullanıcı için anlamlı
-- Root için sadece audit log
-- `CAP_BPF` olmadan politika yüklenemez
+**Solution**:
+- AXlinux is only meaningful for non-root users
+- Audit logging only for root
+- Without `CAP_BPF` the policy cannot be loaded
 
-**Risk**: Root AXlinux'u bypass eder.
+**Risk**: Root bypasses AXlinux.
 
-### 10. Politika Bütünlüğü
+### 10. Policy Integrity
 
-**Zorluk**: Kullanıcı politika dosyasını değiştirirse AXlinux fark edemez (reload'den sonra).
+**Challenge**: If the user modifies the policy file, AXlinux cannot detect it (after a reload).
 
-**Çözüm**:
-- Politika dosyası hash'i (her reload'de kontrol)
-- İmza doğrulama (gelecek)
-- Read-only politika dosyası (opsiyonel)
+**Solution**:
+- Policy file hash (checked on every reload)
+- Signature verification (future)
+- Read-only policy file (optional)
 
-**Risk**: Kullanıcı kendi politikasını değiştirip yeniden yükleyebilir (ama bu zaten kendi sorumluluğunda).
+**Risk**: The user can change their own policy and reload it (but that is already their own responsibility).
 
-## Operasyonel Zorluklar
+## Operational Challenges
 
-### 11. Öğrenme Modu Yanlış Öneri
+### 11. Wrong Suggestion from Learning Mode
 
-**Zorluk**: 3 günlük öğrenme, yanlış politika önerebilir.
+**Challenge**: 3 days of learning may suggest a wrong policy.
 
-**Çözüm**:
-- Öneri her zaman "öneri"dir, otomatik uygulanmaz
-- Kullanıcı onayladığında uygulanır
-- Geliştirici modu: permissive + log
+**Solution**:
+- A suggestion is always a "suggestion", it is never applied automatically
+- It is applied when the user approves it
+- Developer mode: permissive + logging
 
-**Risk**: Yanlış öneri kullanıcıyı yanlış yönlendirebilir.
+**Risk**: A wrong suggestion can lead the user astray.
 
-### 12. Uyumluluk
+### 12. Compatibility
 
-**Zorluk**: Mevcut SELinux/ApArmor politikaları ile çakışma.
+**Challenge**: Conflicts with existing SELinux/ApArmor policies.
 
-**Çözüm**:
-- AXlinux sadece kendi politikasını uygular
-- Diğer MAC sistemleri ile birlikte çalışabilir (üst üste)
-- Migration tool: SELinux → AXlinux (gelecek)
+**Solution**:
+- AXlinux enforces only its own policy
+- It can work alongside other MAC systems (stacked)
+- Migration tool: SELinux → AXlinux (future)
 
-**Risk**: İki MAC sistemi birlikte çalışabilir ama karmaşıklık artar.
+**Risk**: Two MAC systems can work together, but complexity increases.
 
-### 13. Dağıtım
+### 13. Distribution
 
-**Zorluk**: Kurulum, kernel modülü, daemon, CLI.
+**Challenge**: Installation, kernel module, daemon, CLI.
 
-**Çözüm**:
-- Tek binary (axctl + axdaemon)
-- `apt install axlinux` veya `dnf install axlinux`
+**Solution**:
+- Single binary (axctl + axdaemon)
+- `apt install axlinux` or `dnf install axlinux`
 - systemd unit: `axdaemon.service`
 
-**Risk**: Dağıtım bazlı farklılıklar.
+**Risk**: Distribution-specific differences.
 
-## Sınırlamalar (1.0.0)
+## Restrictions (1.0.0)
 
-Bu tablo **1.0.0'da gerçekte neyin çalıştığını** listeler. Önceden
-sürüm numarasıyla etiketlenmişti ve sürüm 1.0.0 olduğunda yanlış
-izlenim bırakıyordu: tablo "user bazlı kural ✗ 1.0" derken biz
-zaten 1.0.0'dayız.
+This table lists **what actually works in 1.0.0**. It was previously
+labelled with version numbers, and once the version was 1.0.0 that left
+the wrong impression: the table said "user-based rule ✗ 1.0" while we
+were already at 1.0.0.
 
-| Özellik | Durum | Not |
+| Feature | Status | Note |
 |---------|-------|-----|
-| Dosya kancası | ✓ | `file_open`, `inode_permission` |
-| exec kancası | ✓ | `bprm_check_security` |
-| ağ kancası | ✓ | `socket_connect`, `socket_bind` |
-| signal kancası | ✗ | yok, LSM'de karşılığı bağlı değil |
-| `net.accept` | ✗ | `socket_accept` kancası bağlı değil |
-| `file.delete` / `file.create` | ✗ | silme/oluşturma kancası yok |
-| user bazlı kural | ✗ | kural **süreç** adına konuşur, kullanıcıya değil |
-| zaman/koşul kuralı | ✗ | politika dili koşul içermiyor |
-| container kapsamı | ✗ | kapsam sistem geneli |
-| Grafik arayüz | ✗ | CLI ve YAML; GUI yok |
-| İmzalı politika dağıtımı | ✗ | tek politika kaynağı: kendi dosyan |
+| File hook | ✓ | `file_open`, `inode_permission` |
+| exec hook | ✓ | `bprm_check_security` |
+| Network hook | ✓ | `socket_connect`, `socket_bind` |
+| Signal hook | ✗ | absent, no LSM counterpart is attached |
+| `net.accept` | ✗ | `socket_accept` hook is not attached |
+| `file.delete` / `file.create` | ✗ | no delete/create hook |
+| User-based rule | ✗ | a rule speaks in terms of the **process** name, not the user |
+| Time/condition rule | ✗ | the policy language contains no conditions |
+| Container scope | ✗ | scope is system-wide |
+| Graphical interface | ✗ | CLI and YAML; no GUI |
+| Signed policy distribution | ✗ | single policy source: your own file |
 
-## Kabul Edilebilir Riskler
+## Acceptable Risks
 
-1. **eBPF overhead**: ~1-3% — Kabul edilebilir
-2. **Sınırlı map boyutu**: ~10K kual — Yeterli
-3. **Root bypass**: Kabul edilebilir (root zaten her şeyi yapabilir)
-4. **Kernel 5.15+ gereksinimi**: Kabul edilebilir (2026 itibarıyla çoğu distro)
+1. **eBPF overhead**: ~1-3% — acceptable
+2. **Limited map size**: ~10K rules — sufficient
+3. **Root bypass**: acceptable (root can already do anything)
+4. **Kernel 5.15+ requirement**: acceptable (most distributions as of 2026)
 
-## Kabul Edilemeyen Riskler
+## Unacceptable Risks
 
-1. **Kernel panic**: eBPF programı asla kernel panik yapmamalı.
-2. **Veri kaybı**: AXlinux hiçbir veri silmez.
-3. **Backdoor**: AXlinux'da backdoor olmamalı.
-4. **Politika imyası**: Kullanıcı her zaman kendi politikasını değiştirebilmeli.
+1. **Kernel panic**: an eBPF program must never cause a kernel panic.
+2. **Data loss**: AXlinux never deletes data.
+3. **Backdoor**: there must be no backdoor in AXlinux.
+4. **Policy signing**: the user must always be able to change their own policy.

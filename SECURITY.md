@@ -1,66 +1,68 @@
-# Güvenlik Politikası
+# Security Policy
 
-## Desteklenen sürümler
+## Supported Versions
 
-| Sürüm | Durum |
+| Version | Status |
 |---|---|
-| 1.2.0 | ✅ Destekleniyor |
-| < 1.2.0 | ❌ Desteklenmiyor |
+| 1.2.0 | ✅ Supported |
+| < 1.2.0 | ❌ Not supported |
 
-## Açık bildirim
+## Reporting a Vulnerability
 
-**Lütfen herkese açık GitHub issue açmayın.** Herkese açık bir issue,
-kullanılmadan önce tüm dünyaya detayı verir.
+**Please do not open a public GitHub issue.** A public issue hands the
+details to the entire world before a fix is in place.
 
-Bunun yerine e-posta gönderin:
+Instead, send an email to:
 
 ```
-guvenlik@axlinux.invalid
+security@axlinux.invalid
 ```
 
-> Bu adres örnek amaçlıdır. Yayımlamadan önce gerçek, sizin
-> kontrolünüzde bir adresle değiştirin.
+> This address is a placeholder. Replace it with a real address under your
+> own control before publishing.
 
-## Ne bildirilmeli
+## What to Report
 
-- Erişim denetiminin **atlanmasına** yol açan hatalar
-- Politika ayrıştırma hataları (geçersiz politikanın kabul edilmesi)
-- Denetim kaydı kaybı veya yanlış kayıt
-- Kurulum/kaldırma sırasında sistemin kırılması
-- `axdaemon`'ın beklenmedik ayrıcalıklarla çalışması
+- Bugs that allow access control to be **bypassed**
+- Policy parsing errors (an invalid policy being accepted)
+- Loss or corruption of audit records
+- The system breaking during installation/removal
+- `axdaemon` running with unexpected privileges
 
-## Ne bildirilmeye gerek yok
+## What Not to Report
 
-- Politikanın beklendiği gibi çalışmaması ama güvenlik açığı
-  **oluşturmaması** durumu
-- `inode_permission` kancasının yol döndürememesi (bilinen yapısal sınır)
-- Performans gözlemleri
+- A policy not behaving as expected, provided this does **not** create a
+  security vulnerability
+- The `inode_permission` hook being unable to return the path (known
+  structural limitation)
+- Performance observations
 
-## Süreç
+## Process
 
-1. **Onay** — 48 saat içinde bildirimi aldığımızı doğrularız.
-2. **Değerlendirme** — hatayı yeniden üretir, etkisini belirleriz.
-3. **Düzeltme** — kök nedeni kapatırız; yüzeysel yama yapmayız.
-4. **Doğrulama** — düzeltme gerçek sistemde yeniden ölçülür.
-5. **Yayım** — düzeltme yayımlanır, ardından bildirimi kamuya açabiliriz.
+1. **Acknowledgement** — we confirm receipt of the report within 48 hours.
+2. **Assessment** — we reproduce the bug and determine its impact.
+3. **Fix** — we close the root cause; we do not apply surface patches.
+4. **Verification** — the fix is re-measured on a real system.
+5. **Release** — the fix is published, after which the reporter may
+   disclose publicly.
 
-## Acil çıkış (kullanıcılar için)
+## Emergency Exit (for users)
 
-Yanlışlıkla kilitlenirseniz:
+If you have locked yourself out:
 
 ```bash
 sudo axctl mode disabled
 ```
 
-Bu komut her zaman çalışır ve tüm kısıtları kaldırır. Yeniden
-başlatmaya gerek yoktur.
+This command always works and removes all restrictions. No reboot is
+required.
 
-## Güvenlik modeli hakkında
+## About the Security Model
 
-AXlinux bir **Mandatory Access Control** sistemidir. Yanlış yazılmış bir
-politika sizi kendi sisteminizden kilitleyebilir. Bu bir hata değil,
-tasarımın doğal sonucudur — bu yüzden güvenli uygulama sırası
-(`policy check` → `simulate` → `permissive` → `reload`) bu sırayla
-verilmiştir.
+AXlinux is a **Mandatory Access Control** system. A policy written
+incorrectly can lock you out of your own system. This is not a bug but
+the natural consequence of the design — which is why the safe order of
+application (`policy check` → `simulate` → `permissive` → `reload`) is
+specified in exactly that order.
 
-Ayrıntı: [README.md](README.md#acil-çıkış)
+Details: [README.md](README.md#emergency-exit)

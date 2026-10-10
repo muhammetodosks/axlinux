@@ -1,79 +1,79 @@
-# AXlinux Kullanıcı Senaryoları
+# AXlinux User Scenarios
 
-## Senaryo 1: İlk Kurulum
+## Scenario 1: Initial Installation
 
 ```bash
-# Kurulum
+# Install
 sudo apt install axlinux
 
-# Başlat
+# Start
 axctl init
 
-# Durum
+# Status
 axctl status
-# → Mod: enforcing, boş politika, sistem serbest
+# → Mode: enforcing, empty policy, system unrestricted
 
-# Politika yaz
+# Write a policy
 axctl policy edit
 ```
 
-## Senaryo 2: Shadow Dosyasını Koru
+## Scenario 2: Protect the Shadow File
 
-Kullanıcı, tarayıcıların `/etc/shadow` okumasını engellemek istiyor.
+The user wants to stop browsers from reading `/etc/shadow`.
 
 ```bash
-# policy.yaml dosyasını düzenle
+# Edit the policy.yaml file
 axctl policy edit
 
-# İçerik:
+# Content:
 # version: 1
 # mode: enforcing
 # rules:
-#   - name: "tarayıcılar shadow okuyamaz"
+#   - name: "browsers cannot read shadow"
 #     subject: firefox
 #     object: /etc/shadow
 #     action: file.read
 #     effect: deny
 
-# Doğrula
+# Validate
 axctl policy check
-# → ✓ Geçerli
+# → ✓ Valid
 
-# Simüle et
+# Simulate
 axctl policy simulate
-# → firefox, /etc/shadow okuyamaz
+# → firefox, cannot read /etc/shadow
 
-# Uygula
+# Apply
 axctl reload
-# → ✓ Yüklendi
+# → ✓ Loaded
 
-# Test et
-cat /etc/shadow  # root ile
-# → firefox bu dosyayı okuyamaz
+# Test
+cat /etc/shadow  # as root
+# → firefox cannot read this file
 ```
 
-## Senaryo 3: Web Sunucusu Kilitli
+## Scenario 3: Lock Down a Web Server
 
-Kullanıcı, nginx'in sadece `/var/www` okuyabilmesini istiyor.
+The user wants nginx to be able to read only `/var/www`.
 
 ```bash
 axctl policy edit
 
-# İçerik:
+# Content:
 # version: 1
 # mode: enforcing
 # rules:
-#   - name: "nginx web içeriğini okur"
+#   - name: "nginx reads web content"
 #     subject: nginx
 #     object: /var/www
 #     action: file.read
 #     effect: allow
-#   - name: "nginx shadow okuyamaz"
+#   - name: "nginx cannot read shadow"
 #     subject: nginx
 #     object: /etc/shadow
 #     action: file.read
 #     effect: deny
-#   - name: "nginx bash çalıştıramaz"
+#   - name: "nginx cannot run bash"
 #     subject: nginx
 #     action: process.exec
 #     object: /bin/bash
@@ -82,171 +82,171 @@ axctl policy edit
 axctl policy check
 axctl reload
 
-# nginx artık:
-# → /var/www/* okuyabilir
-# → /etc/shadow okuyamaz
-# → bash çalıştıramaz
+# nginx can now:
+# → read /var/www/*
+# → not read /etc/shadow
+# → not run bash
 ```
 
-## Senaryo 4: Öğrenme Modu
+## Scenario 4: Learning Mode
 
-Kullanıcı, sistemin nasıl davrandığını öğrenmek istiyor.
+The user wants to learn how the system behaves.
 
 ```bash
-# Öğrenmeyi başlat
+# Start learning
 axctl learn start
-# → Sistem 3 gün izlenecek
+# → System will be observed for 3 days
 
-# 3 gün sonra rapor al
+# Get the report after 3 days
 axctl learn report
 
-# Örnek çıktı:
-# Öğrenme Raporu (3 gün)
+# Example output:
+# Learning Report (3 days)
 # ======================
 #
-# Gözlemlenen işlemler:
+# Observed operations:
 #
-# nginx (web sunucusu):
-#   → /var/www/* okudu (1.247 kez)
-#   → /etc/nginx/nginx.conf okudu (89 kez)
-#   → /var/log/nginx/* yazdı (456 kez)
-#   → 80 ve 443 portlarına bind oldu
+# nginx (web server):
+#   → read /var/www/* (1.247 times)
+#   → read /etc/nginx/nginx.conf (89 times)
+#   → wrote /var/log/nginx/* (456 times)
+#   → bound to ports 80 and 443
 #
-# firefox (tarayıcı):
-#   → ~/ indirdi (345 kez)
-#   → /etc/shadow okumaya çalıştı (3 kez) ← ENGELLENDİ
-#   → 500+ farklı host'a bağlandı
+# firefox (browser):
+#   → downloaded to ~/ (345 times)
+#   → attempted to read /etc/shadow (3 times) ← BLOCKED
+#   → connected to 500+ distinct hosts
 #
-# Önerilen politika:
+# Suggested policy:
 #
 # rules:
-#   - name: "nginx web içeriğini okur"
+#   - name: "nginx reads web content"
 #     subject: nginx
 #     object: /var/www
 #     action: file.read
 #     effect: allow
-#   - name: "nginx kendi loglarını yazar"
+#   - name: "nginx writes its own logs"
 #     subject: nginx
 #     object: /var/log/nginx
 #     action: file.write
 #     effect: allow
-#   - name: "firefox shadow okuyamaz"
+#   - name: "firefox cannot read shadow"
 #     subject: firefox
 #     object: /etc/shadow
 #     action: file.read
 #     effect: deny
 ```
 
-## Senaryo 5: Permissive Mod (Geliştirme)
+## Scenario 5: Permissive Mode (Development)
 
-Geliştirici, politikanın ne yapacağını görmek ama engellememek istiyor.
+A developer wants to see what the policy would do without blocking anything.
 
 ```bash
 axctl mode permissive
-# → Mod: permissive (ihlal = sadece log)
+# → Mode: permissive (violations are only logged)
 
-# Test et
+# Test
 axctl policy simulate
 
-# İhlalleri izle
+# Watch the violations
 axctl logs --follow --filter deny
 
-# Hazır olduğunda
+# When you are ready
 axctl mode enforcing
 ```
 
-## Senaryo 6: Ağ Kısıtlaması
+## Scenario 6: Network Restriction
 
 ```bash
 axctl policy edit
 
-# python dışarı çıkamaz
+# python cannot reach the network
 # rules:
-#   - name: "python dışarı çıkamaz"
+#   - name: "python cannot reach the network"
 #     subject: python
 #     action: net.connect
 #     effect: deny
 
 axctl reload
 
-# python artık:
-# → socket() çağırdığında connect() engellenir
-# → bind() yapamaz
-# → Sadece Unix socket iletişimi mümkün
+# python can now:
+# → connect() is blocked when it calls socket()
+# → cannot bind()
+# → only Unix socket communication is possible
 ```
 
-## Senaryo 7: Hata ve Kurtarma
+## Scenario 7: Error and Recovery
 
-Kullanıcı yanlış politika yazdı.
+The user wrote a wrong policy.
 
 ```bash
 axctl policy edit
 
-# Yanlış içerik:
+# Wrong content:
 # rules:
-#   - name: "her şeyi engelle"
+#   - name: "block everything"
 #     subject: "*"
 #     action: "*"
 #     effect: deny
 
 axctl policy check
-# → ✗ Hata: subject "*" sadece deny için kullanılabilir
+# → ✗ Error: subject "*" can only be used with deny
 
-# Simüle et
+# Simulate
 axctl policy simulate
-# → ⚠ DİKKAT: Bu politika sistemi kilitleyebilir!
+# → ⚠ CAUTION: This policy can lock the system!
 
-# Kullanıcı düzeltir
+# The user corrects it
 axctl policy edit
 
-# Doğru içerik
+# Correct content
 axctl policy check
 axctl reload
 ```
 
-## Senaryo 8: Acil Durum Çıkışı
+## Scenario 8: Emergency Exit
 
-Kullanıcı sistemi kilitledi.
+The user has locked the system.
 
 ```bash
-# Her zaman çalışır
+# Always works
 axctl mode disabled
-# → Tüm kısıtlamalar kaldırıldı
+# → All restrictions removed
 
-# Veya
+# Or
 axctl reload --force-empty
-# → Boş politika yüklendi, sistem serbest
+# → Empty policy loaded, system unrestricted
 ```
 
-## Senaryo 9: Container Kullanımı (v1.0)
+## Scenario 9: Container Usage (v1.0)
 
 ```bash
-# Container'a politika ver
+# Apply a policy to a container
 docker run --security-opt axpolicy=./nginx-policy.yaml nginx
 
-# veya
+# or
 kubectl apply -f axpolicy.yaml
-# → Pod'a AXlinux politikası uygulanır
+# → AXlinux policy is applied to the pod
 ```
 
-## Senaryo 10: Topluluk Politikası (GELECEK — henüz yok)
+## Scenario 10: Community Policy (FUTURE — does not exist yet)
 
-> **Bu senaryo bir tasarım hedefidir; aşağıdaki komutlar
-> çalışmaz.** Uzak politika güvenliği henüz uygulanmadı.
-> Bugün kendi `~/.axlinux/policy.yaml` dosyanı yaz.
+> **This scenario is a design goal; the commands below do not
+> work.** Remote policy security has not been implemented yet.
+> Today, write your own `~/.axlinux/policy.yaml` file.
 
 ```bash
-# Güvenilir kaynak ekle
+# Add a trusted source
 axctl trust add https://github.com/axlinux/policies
 
-# Politika yükle
+# Load a policy
 axctl policy install nginx-hardened
 
-# Doğrula
+# Validate
 axctl policy verify nginx-hardened
-# → ✓ İmza geçerli
+# → ✓ Signature valid
 
-# Uygula
+# Apply
 axctl policy use nginx-hardened
 axctl reload
 ```

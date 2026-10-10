@@ -1,31 +1,31 @@
-## Neyi değiştirdiniz
+## What You Changed
 
-<!-- Kısa açıklama -->
+<!-- Short description -->
 
-## Neden
+## Why
 
-<!-- Sorun neydi, bu değişiklik neden gerekliydi -->
+<!-- What was the problem, why was this change necessary -->
 
-## Nasıl doğruladınız
+## How You Verified It
 
-<!-- Ölçümü yapıştırın. "Test yazdım" yetmez, ÇIKTISI olmalı -->
+<!-- Paste the measurement. "I wrote a test" is not enough, it needs OUTPUT -->
 
 ```bash
-# Çalıştırdığınız komut ve çıktısı
+# The command you ran and its output
 ```
 
-## Test durumu
+## Test Status
 
-- [ ] `python3 -m pytest tests/ -q` yeşil
-- [ ] `go test ./...` (axdaemon ve axlog) yeşil
-- [ ] Değişiklik içeren bir belgede sayı güncellendi
-- [ ] Politika/örnek değiştiyse `axctl policy check` çıktısı eklendi
+- [ ] `python3 -m pytest tests/ -q` green
+- [ ] `go test ./...` (axdaemon and axlog) green
+- [ ] Numbers updated in every document touched by the change
+- [ ] If policy/examples changed, the `axctl policy check` output is attached
 
-## Örnek politika değişikliği
+## Example Policy Change
 
-<!-- Değiştirdiyseniz buraya `axctl policy check` çıktısını yapıştırın.
-     Değiştirmediyseniz "yok" yazın. -->
+<!-- If you changed one, paste the `axctl policy check` output here.
+     If you did not, write "none". -->
 
-## Kırılma değişikliği
+## Breaking Change
 
-<!-- Geriye dönük uyumsuzluk var mı? Varsa sürüm notuna eklenecek. -->
+<!-- Is there a backwards-incompatible change? If so it will be added to the release notes. -->

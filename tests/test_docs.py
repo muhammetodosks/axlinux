@@ -23,6 +23,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ENV = {**os.environ, "PYTHONPATH": str(ROOT / "src" / "python")}
 
+#: "Henuz uygulanmamis komutlar" bolumunun kabul edilen basliklari.
+#: Belgeler Ingilizceye cevrildiginde baslik da cevrilir; testin
+#: denetledigi sey bolumun VARLIGI, cevirisi degil.
+UNIMPLEMENTED_HEADINGS = (
+    "## Henüz uygulanmamış komutlar",
+    "## Commands not yet implemented",
+)
+
 
 def axctl(*args):
     r = subprocess.run(
@@ -123,13 +131,21 @@ class TestDocsMatchCLI(unittest.TestCase):
         """Yok denilen komutlar reference'da olmamali."""
         text = (ROOT / "docs" / "cli-reference.md").read_text(
             encoding="utf-8")
-        head = text.split("## Henüz uygulanmamış komutlar")
+        # Bolum basligi Turkce veya Ingilizce olabilir (doc English).
+        # Dogrulanan sey basligin varligi, cevirisi degil.
+        for heading in UNIMPLEMENTED_HEADINGS:
+            if heading in text:
+                text = text.split(heading)
+                break
+        else:
+            text = []
         self.assertEqual(
-            len(head), 2,
-            "'Henuz uygulanmamis komutlar' bolumu olmali; aksi halde "
-            "okuyucu hangi komutlarin olmadigini anlayamaz")
+            len(text), 2,
+            "'Henuz uygulanmamis komutlar' / 'Commands not yet "
+            "implemented' bolumu olmali; aksi halde okuyucu hangi "
+            "komutlarin olmadigini anlayamaz")
         real = real_commands()
-        body = head[1]
+        body = text[1]
         for line in re.findall(r"^\| `(axctl [^`]+)`", body, re.M):
             name = line.replace("axctl ", "").strip()
             self.assertNotIn(
@@ -154,7 +170,7 @@ class TestAllDocsAreHonest(unittest.TestCase):
             "docs/user-scenarios.md", "docs/component-design.md",
             "docs/architecture.md", "docs/policy-language.md",
             "docs/challenges-risks.md", "docs/roadmap.md",
-            "DAGITIM.md", "README.md"]
+            "docs/DISTRIBUTION.md", "README.md"]
 
     # Gelecek ozellik olan komut YOLLARI. Tam yol eslesmeli:
     # "policy install" hayalet, ama "policy check" gecerli.
@@ -226,7 +242,10 @@ class TestAllDocsAreHonest(unittest.TestCase):
         """Gelecek komutlar 'Yok' bolumunde acikca yazili olmali."""
         text = (ROOT / "docs" / "cli-reference.md").read_text(
             encoding="utf-8")
-        self.assertIn("Henüz uygulanmamış komutlar", text)
+        self.assertTrue(
+            any(h in text for h in UNIMPLEMENTED_HEADINGS),
+            "cli-reference.md 'Commands not yet implemented' bolumunu "
+            "icermeli")
         for cmd in ("trust add", "policy install", "policy verify",
                     "policy use"):
             self.assertIn(f"axctl {cmd}", text,

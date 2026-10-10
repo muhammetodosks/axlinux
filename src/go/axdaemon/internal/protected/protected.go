@@ -51,7 +51,7 @@ func List() []string {
 		"NetworkManager",
 		"wpa_supplicant",
 		"gdm3",
-		"gdm-session-worke",
+		"gdm-session-worker",
 		"bash",
 		"sh",
 		"dash",

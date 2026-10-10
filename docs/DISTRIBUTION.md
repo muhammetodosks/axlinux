@@ -1,73 +1,73 @@
-# AXlinux 1.1.0 — Dağıtım Belgesi
+# AXlinux 1.2.0 — Distribution Document
 
-**Sen YAML yaz, AXlinux uygulasın.**
+**You write YAML, AXlinux enforces it.**
 
-AXlinux, çekirdeğin LSM (Linux Security Module) zincirine eBPF kancaları
-yerleştirerek **hangi sürecin hangi dosyayı okuyup yazdığını, hangi
-porta bağlandığını ve neyi çalıştırdığını** gerçek zamanlı denetler.
-Kural yazarsın, uygularsın. Kural yazmazsan sistem serbest kalır.
+AXlinux audits **which process read or wrote which file, which port it
+connected to, and what it executed** in real time, by placing eBPF hooks
+into the kernel's LSM (Linux Security Module) chain. You write a rule, it is
+applied. If you do not write a rule, the system stays open.
 
 | | |
 |---|---|
-| Sürüm | **1.2.0** |
-| Sürücü modülü | Linux LSM + eBPF (CO-RE) |
-| Dağıtım | `axdaemon` (Go), `axlog` (Go), `axctl` (Python 3) |
-| Doğrulanmış | Ubuntu 24.04.5, Debian 12 (bookworm), **Pardus 25.2 (yirmibes)** |
+| Version | **1.2.0** |
+| Driver module | Linux LSM + eBPF (CO-RE) |
+| Distribution | `axdaemon` (Go), `axlog` (Go), `axctl` (Python 3) |
+| Verified | Ubuntu 24.04.5, Debian 12 (bookworm), **Pardus 25.2 (yirmibes)** |
 
-Fedora sürüm desteği ve çekirdek gereksinimleri: [`SUPPORT.md`](SUPPORT.md).
-CI'daki paketleme matrisi bu tablonun sözleşmesidir (`fedora:42/43/44`, `debian:12`).
-| Test sonucu | 3 dağıtımda da **99 geçen / 0 kalan / 0 atlanan**, 125 birim testi |
+Fedora version support and kernel requirements: [`SUPPORT.md`](../SUPPORT.md).
+The packaging matrix in CI is the contract of this table (`fedora:41/42/43/44`, `debian:12`).
+| Test result | **Fedora 44: 732 passed / 0 failed / 0 skipped** — see the table in §1 for the other distributions. Local package: 180 pytest + 22 subtests, 13 Go packages |
 
 ---
 
-## 1. Durum
+## 1. Status
 
-AXlinux üç dağıtımda **gerçek enforcement** ile uçtan uca doğrulandı.
-Testler sanal makinede çalıştırıldı; her iki LSM kancası grubu da
-gerçekten eBPF'den geçirildi.
+AXlinux was verified end to end with **real enforcement** on three
+distributions. The tests were run in a virtual machine; both LSM hook
+groups genuinely passed through eBPF.
 
-| Doğrulanan | Sonuç |
+| Verified | Result |
 |---|---|
-| Fedora 44 (Cloud) | 732/0/0 · imzalı RPM · SELinux Enforcing · 5/5 kanca |
-| Fedora 43 (Cloud) | 732/1/1 · LSM enforcement çalışıyor (kanca 5/5) · SELinux kuşaklaması bu imajda yapılamıyor, kurulumda uyarıyla geri alınıyor |
-| Ubuntu 24.04.5 LTS | 731/0/1 · 5/5 eBPF programı · 5/5 kanca · audit sağlıklı |
-| Debian 12 (bookworm) | 731/0/1 · 5/5 · 5/5 · audit sağlıklı |
-| Pardus 25.2 (yirmibes) | 731/0/1 · 5/5 · 5/5 · audit sağlıklı |
+| Fedora 44 (Cloud) | 732/0/0 · signed RPM · SELinux Enforcing · 5/5 hooks |
+| Fedora 43 (Cloud) | 732/1/1 · LSM enforcement works (hook 5/5) · SELinux confinement cannot be done on this image and is rolled back with a warning during installation |
+| Ubuntu 24.04.5 LTS | 731/0/1 · 5/5 eBPF programs · 5/5 hooks · audit healthy |
+| Debian 12 (bookworm) | 731/0/1 · 5/5 · 5/5 · audit healthy |
+| Pardus 25.2 (yirmibes) | 731/0/1 · 5/5 · 5/5 · audit healthy |
 
-`731/0/1` satırlarındaki tek atlanan kalem **SELinux'tur**: Debian
-ailesi SELinux sağlamaz, bu bir eksik değil platform farkıdır.
-Fedora 44'te aynı kalem çalışır ve 0 atlanan kalemle geçer.
+The single skipped item in the `731/0/1` rows is **SELinux**: the Debian
+family does not ship SELinux; this is not a gap but a platform difference.
+On Fedora 44 the same item works and passes with 0 skipped items.
 
-Kapsanan alanlar: tüm CLI komutları, öğrenme modu baştan sona, 5 LSM
-kancası, 6 aksiyon türü, kalıcı JSONL audit, üç mod ve acil kapatma,
-kilitlenme koruması, hata yolları ve politika dili kenar durumları.
+Areas covered: all CLI commands, learning mode end to end, 5 LSM hooks, 6
+action types, permanent JSONL audit, three modes and emergency shutdown,
+lockout protection, error paths and policy language edge cases.
 
 ---
 
-## 2. Gereksinimler
+## 2. Requirements
 
-| Bileşen | Sürüm | Not |
+| Component | Version | Note |
 |---|---|---|
-| Kernel | **5.15+** | `CONFIG_BPF_LSM=y` **ve** `lsm=bpf` zincirde olmalı |
-| clang | 12+ | `-target bpf` desteklemeli |
-| Go | 1.21+ | yalnızca **derleme** için (çalıştırmada gerekmez) |
+| Kernel | **5.15+** | `CONFIG_BPF_LSM=y` **and** `lsm=bpf` must be in the chain |
+| clang | 12+ | must support `-target bpf` |
+| Go | 1.21+ | for **compilation** only (not needed at runtime) |
 | Python | 3.9+ | `click`, `rich`, `PyYAML` |
-| Kök yetkisi | — | kurulum ve `axctl` için |
+| Root privilege | — | for the installation and for `axctl` |
 
-Çekirdeğin LSM desteğini doğrula:
+Verify the kernel's LSM support:
 
 ```bash
-cat /sys/kernel/security/lsm      # çıktıda 'bpf' geçmeli
+cat /sys/kernel/security/lsm      # the output must contain 'bpf'
 ```
 
-`bpf` listede yoksa önce `/boot/config-$(uname -r)` içinde
-`CONFIG_BPF_LSM=y` olduğundan emin ol. Kimlik doğrulama (authentication)
-için `lockdown`, `capability`, `landlock`, `yama`, `apparmor`, `tomoyo`
-gerekli değildir — AXlinux bunların yerine geçmez, **eklenir**.
+If `bpf` is not in the list, first make sure that `CONFIG_BPF_LSM=y` is set
+in `/boot/config-$(uname -r)`. `lockdown`, `capability`, `landlock`,
+`yama`, `apparmor`, `tomoyo` are not required for authentication — AXlinux
+does not replace them, it is **added** to them.
 
 ---
 
-## 3. Kurulum
+## 3. Installation
 
 ```bash
 tar -xzf axlinux-kaynak-<tarih>.tar.gz
@@ -75,434 +75,448 @@ cd axlinux
 sudo bash install.sh
 ```
 
-Betik 10 adımda ilerler ve ne yaptığını her adımda yazar. Şu anda:
+The script proceeds in 10 steps and writes what it is doing at each step.
+Currently:
 
 ```
 [ 1/10] Yetki denetimi
 [ 2/10] Ortam denetimi
 [ 3/10] bpf LSM denetimi
-[ 4/10] Bağımlılıklar
+[ 4/10] Dependencies
 [ 5/10] Kaynak kod
 [ 6/10] Derleme
 [ 7/10] Kurulum
 [ 8/10] Servisler
-[ 9/10] Doğrulama
-[10/10] İlk politika
+[ 9/10] Verification
+[10/10] First policy
 ```
 
-Sessiz (unattended) kurulum:
+Silent (unattended) installation:
 
 ```bash
 sudo bash install.sh --unattended
 ```
 
-Kurulum **dağıtım bağımsızdır**: `apt-get`, `dnf`/`yum`, `pacman`,
-`apk` ve `zypper` desteklenir. Bulunamayan tek paket tüm kurulumu
-düşürmez — paketler tek tek kurulur, olmayanlar atlanır ve raporlanır.
+The installation is **distribution independent**: `apt-get`, `dnf`/`yum`,
+`pacman`, `apk` and `zypper` are supported. A single missing package does
+not bring down the entire installation — packages are installed one by one,
+the missing ones are skipped and reported.
 
-### Kurulum ne yapar
+### What the installation puts in place
 
-| Yol | İçerik |
+| Path | Content |
 |---|---|
-| `/usr/bin/axctl` | CLI girişi |
-| `/usr/bin/axdaemon` | LSM uygulayıcı (Go) |
-| `/usr/bin/axlog` | Audit yazıcı (Go) |
-| `/usr/lib/axlinux/` | `axbpf.o` ve Python paketi |
-| `/etc/axlinux/` | Örnek politikalar |
+| `/usr/bin/axctl` | CLI entry point |
+| `/usr/bin/axdaemon` | LSM enforcer (Go) |
+| `/usr/bin/axlog` | Audit writer (Go) |
+| `/usr/lib/axlinux/` | `axbpf.o` and the Python package |
+| `/etc/axlinux/` | Sample policies |
 | `/etc/systemd/system/` | `axdaemon.service`, `axlog.service` |
-| `/usr/lib/tmpfiles.d/axlinux.conf` | `/run/axlinux` yönetimi |
-| `~/.axlinux/policy.yaml` | Senin politikân (kullanıcı başına) |
+| `/usr/lib/tmpfiles.d/axlinux.conf` | management of `/run/axlinux` |
+| `~/.axlinux/policy.yaml` | Your policy (per user) |
 
 ---
 
 
 ## Fedora 44 (SELinux Enforcing)
 
-Fedora AXlinux'in birincil hedef dagitimidir ve **Enforcing** SELinux
-altinda dogrulanmistir. `selinux=permissive` kullanilmaz.
+Fedora is the primary target distribution of AXlinux and it is verified
+under **Enforcing** SELinux. `selinux=permissive` is not used.
 
-### Fedora'ya ozgu davranislar
+### Fedora-specific behaviours
 
-Kok dosya sistemi bir **btrfs alt birimidir** (`subvolid=256`,
-`mountinfo: root=/root mountpoint=/`). Bu, yol cozumlemesinde iki
-ayri konuyu dogurur:
+The root filesystem is a **btrfs subvolume** (`subvolid=256`,
+`mountinfo: root=/root mountpoint=/`). This gives rise to two separate
+issues in path resolution:
 
-| Konum | Gorunur yol | Not |
+| Location | Visible path | Note |
 |---|---|---|
-| `/etc/...` | `/etc/...` | calisir |
-| `/var/...`, `/home/...` | `/var/...`, `/home/...` | calisir |
-| `/root/...` | `/root/...` | calisir |
-  | `/tmp/...`, `/dev/shm/...`, `/run/...` | `/tmp/...` | calisir (mount noktasi haritasi) |
+| `/etc/...` | `/etc/...` | works |
+| `/var/...`, `/home/...` | `/var/...`, `/home/...` | works |
+| `/root/...` | `/root/...` | works |
+  | `/tmp/...`, `/dev/shm/...`, `/run/...` | `/tmp/...` | works (mount point map) |
 
-Kok dosya sistemi btrfs alt birimi: gorunmez `root` bileseni
-`mount_artifact_map` ile atilir. Ayri mount'lar (`/tmp` tmpfs):
-gorunmez mount noktasi oneki `mount_point_map` ile geri eklenir.
-Ikisi de `tests/deep_verify.sh` icinde gercek deny kurallariyla
-dogrulanir (`ayri mount yolu [tmpfs /tmp] uygulandi`).
-`/tmp` bir tmpfs mount oldugu icin mount noktasinin adi dentry
-zincirinde gorunmez. Bu yapisal bir sinirdir, bir hata degildir.
-Yol kurallari kullanirken mutlak yolun **kok dosya sisteminde**
-oldugundan emin olun.
+Root filesystem is a btrfs subvolume: the invisible `root` component is
+discarded via `mount_artifact_map`. Separate mounts (`/tmp` tmpfs): the
+invisible mount point prefix is added back via `mount_point_map`. Both are
+verified inside `tests/deep_verify.sh` with real deny rules
+(`separate mount path [tmpfs /tmp] applied`). Because `/tmp` is a tmpfs
+mount, the name of the mount point is not visible in the dentry chain. This
+is a structural limit, not a bug. When using path rules, make sure that the
+absolute path is **on the root filesystem**.
 
-SELinux tarafi:
+On the SELinux side:
 
 ```bash
-# Surecler kendi alanlarinda calisir
+# Processes run in their own domains
 $ ps -eo label,comm | grep ax
 system_u:object_r:axlinux_daemon_t:s0 axdaemon
 system_u:object_r:axlinux_log_t:s0      axlog
 
-# Politika gercekten yuklu mu
+# Is the policy actually loaded
 $ sudo semodule -l | grep axlinux
 axlinux
 ```
 
-SELinux modulu `selinux-policy-devel` gerektirir; `install.sh`
-paketi kendisi kurar ve modulu her seferinde yeniden derler.
+The SELinux module requires `selinux-policy-devel`; `install.sh` installs
+the package itself and recompiles the module every time.
 
-### Fedora dogrulama sonucu
+### Fedora verification result
 
-Fedora 44, kernel `6.19.10-300.fc44.x86_64`, SELinux Enforcing
-uzerinde:
+On Fedora 44, kernel `6.19.10-300.fc44.x86_64`, SELinux Enforcing:
 
 ```
-bpf: 5/5   kancalar: 5/5   enforcement: True   audit sagligi: True
-tests/deep_verify.sh: 716 gecti / 0 kaldi / 2 atlandi
+bpf: 5/5   hooks: 5/5   enforcement: True   audit healthy: True
+tests/deep_verify.sh: 732 passed / 0 failed / 0 skipped
 ```
 
-## 4. İlk beş dakika
+## 4. The first five minutes
 
 ```bash
-# 1) Başlangıç: boş politika = sistem serbest
+# 1) Start: empty policy = system is open
 sudo axctl init
 
-# 2) Hazır şablonlardan birini incele
+# 2) Examine one of the ready-made templates
 axctl template ls
 sudo axctl template apply web-server
-axctl policy check              # uygulamadan ÖNCE doğrula
+axctl policy check              # validate BEFORE applying
 
-# 3) Uygula
+# 3) Apply
 sudo axctl reload --mode enforcing
 
-# 4) Ne oluyor?
+# 4) What is happening?
 axctl status
 axctl logs --limit 20
 
-# 5) Kendi kuralını yaz
+# 5) Write your own rule
 nano ~/.axlinux/policy.yaml
 axctl policy check && sudo axctl reload
 ```
 
-Bir kural şöyle görünür:
+A rule looks like this:
 
 ```yaml
 version: 1
 mode: enforcing
 rules:
   - id: r1
-    name: "nginx shadow okuyamaz"
+    name: "nginx must not read shadow"
     subject: nginx
     object: /etc/shadow
     action: file.read
     effect: deny
 ```
 
-`subject` süreç adı, `object` yol (veya port), `action` ne yapılacağı,
-`effect` izin mi yasak mı.
+`subject` is the process name, `object` is the path (or the port), `action`
+is what is to be done, `effect` is permission or prohibition.
 
 ---
 
-## 5. Komut referansı
+## 5. Command reference
 
-| Komut | Ne yapar |
+| Command | What it does |
 |---|---|
-| `axctl init [--force]` | `~/.axlinux/` dizinini ve boş politikayı oluşturur |
-| `axctl status [--json]` | LSM durumu, kancalar, sayaçlar, sağlık |
-| `axctl reload [--mode M] [--force-empty]` | Politikayı derler ve uygular |
-| `axctl mode enforcing\|permissive\|disabled` | Modu değiştirir |
-| `axctl logs [--json] [--subject S] [--action A] [--effect E] [--filter K=V] [--since 1h] [--limit N] [--follow]` | Audit kayıtları |
-| `axctl label add AD SÜRÜCÜ...` | Etiket tanımlar (birden çok süreç) |
-| `axctl label ls` | Etiketleri listeler |
-| `axctl label rm AD` | Etiketi siler |
-| `axctl learn start [--days N]` | Öğrenme modunu başlatır |
-| `axctl learn stop` | Öğrenmeyi durdurur |
-| `axctl learn report [--format text\|json]` | Gözlem raporu + öneri YAML |
-| `axctl template ls` | Hazır şablonları listeler |
-| `axctl template apply AD` | Şablonu politikaya uygular |
-| `axctl policy edit` | Politikayı editörde açar |
-| `axctl policy check [-f DOSYA]` | Doğrular (uygulamadan önce!) |
-| `axctl policy simulate [-f DOSYA] [--format json]` | Etkisini simüle eder |
+| `axctl init [--force]` | Creates the `~/.axlinux/` directory and an empty policy |
+| `axctl status [--json]` | LSM status, hooks, counters, health |
+| `axctl reload [--mode M] [--force-empty]` | Compiles and applies the policy |
+| `axctl mode enforcing\|permissive\|disabled` | Changes the mode |
+| `axctl logs [--json] [--subject S] [--action A] [--effect E] [--filter K=V] [--since 1h] [--limit N] [--follow]` | Audit records |
+| `axctl label add NAME DRIVER...` | Defines a label (multiple processes) |
+| `axctl label ls` | Lists the labels |
+| `axctl label rm NAME` | Removes the label |
+| `axctl learn start [--days N]` | Starts learning mode |
+| `axctl learn stop` | Stops learning |
+| `axctl learn report [--format text\|json]` | Observation report + suggested YAML |
+| `axctl template ls` | Lists the ready-made templates |
+| `axctl template apply NAME` | Applies the template to the policy |
+| `axctl policy edit` | Opens the policy in an editor |
+| `axctl policy check [-f FILE]` | Validates (before applying!) |
+| `axctl policy simulate [-f FILE] [--format json]` | Simulates the effect |
 
-### Çıkış kodları
+### Exit codes
 
-Betikler bunlara güvenir:
+Scripts rely on these:
 
-| Kod | Anlamı | Örnek |
+| Code | Meaning | Example |
 |---|---|---|
-| `0` | başarı | — |
-| `1` | **daemon'ın uygulama seviyesinde reddi** | `axctl learn start` ikinci kez → "öğrenme modu zaten aktif" |
-| `2` | **politika hatası** *veya* **komut satırı hatası** | `policy check` bozuk YAML; `axctl mode bogus`; bilinmeyen komut/seçenek/argüman |
-| `4` | **altyapı hatası** — makineyi kontrol et | daemon kapalı, soket yok |
-| `5` | yapılandırma / şablon hatası | `axctl template apply yok` |
-| `130` | kullanıcı Ctrl+C ile iptal etti | — |
+| `0` | success | — |
+| `1` | **application-level rejection by the daemon** | `axctl learn start` a second time → "learning mode already active" |
+| `2` | **policy error** *or* **command-line error** | `policy check` on broken YAML; `axctl mode bogus`; unknown command/option/argument |
+| `4` | **infrastructure error** — check the machine | daemon down, no socket |
+| `5` | configuration / template error | `axctl template apply nonexistent` |
+| `130` | the user cancelled with Ctrl+C | — |
 
-> **`2` kodu iki şeyi birleştirir:** politika bozukluğu da, komut
-> yanlış yazılmışı da `2` döner. Ayırt etmek için mesaja bak:
-> `axctl: no such option` / `no such command` ise **komut satırı**
-> hatasıdır; politika doğrulama mesajı ise **politika** hatasıdır.
-> Önemli olan ayrım `1` ↔ `4`: `1` "komutu doğru yazdın, daemon
-> reddetti", `4` "sistemde bir sorun var".
+> **The code `2` combines two things:** both a corrupt policy and a
+> mistyped command return `2`. To tell them apart, look at the message: if
+> it is `axctl: no such option` / `no such command`, it is a
+> **command-line** error; a policy validation message means a **policy**
+> error.
+> The important distinction is `1` ↔ `4`: `1` means "you typed the command
+> correctly, the daemon rejected it", `4` means "there is a problem in the
+> system".
 
 ---
 
-## 6. Aksiyonlar ve kancalar
+## 6. Actions and hooks
 
-| Aksiyon | LSM kancası | Anahtar |
+| Action | LSM hook | Key |
 |---|---|---|
-| `file.read` | `file_open` | yol |
-| `file.write` | `file_open` | yol |
-| `file.execute` | `bprm_check_security` | yol |
-| `process.exec` | `bprm_check_security` | süreç (yolsuz) |
+| `file.read` | `file_open` | path |
+| `file.write` | `file_open` | path |
+| `file.execute` | `bprm_check_security` | path |
+| `process.exec` | `bprm_check_security` | process (pathless) |
 | `net.connect` | `socket_connect` | `p:PORT` |
 | `net.bind` | `socket_bind` | `p:PORT` |
 
-Yol uzunluğu sınırı: **8 bileşene kadar**, bileşen başına 32 bayt.
-Daha derin ya da uzun bileşenli yol kabul edilmez — böyle bir kural
-eBPF anahtarına sığmaz ve **sessizce hiçbir şeyle eşleşmez**.
+Path length limit: **up to 8 components**, 32 bytes per component. A deeper
+path, or one with longer components, is not accepted — such a rule does not
+fit into the eBPF key and **silently matches nothing**.
 
-Ağ kurallarında `port` zorunludur. `object` ile birlikte verilemez.
-
----
-
-## 7. Korumalı süreçler
-
-Şu 29 süreç **hiçbir kurala tabi değildir**: `bash`, `sh`, `dash`, `zsh`,
-`fish`, `sudo`, `doas`, `su`, `login`, `sshd`, `sshd-session`, `getty`,
-`agetty`, `init`, `systemd`, `systemd-logind`, `systemd-journald`,
-`systemd-udevd`, `systemd-oomd`, `systemd-userdbd`, `dbus-daemon`,
-`dbus-broker`, `NetworkManager`, `wpa_supplicant`, `polkitd`,
-`rtkit-daemon`, `gdm3`, `gdm-session-worker`, `kthreadd`.
-
-Bunlar oturum açma ve kurtarma yoludur; engellenmeleri sistemi
-kullanılamaz hale getirir. **Bu süreçlere kural yazarsan politika
-reddedilir** — çünkü kuralın çalışmayacağı kanıtlanabilir ve
-sessizce etkisiz kalmak, güvenlik aracında en tehlikeli sonuçtur.
-
-Kuralı hedef **uygulamaya** yaz: `firefox`, `nginx`, `redis-server`,
-`curl`, `postgres`.
+In network rules `port` is mandatory. It cannot be given together with
+`object`.
 
 ---
 
-## 8. Öğrenme modu
+## 7. Protected processes
 
-Sistemin normalde ne yaptığını gözlemleyip başlangıç politikası
-üretir.
+The following **31 processes** **are not subject to any rule**: `swapper`, `migration`, `systemd`, `systemd-logind`, `systemd-userdbd`, `systemd-udevd`, `systemd-journald`, `systemd-oomd`, `init`, `kthreadd`, `sshd`, `sshd-session`, `login`, `agetty`, `getty`, `sudo`, `su`, `doas`, `dbus-daemon`, `dbus-broker`, `polkitd`, `rtkit-daemon`, `NetworkManager`, `wpa_supplicant`, `gdm3`, `gdm-session-worker`, `bash`, `sh`, `dash`, `zsh` and `fish`.
+
+These are the login and recovery path; blocking them makes the system
+unusable. **If you write a rule for these processes the policy is
+rejected** — because it can be proven that the rule would not work, and
+remaining silently ineffective is the most dangerous outcome in a security
+tool.
+
+Write the rule against the **application**: `firefox`, `nginx`,
+`redis-server`, `curl`, `postgres`.
+
+---
+
+## 8. Learning mode
+
+Observes what the system normally does and produces a starting policy.
 
 ```bash
 sudo axctl learn start --days 3
-# ... normal işlerin ...
+# ... your normal work ...
 axctl learn report
 sudo axctl learn stop
 ```
 
-`learn start` verilen gün sayısı kadar çalışır, sonra kendiliğinden
-kapanır. Gözlemler enforcement kancalarından **olay üretildiği anda**
-gelir; sen bir şey sorgulamazsan da birikir.
+`learn start` runs for the given number of days and then shuts itself down.
+The observations come from the enforcement hooks **at the moment the event
+is produced**; they accumulate even if you do not query anything.
 
-Raporun altındaki öneri bloğu **doğrudan yapıştırılabilir YAML**'dır.
-Doğrulamadan önce `axctl policy check` ile denetle.
+The suggestion block at the bottom of the report is **directly pasteable
+YAML**. Check it with `axctl policy check` before applying.
 
 ---
 
 ## 9. Audit
 
-Her denetim kararı JSONL olarak kalıcı diske yazılır:
+Every enforcement decision is written to permanent disk as JSONL:
 
 ```
-/var/log/axlinux/audit-YYYY-MM-DD.jsonl        (bugün)
-/var/log/axlinux/audit-YYYY-MM-DD.jsonl.gz     (sıkıştırılmış eski günler)
+/var/log/axlinux/audit-YYYY-MM-DD.jsonl        (today)
+/var/log/axlinux/audit-YYYY-MM-DD.jsonl.gz     (compressed older days)
 ```
 
-`axlog` ayrı bir servistir. Kayıt zinciri kırılırsa sessizce yutulmaz:
-`axctl status` `audit_healthy: false` gösterir.
+`axlog` is a separate service. If the record chain breaks, it is not
+swallowed silently: `axctl status` shows `audit_healthy: false`.
 
 ```bash
-axctl logs --effect deny --limit 50      # sadece redler
-axctl logs --subject nginx               # bir sürecin tüm eylemleri
-axctl logs --action file.read --json     # makine-okunur
+axctl logs --effect deny --limit 50      # denials only
+axctl logs --subject nginx               # all actions of one process
+axctl logs --action file.read --json     # machine-readable
 ```
 
-Filtrelemediğin alan varsa `axctl` seni **uyarır** — "uygulamadığım
-filtre" sessizce yutulmaz, çünkü "redleri filtreledim sanıp allow
-kayıtlarını görüp doğru çalıştığını düşünmek" tipik bir hatadır.
+If you do not filter on a field, `axctl` **warns** you — "a filter I did
+not apply" is not swallowed silently, because "I think I filtered the
+denials, I see the allow records and assume it works correctly" is a
+typical mistake.
 
 ---
 
-## 10. Modlar
+## 10. Modes
 
-| Mod | Davranış |
+| Mode | Behaviour |
 |---|---|
-| `enforcing` | ihlal engellenir **ve** kaydedilir |
-| `permissive` | ihlal kaydedilir, engellenmez (deneme için) |
-| `disabled` | hiçbir kısıtlama yok |
+| `enforcing` | the violation is blocked **and** recorded |
+| `permissive` | the violation is recorded, not blocked (for testing) |
+| `disabled` | no restriction at all |
 
-### Acil kapatma
+### Emergency shutdown
 
-Yanlış bir politika yüzünden kilitlenirsen:
+If you lock yourself out because of a wrong policy:
 
 ```bash
 sudo axctl reload --force-empty --mode disabled
 ```
 
-Bu komut **acil kurtarma yoludur** ve her durumda çalışır: boş politika
-geçerli kabul edilir, kural sayısı denetlenmez.
+This command is the **emergency recovery path** and works in every
+situation: an empty policy is considered valid, the rule count is not
+checked.
 
-> `sudo axctl mode disabled` da acil çıkıştır. İkisi de aynı anda
-> kullanılabilir; acil durumda ikisini sırayla dene.
+> `sudo axctl mode disabled` is also an emergency exit. Both can be used
+> together; in an emergency try them one after the other.
 
-### Kilitlenme koruması
+### Lockout protection
 
-Politika yazarken yanlışlıkla oturumunu kapatman engellenir:
-`bash`, `sh`, `sudo`, `sshd`, `login`, `systemd` ve 23 süreç daha her
-zaman korunur (bkz. §7). Buna rağmen **canlı sistemde ilk politikayı
-`permissive` modda dene**:
+Accidentally closing your own session while writing a policy is prevented:
+`bash`, `sh`, `sudo`, `sshd`, `login`, `systemd` and 23 more processes are
+always protected (see §7). Nevertheless, **try the first policy in
+`permissive` mode on a live system**:
 
 ```bash
 sudo axctl reload --mode permissive
-# gözlemle, sonra enforcing yap
+# observe, then make it enforcing
 ```
 
 ---
 
-## 11. Doğrulama
+## 11. Verification
 
-Kurulumdan sonra kendi doğrulamanı çalıştır:
+After the installation, run your own verification:
 
 ```bash
-# hızlı: tek komut
+# quick: one command
 sudo axctl status
 
-# kapsamlı: 8 adlandırılmış bölüm (K–R), 732 kontrol (FİZİKSEL MAKİNEDE ÇALIŞMAZ)
+# comprehensive: 8 named sections (K–R), 732 checks
+# (THE TEST SCRIPT DOES NOT RUN ON A PHYSICAL MACHINE; the product itself
+#  works on physical machines — see the note below)
 sudo bash tests/deep_verify.sh
 
-# tek bölüm
+# single section
 sudo bash tests/deep_verify.sh -k D
 ```
 
-`deep_verify.sh` fiziksel makinede kendini reddeder; bu koruma
-`AXLINUX_ALLOW_PHYSICAL=1` ile kapatılabilir ama **yapma**.
+`deep_verify.sh` declines to run on a physical machine, because a test that
+deliberately denies access can lock the machine you are working on. This
+guard can be disabled with `AXLINUX_ALLOW_PHYSICAL=1`, but **do not do
+that**.
 
-Kaynak geliştirme:
+This is a property of the **test harness**, not a limitation of the
+product: AXlinux itself works on physical machines. Neither `install.sh`
+nor `axctl` contains a virtual-machine check. Override the guard only if
+you have console access and a known way out.
+
+Source development:
 
 ```bash
-make test          # Go + statik + koruma + sessiz hata + Python (164 test)
-make verify        # eBPF'yi derle ve denetle
+make test          # Go + static + guard + silent error + Python (164 tests)
+make verify        # compile and check eBPF
 make clean
 ```
 
 ---
 
-## 12. Sınırlar (dürüst liste)
+## 12. Limits (an honest list)
 
-Bunları bilerek kabul etmen gerekir:
+You have to accept these deliberately:
 
-- **`net.accept` desteklenmiyor.** LSM'de karşılığı olan bir
-  `socket_accept` kancası yok; bu yüzden kural yazmak da anlamsız
-  olurdu. Gelen bağlantıları denetlemek `socket_bind` + uygulama
-  katmanıyla yapılır.
-- **Yol derinliği 8 bileşen, bileşen uzunluğu 31 bayt.** Daha derin
-  yollar kural olarak yazılamaz (sessizce çalışmaz — reddedilir).
-- **`subject` süreç adıdır, kullanıcı değil.** `curl` tüm
-  kullanıcılar için aynıdır.
-- **Kök dosya sistemi için her şey geçerlidir.** Politika, çalıştıran
-  kullanıcıyı değil süreci konuşur.
-- **Pardus'ta tam masaüstü kurulmadı.** Doğrulama sistemi Pardus'un
-  resmî arşivinden (`bilgemdepo.pardus.org.tr`, imzalı) ve
-  `base-files 13.8+pardus25.2.1` ile kuruldu; `pardus-backgrounds`,
-  `pardus-bilge-grub-theme`, `desktop-base` kurulu. AXlinux'in
-  çalışması için gereken çekirdek, kütüphaneler ve araçlar tamdır;
-  XFCE/GNOME masaüstünün kendisi kurulmadı çünkü AXlinux masaüstü
-  uygulaması değildir.
-- **`lsm=bpf` çekirdek parametresidir.** Farklı bir önyükleme
-  parametresi (GRUB'da `lsm=...,bpf`) gerekiyorsa ayrıca ayarla.
+- **`net.accept` is not supported.** There is no corresponding
+  `socket_accept` hook in the LSM; writing a rule would therefore also be
+  meaningless. Auditing incoming connections is done with `socket_bind` +
+  the application layer.
+- **Path depth is 8 components, component length is 31 bytes.** Deeper
+  paths cannot be written as a rule (they do not work silently — they are
+  rejected).
+- **`subject` is a process name, not a user.** `curl` is the same for all
+  users.
+- **This applies to the root filesystem.** The policy speaks about the
+  process, not about the user who runs it.
+- **A full desktop was not installed on Pardus.** The verification system
+  was installed from the official archive of Pardus
+  (`bilgemdepo.pardus.org.tr`, signed) with
+  `base-files 13.8+pardus25.2.1`; `pardus-backgrounds`,
+  `pardus-bilge-grub-theme`, `desktop-base` are installed. The kernel,
+  libraries and tools that AXlinux needs to run are complete; the XFCE/GNOME
+  desktop itself was not installed because AXlinux is not a desktop
+  application.
+- **`lsm=bpf` is a kernel parameter.** If a different boot parameter is
+  required (`lsm=...,bpf` in GRUB), configure it separately.
 
 ---
 
-## 13. Kaldırma
+## 13. Removal
 
 ```bash
 sudo systemctl disable --now axdaemon axlog
 sudo make uninstall
 ```
 
-Kalanlar: `~/.axlinux/policy.yaml`, `/etc/axlinux/`,
+Remaining: `~/.axlinux/policy.yaml`, `/etc/axlinux/`,
 `/var/log/axlinux/`, `/usr/lib/tmpfiles.d/axlinux.conf`.
-Politikanı saklamak istersen `policy.yaml`'ı önce yedekle.
+If you want to keep your policy, back up `policy.yaml` beforehand.
 
 ---
 
-## 14. Nasıl çalışır (kısa)
+## 14. How it works (brief)
 
 ```
-  axctl (Python)          axdaemon (Go)                çekirdek
+  axctl (Python)          axdaemon (Go)                kernel
        │                        │                          │
-       │  JSON-RPC soket       │                          │
+       │  JSON-RPC socket       │                          │
        ├───────────────────────►│                          │
-       │  derlenmiş politika   │  eBPF map'lerine yaz     │
+       │  compiled policy       │  writes to eBPF maps     │
        │                        ├─────────────────────────►│
        │                        │                          │ LSM
-       │  JSON-RPC soket       │  audit olayı             │ kancaları
-       ├───────────────────────►│  ◄───────────────────────┤ tetiklenir
+       │  JSON-RPC socket       │  audit event             │ hooks
+       ├───────────────────────►│  ◄───────────────────────┤ are triggered
        │                        │                          │
- axlog (Go) ◄───────────────────┤  JSONL diske             │
+ axlog (Go) ◄───────────────────┤  JSONL to disk           │
 ```
 
-- `axctl` politika YAML'ını okur, doğrular ve **iç forma** derler.
-- `axdaemon` bu formu eBPF map'lerine yazar; kancalar anında etkin olur.
-- Bir kanca tetiklendiğinde karar audit kuyruğuna düşer.
-- `axlog` kuyruğu boşaltır ve kalıcı JSONL dosyasına yazar.
-- Mod (`enforcing`/`permissive`/`disabled`) ayrı bir map'te tutulur,
-  anında değiştirilebilir.
+- `axctl` reads the policy YAML, validates it and **compiles it into an
+  internal form**.
+- `axdaemon` writes this form into the eBPF maps; the hooks are effective
+  immediately.
+- When a hook is triggered, the decision drops into the audit queue.
+- `axlog` drains the queue and writes it to the permanent JSONL file.
+- The mode (`enforcing`/`permissive`/`disabled`) is kept in a separate map
+  and can be changed immediately.
 
-Ayrıntılı tasarım: `docs/architecture.md`,
+Detailed design: `docs/architecture.md`,
 `docs/policy-language.md`, `docs/cli-reference.md`.
 
 ---
 
-## 15. Yedeklenmiş sürüm
+## 15. Archived version
 
-Bu belgenin eşlik ettiği kaynak arşivi:
+The source archive that accompanies this document:
 
 ```
 /home/mami/axlinux-kaynak-20261001-1715.tar.gz
 ```
 
-sha256 doğrulaması ve geri yükleme testi yapılmıştır (140 dosya;
-geri yüklendiğinde 164 test geçiyor).
+sha256 verification and a restore test were performed (140 files; 164
+tests pass when it is restored).
 
 ---
 
-## Canlı sisteme alırken
+## Before putting it on a live system
 
-Sürüm 1.0.0; üç dağıtımda uçtan uca doğrulandı. Yine de ilk kez
-kuruyorsan sırayla git:
+Version 1.0.0; verified end to end on three distributions. Still, if this is
+your first installation, go in order:
 
-1. `permissive` modda başla ve bir süre gözlemle:
+1. Start in `permissive` mode and observe for a while:
    `sudo axctl reload --mode permissive`
-2. `/var/log/axlinux/` kayıtlarının gerçekten dolduğunu doğrula
-   (`axctl logs`). Kayıt yoksa sistem düşündüğün gibi denetlemiyor.
-3. **Acil kurtarma komutunu bir kez test et:**
+2. Verify that the records in `/var/log/axlinux/` are actually being filled
+   (`axctl logs`). If there are no records, the system is not enforcing as
+   you think.
+3. **Test the emergency recovery command once:**
    `sudo axctl reload --force-empty --mode disabled`
-   Kullanmadan önce çalıştığını bilmen gerekir.
-4. Modu `enforcing` yap ve ilk gün audit kayıtlarını oku.
+   You need to know that it works before you need it.
+4. Set the mode to `enforcing` and read the audit records of the first day.
 
-Politika hatası ile karşılaşırsan önce:
+If you run into a policy error, first:
 
 ```bash
-sudo axctl reload --force-empty --mode disabled   # sistemi serbest bırak
-axctl policy check                                 # hatayı bul
+sudo axctl reload --force-empty --mode disabled   # leave the system open
+axctl policy check                                 # find the error
 ```
 
-`axctl policy check` çıktısı kural kimliğini ve sebebini söyler; bu
-bilgiyi `CHANGELOG.md` veya sorun olarak paylaşmak istersen
-kullanılabilir bilgidir.
+The output of `axctl policy check` gives the rule identity and the reason;
+this information is useful if you want to share it in `CHANGELOG.md` or as
+an issue.

@@ -1,85 +1,94 @@
-# AXlinux 1.2.0 — Dağıtım Hazırlık Raporu
+# AXlinux 1.2.0 — Distribution Readiness Report
 
-Doğrulama kanıtı ve bulunan hatalar: [`DOGRULAMA-RAPORU.md`](DOGRULAMA-RAPORU.md)
+Verification evidence and the bugs that were found: [`VERIFICATION-REPORT.md`](VERIFICATION-REPORT.md)
 
 
-**Tarih:** 7 Ekim 2026
-**Sürüm:** `axlinux-1.2.0-1.fc44.x86_64`
-**Durum:** ✅ Dağıtıma hazır — 9 maddenin tamamı gerçek düzeltme + ölçülmüş kanıtla kapatıldı;
-**kurulum ve kaldırma yollarının üçü de** (RPM, `install.sh`, `.deb`) uçtan uca doğrulandı
-**Doğrulama ortamı:** `/mnt/anka` altındaki Fedora 44 Workstation VM
-**Kısıt:** Ana makinede (`/dev/sdb1`) AXlinux **çalıştırılmadı**. Tüm enforcement testleri VM'de yapıldı.
-
----
-
-## 1. Kısa cevap
-
-Evet, her şey tamam. Dokuz maddenin hiçbiri "kısmen", "geçici olarak" veya "manuel yapılacak" bırakılmadı.
-Her biri için ölçülmüş bir kanıt var; kanıtların hepsi `deep_verify.sh` çıktısından, paket
-imzasından veya gerçek kurulum/kaldırma döngüsünden geliyor.
-
-Bu rapor okunduğunda üç şey net olmalı: **ne ölçüldü**, **ne düzeltildi**, **nerede doğrulandı**.
+**Date:** 7 October 2026
+**Version:** `axlinux-1.2.0-1.fc44.x86_64`
+**Status:** ✅ Ready for distribution — all 9 items were closed with a real fix + measured evidence;
+**all three of the installation and removal paths** (RPM, `install.sh`, `.deb`) were verified end to end
+**Verification environment:** Fedora 44 Workstation VM under `/mnt/anka`
+**Constraint:** AXlinux was **not run** on the host machine (`/dev/sdb1`). All enforcement tests were done in the VM.
 
 ---
 
-## 2. Dokuz maddenin durumu
+## 1. Short answer
 
-| # | Madde | Durum | Kanıt (VM'den) |
+Yes, everything is complete. None of the nine items was left as "partially",
+"temporarily" or "to be done manually".
+There is measured evidence for each one; all of the evidence comes from
+`deep_verify.sh` output, from the package signature, or from a real
+installation/removal cycle.
+
+When this report has been read, three things should be clear: **what was
+measured**, **what was fixed**, **where it was verified**.
+
+---
+
+## 2. Status of the nine items
+
+| # | Item | Status | Evidence (from the VM) |
 |---|-------|-------|----------------|
-| 1 | Dizin kuralları içeriği korumuyor | ✅ | `dizin kurali icerigi korudu (derinlik 1/2/3)` |
-| 2 | RPM imzası | ✅ | `signature … f108e5cc…5310: OK` |
-| 3 | `install.sh` çalıştırılmamış | ✅ | Sıfırdan: 4/4 ikili + policies.d + enforcing |
-| 4 | `.deb` denenmemiş | ✅ | Debian 12.15: `ii axlinux 1.2.0` |
-| 5 | journald sınırsız + disk %90 | ✅ | 3/3 sınır etkin, disk %52 (9.5 GB boş) |
-| 6 | Rotasyon testi "skip" ediyor | ✅ | `10 MB sınırında dosya yazılınca numaralı segment OLUŞTU` |
-| 7 | Audit kaydında boş yol | ✅ | `BOS YOL YOK (0/4)` |
-| 8 | Sürüm yükseltme yolu | ✅ | 1.1.0 → 1.2.0 `dnf upgrade`, veri korundu |
-| 9 | Çok kullanıcılı senaryo | ✅ | `kullanıcı A kendi gizli anahtarını okuyamıyor` |
+| 1 | Directory rules did not protect their contents | ✅ | `dizin kurali icerigi korudu (derinlik 1/2/3)` |
+| 2 | RPM signature | ✅ | `signature … f108e5cc…5310: OK` |
+| 3 | `install.sh` had never been run | ✅ | From scratch: 4/4 binaries + policies.d + enforcing |
+| 4 | `.deb` had never been tried | ✅ | Debian 12.15: `ii axlinux 1.2.0` |
+| 5 | journald unbounded + disk at %90 | ✅ | 3/3 limits active, disk %52 (9.5 GB free) |
+| 6 | The rotation test was "skipping" | ✅ | `a file is written past the 10 MB limit numaralı segment OLUŞTU` |
+| 7 | Empty path in the audit record | ✅ | `BOS YOL YOK (0/4)` |
+| 8 | Version upgrade path | ✅ | 1.1.0 → 1.2.0 `dnf upgrade`, data preserved |
+| 9 | Multi-user scenario | ✅ | `user A cannot read their own private key` |
 
-Ek olarak — **dağıtım yollarının kaldırma tarafı** üç yolda da doğrulandı ve
-orada üç gerçek hata bulundu (§7):
+In addition — **the removal side of the distribution paths** was verified on
+all three paths, and **three real bugs** were found there (§7):
 
-| Yol | Kurulum | Kaldırma |
+| Path | Installation | Removal |
 |-----|---------|----------|
-| RPM | ✅ | ✅ sıfır SELinux/paket artığı (2 döngü) |
-| `install.sh` | ✅ | ✅ `--uninstall` eklendi, sıfır artık |
-| `.deb` | ✅ | ✅ conffiles korunuyor |
+| RPM | ✅ | ✅ zero SELinux/package residue (2 cycles) |
+| `install.sh` | ✅ | ✅ `--uninstall` added, zero residue |
+| `.deb` | ✅ | ✅ conffiles preserved |
 
 ---
 
-## 3. Her madde için: ölçüm → düzeltme → kanıt
+## 3. For each item: measurement → fix → evidence
 
-### 1) Dizin kuralları içeriği korumuyordu *(en kritik)*
+### 1) Directory rules did not protect their contents *(most critical)*
 
-**Ölçülen boşluk.** `object: /tmp/dizin` + `file.read deny` kuralı dizinin kendisini engelliyordu
-ama içindeki dosyaları (`secret.txt`, `id_rsa`) engellemiyordu. Kullanıcı yanlış güvenlik
-hissiyle korunmayan sistemde kalıyordu.
+**The measured gap.** The rule `object: /tmp/dizin` + `file.read deny`
+blocked the directory itself but not the files inside it (`secret.txt`,
+`id_rsa`). The user was left with a false sense of security on a system
+that was not protected.
 
-**Düzeltme.** Kural anahtarı artık dizin yolunun **derinlik ofsetlerine** yazılıyor
-(`src/bpf/axbpf.h`): `AX_PREFIX_STEPS=5`, `key_scratch` 4 yuvaya indirildi, tam 32 baytlık slot
-temizleme ve `action` kopyalaması eklendi. Go tarafında `prefix_test.go` bunu kilitliyor.
+**The fix.** The rule key is now written to the **depth offsets** of the
+directory path (`src/bpf/axbpf.h`): `AX_PREFIX_STEPS=5`, `key_scratch` was
+reduced to 4 slots, full 32-byte slot clearing and `action` copying were
+added. On the Go side `prefix_test.go` pins this down.
 
-**Kanıt.**
+**Evidence.**
 ```
 ok  dizin kurali icerigi korudu (derinlik 1)
 ok  dizin kurali icerigi korudu (derinlik 2)
 ok  dizin kurali icerigi korudu (derinlik 3)
 ok  dizin kurallari icerigi korudu (3/3 derinlik)
 ```
-Yanlış pozitif kontrolü: benzer adlı `/tmp/pm.txt` ve `/etc/hostname` **serbest** kaldı.
+False-positive check: the similarly named `/tmp/pm.txt` and `/etc/hostname
+remained **free**.
 
 ---
 
-### 2) RPM imzası
+### 2) RPM signature
 
-**Ölçülen boşluk.** İmzalama altyapısı vardı ama `make rpm` **imzasız** paket üretiyordu;
-imzalama ayrı ve isteğe bağlı bir adımdı. Gerçek depoda dağıtılamayan paket "üretildi" gibi görünüyordu.
+**The measured gap.** The signing infrastructure existed, but `make rpm`
+produced an **unsigned** package; signing was a separate and optional step.
+A package that cannot be distributed from a real repository looked like it
+had been "produced".
 
-**Düzeltme.** `make rpm` artık üretim sonrası `rpmsign --addsign` çalıştırıyor, ardından
-`rpm -Kv` ile doğruluyor. GPG anahtarı yoksa **hata** veriyor ve üretilen dosyayı **siliyor**
-(kullanılamaz paket bırakmıyor).
+**The fix.** `make rpm` now runs `rpmsign --addsign` after production and
+then verifies with `rpm -Kv`. If there is no GPG key it reports an **error**
+and **deletes** the produced file (it does not leave an unusable package
+behind).
 
-**Kanıt.**
+**Evidence.**
 ```
 == RPM: imzali ==
   imzalandi: .../axlinux-1.2.0-1.x86_64.rpm
@@ -90,13 +99,14 @@ imzalama ayrı ve isteğe bağlı bir adımdı. Gerçek depoda dağıtılamayan 
 
 ---
 
-### 3) `install.sh` — gerçek Fedora'da sıfırdan
+### 3) `install.sh` — from scratch on real Fedora
 
-**Düzeltme yok, kanıt vardı.** Betik RPM kurulmadan, boş bir sistemde koşuldu:
-4/4 ikili kuruldu, `policies.d` + örnek politika oluştu, journald drop-in kuruldu, LSM 5/5 bağlandı,
-`axctl reload --mode enforcing` sonrası enforcing + 3 kural.
+**No fix, there is evidence.** The script was run without the RPM, on a
+blank system: 4/4 binaries installed, `policies.d` + sample policy created,
+journald drop-in installed, LSM 5/5 attached, and after
+`axctl reload --mode enforcing` it was enforcing + 3 rules.
 
-**Kanıt.**
+**Evidence.**
 ```
 ikililer    : 4/4
 policies.d : 1 dosya (00-sample-workstation.yaml)
@@ -106,55 +116,62 @@ reload sonrasi: mod=enforcing kural=3 LSM=5
 
 ---
 
-### 4) `.deb` — Debian 12.15'te kurulum + kaldırma
+### 4) `.deb` — installation + removal on Debian 12.15
 
-**Ölçülen boşluk (bu turda bulundu).** RPM tarafı journald sınırını kuruyordu, **Debian tarafı hiç
-kurmuyordu** — yani Debian/Ubuntu sistemlerinde `/var/log/journal` sınırsızdı. Ayrıca `postinst`,
-`systemd-tmpfiles` yoksa "not found" yazıp kurulum çıktısını kirletiyordu.
+**The measured gap (found in this round).** The RPM side installed the
+journald limit, **the Debian side did not install anything** — in other
+words, on Debian/Ubuntu systems `/var/log/journal` was unbounded. In
+addition, `postinst` wrote "not found" when `systemd-tmpfiles` was absent,
+polluting the installation output.
 
-**Düzeltme.** Aynı journald drop-in `.deb` içine de kuruluyor ve `conffiles`'a işleniyor;
-`postinst` artık komutun varlığını kontrol ediyor.
+**The fix.** The same journald drop-in is now installed into the `.deb` as
+well and is registered in `conffiles`; `postinst` now checks whether the
+command exists.
 
-**Kanıt (Debian 12.15 konteyner).**
+**Evidence (Debian 12.15 container).**
 ```
-dpkg      : ii  axlinux 1.2.0        (kuruldu VE yapılandırıldı)
+dpkg      : ii  axlinux 1.2.0        (installed AND configured)
 journald  : 1 drop-in, SystemMaxUse=200M
-conffiles : 5 kayıt
+conffiles : 5 records
 axctl     : axctl, version 1.2.0
-politika  : ✓ YAML syntax geçerli
-kaldırma  : policies.d 1 dosya + journald 1 drop-in KORUNDU
+policy   : ✓ YAML syntax valid
+removal  : policies.d 1 file + journald 1 drop-in PRESERVED
 ```
 
 ---
 
-### 5) journald sınırı + disk baskısı
+### 5) journald limit + disk pressure
 
-**Ölçülen boşluk.** `/var/log/journal` sınırsızdı ve disk **%91** doluydu; GNOME
-"Low Disk Space" uyarısı veriyordu.
+**The measured gap.** `/var/log/journal` was unbounded and the disk was
+**%91** full; GNOME was showing the "Low Disk Space" warning.
 
-**Düzeltme.** Standart drop-in dizini (`/etc/systemd/journald.conf.d/10-axlinux.conf`) kullanılıyor —
-ana `journald.conf` **değiştirilmiyor**, operator dosyayı silerek geri alabiliyor.
+**The fix.** The standard drop-in directory
+(`/etc/systemd/journald.conf.d/10-axlinux.conf`) is used — the main
+`journald.conf` is **not modified**, and the operator can revert by deleting
+the file.
 
-**Kanıt.**
+**Evidence.**
 ```
 SystemMaxUse=200M          SystemMaxFileSize=20M
 SystemKeepFree=1G          MaxRetentionSec=1month
-→ 3/3 sınır etkin
-disk: %52 dolu, 9.5 GB boş   (öncesi: %91, 1.9 GB boş)
+→ 3/3 limit active
+disk: %52 full, 9.5 GB free   (before: %91, 1.9 GB free)
 ```
 
 ---
 
-### 6) Rotasyon testi — belirlenimci kapı
+### 6) Rotation test — a deterministic gate
 
-**Ölçülen boşluk.** Test gerçek rotasyonu hiç ölçmüyordu: 1999 tarihli bir dosya yazıp "silinmiş mi?"
-diye bakıyordu; `axlog` o dosyayı açmadığı için kapı **her koşuda "skip"** dönüyordu. Yani rotasyon
-hiçbir zaman doğrulanmamıştı.
+**The measured gap.** The test never measured real rotation at all: it
+wrote a file dated 1999 and asked whether it was "deleted"; because `axlog`
+never opened that file, the gate **returned "skip" on every run**. In other
+words, rotation had never been verified.
 
-**Düzeltme.** Test artık 10 MB'lık bir tohum dosyası önceden yerleştirip **tek yazma** ile
-numaralı segmentin oluşmasını bekliyor. Saniyeler içinde biter ve birikmiş duruma bağlı değildir.
+**The fix.** The test now pre-places a 10 MB seed file and **waits for the
+numbered segment to be created with a single write**. It finishes within
+seconds and does not depend on accumulated state.
 
-**Kanıt.**
+**Evidence.**
 ```
 ok  rotasyon tohum dosyasi: 10485760 bayt (sinir 10485760)
 ok  rotasyon: 10 MB sinirinda dosya yazilca numarali segment OLUSTU
@@ -162,51 +179,59 @@ ok  rotasyon: 10 MB sinirinda dosya yazilca numarali segment OLUSTU
 
 ---
 
-### 7) Audit kayıtlarında boş yol *(bu turun ana işi)*
+### 7) Empty path in the audit records *(the main work of this round)*
 
-**Ölçülen boşluk.** `audit_event` yapısındaki `path` alanı policy anahtarıyla **aynıydı**:
-8 bileşen × 31 karakter. 31 karakterden uzun dosya adı, 8'den derin dizin ve 256 baytı geçen yollar
-**tamamen boş** kayıt üretiyordu — `object: {}`. Ölçüm: 6 dosyadan 1'i çözüldü, 5'i boş.
+**The measured gap.** The `path` field in the `audit_event` structure was
+**identical** to the policy key: 8 components × 31 characters. File names
+longer than 31 characters, directories deeper than 8, and paths exceeding
+256 bytes produced **completely empty** records — `object: {}`. Measurement:
+1 of 6 files resolved, 5 were empty.
 
-**Düzeltme.**
-- Ayrı ve daha geniş audit tamponu: `AX_AUDIT_DEPTH=16`, `AX_AUDIT_SLOT=64`
-- `ax_fill_audit_path()` — mount kökü (`/tmp`, `/var`, `/home` btrfs alt birimi) dahil tam yol
-- Sığmayan bileşen kırpılır ve `truncated: true` işaretiyle yazılır → operator eksik yola "tam" demez
-- `inode_permission` yol çözemediği için `ino`+`dev` kimliği yazar (`find / -xdev -inum N`)
-- Gönderim sırası: **önce `apath`**, boşsa anahtar (anahtar eşleşme içindir, gösterim için değil)
+**The fix.**
+- A separate and wider audit buffer: `AX_AUDIT_DEPTH=16`, `AX_AUDIT_SLOT=64`
+- `ax_fill_audit_path()` — the full path including the mount root (`/tmp`,
+  `/var`, `/home` btrfs subvolume)
+- A component that does not fit is truncated and written with a
+  `truncated: true` flag → the operator does not call an incomplete path
+  "complete"
+- Because `inode_permission` cannot resolve the path, the `ino`+`dev`
+  identity is written (`find / -xdev -inum N`)
+- Send order: **`apath` first**, the key second (the key is for matching, not
+  for display)
 
-**Bu sırada kapatılan üç sessiz kayıp:**
+**Three silent losses closed at this point:**
 
-| Kayıp | Belirti |
-|-------|---------|
-| `__builtin_memset` 1352 bayt | BPF libcall'i reddediyordu → program hiç yüklenmiyordu |
-| per-CPU perf tamponu 4096 | 2 olaya sığıyor, gerisi **sessizce** düşüyordu (ölçülen: 79 olay) |
-| Kayıp sayacı yoktu | Düşen kayıt hiçbir yerden görünmüyordu |
+| Loss | Symptom |
+|-----|---------|
+| `__builtin_memset` 1352 bytes | The BPF libcall was being rejected → the program was not loading at all |
+| per-CPU perf buffer 4096 | It fits 2 events, the rest was **silently** dropped (measured: 79 events) |
+| No lost counter | A dropped record was not visible anywhere |
 
-**Kanıt.**
+**Evidence.**
 ```
 ok  audit yol kapisi: 4 kayit incelendi (kisa/uzun ad/derin yol)
 ok  80 karakter ad kirpildi ve isaretlendi (truncated=true)
 ok  audit kayitlarinda BOS YOL YOK (0/4); kirpilan=2 isaretli
 ```
 
-C/Go yapı eşitliği **ölçülerek** doğrulandı (1352 bayt; `ino` 304, `dev` 312, `apath` 316,
-`flags` 1340) ve `TestEventLayoutMatchesC` bunu C başlığından **her koşuda** yeniden hesaplar.
+The C/Go layout equality was verified **by measurement** (1352 bytes; `ino`
+304, `dev` 312, `apath` 316, `flags` 1340) and `TestEventLayoutMatchesC`
+recalculates it **on every run** from the C header.
 
 ---
 
-### 8) Sürüm yükseltme yolu
+### 8) Version upgrade path
 
-`dnf install 1.1.0` → `dnf upgrade 1.2.0` gerçekten çalıştırıldı. Kullanıcı politikası ve
-`/var/lib/axlinux` verisi **korundu**.
+`dnf install 1.1.0` → `dnf upgrade 1.2.0` was actually performed. The user
+policy and the `/var/lib/axlinux` data were **preserved**.
 
 ---
 
-### 9) Çok kullanıcılı senaryo
+### 9) Multi-user scenario
 
-İki masaüstü kullanıcısı (UID 1001/1002) ile çapraz izolasyon kanıtlandı.
+Cross-isolation was proven with two desktop users (UID 1001/1002).
 
-**Kanıt.**
+**Evidence.**
 ```
 ok  cok kullanicili: kullanici A kendi gizli anahtarini okuyamiyor
 ok  cok kullanicili: kural baska kullanicida da gecerli
@@ -214,103 +239,104 @@ ok  cok kullanicili: kural baska kullanicida da gecerli
 
 ---
 
-## 4. Yol boyunca kapatılan ek gerçek hatalar
+## 4. Additional real bugs closed along the way
 
-Bunlar kullanıcının listelemediği ama ölçüm sırasında ortaya çıkan, sessiz kalan kusurlardı.
-Hepsisi kalıcı olarak düzeltildi ve kapıya bağlandı:
+These were defects that the user did not list but that surfaced during
+measurement and remained silent.
+All of them were permanently fixed and bound to a gate:
 
-| Hata | Neden önemliydi | Düzeltme |
+| Bug | Why it mattered | Fix |
 |------|------------------|----------|
-| Politika yükleme hatası görünmezdi | `axctl status` sadece "permissive" diyordu, sebebi yoktu | `policy_healthy` + `policy_notice` + kırmızı panel |
-| 1352 baytlık olay yüklenmiyordu | BPF `memset` libcall'ini reddediyordu | `ax_event_clear()` (volatile byte-loop) |
-| Perf tamponu yetersiz | 2 olaya sığıyor, gerisi sessizce düşüyordu | 4096 → 65536 + `audit_lost_samples` |
-| Yapı kayması görünmezdi | 304 ↔ 1352 bayt uyuşmazlığı sessizdi | `audit_undersized` sayacı (gerçekten yakaladı) |
-| Mount öneği derin yollarda düşüyordu | `/tmp/.../derin.txt` → `/d/e/...` | Switch 0..15 üretildi, koruma kaldırıldı |
-| `JoinAPath` sırası ters | `/aaaa.txt/olcum/tmp` | Geriye doğru iterasyon + test |
-| `make rpm` imzasızdı | Dağıtılamayan paket "üretildi" gibi görünüyordu | Ana akışa imzalama |
-| RPM kaldırmada 4 sessiz SELinux hatası | 8 fcontext + 1 modül artık kalıyordu | `semodule -r`, boşluk ayrımı, `-l -C`, `%preun` |
-| `.deb` journald kurmuyordu | Debian sistemlerinde sınır yoktu | Drop-in + conffiles |
-| `deep_verify` ayrıcalığa bağlıydı | Root dışı çalıştırınca "dosya yok" diyordu | `sudo ls` |
-| Kaldırmada `awk` **yola** bakıyordu | `/usr/bin/axdaemon` yolunda "axlinux" yok → 3 kayıt hiç silinmedi | Tüm satıra eşleştirildi |
-| `parse_args()` **hiç çağrılmıyordu** | `--unattended`/`--url`/`--no-lsm` sessizce yok sayılıyordu | `banner`'dan önce çağrıldı |
-| `install.sh`'te kaldırma yoktu | Betik kuruyordu, kaldırmıyordu | `--uninstall` eklendi |
+| Policy load error was invisible | `axctl status` only said "permissive", there was no reason | `policy_healthy` + `policy_notice` + red panel |
+| The 1352-byte event did not load | BPF rejected the `memset` libcall | `ax_event_clear()` (volatile byte-loop) |
+| Perf buffer insufficient | It fits 2 events, the rest was silently dropped | 4096 → 65536 + `audit_lost_samples` |
+| Layout drift was invisible | The 304 ↔ 1352 byte mismatch was silent | `audit_undersized` counter (it really caught it) |
+| The mount prefix was lost on deep paths | `/tmp/.../deep.txt` → `/d/e/...` | Switch 0..15 was generated, the guard was removed |
+| `JoinAPath` order reversed | `/aaaa.txt/olcum/tmp` | Reverse iteration + test |
+| `make rpm` was unsigned | An undistributable package looked like it had been "produced" | Signing in the main flow |
+| 4 silent SELinux bugs on RPM removal | 8 fcontext + 1 module were left behind | `semodule -r`, gap distinction, `-l -C`, `%preun` |
+| The `.deb` did not install journald | There was no limit on Debian systems | Drop-in + conffiles |
+| `deep_verify` depended on privilege | Run as non-root it said "file not found" | `sudo ls` |
+| On removal `awk` looked at the **path** | There is no "axlinux" in the path `/usr/bin/axdaemon` → 3 records were never deleted | Matched on the whole line |
+| `parse_args()` was **never called** | `--unattended`/`--url`/`--no-lsm` were silently ignored | Called before `banner` |
+| `install.sh` had no removal | The script installed but did not remove | `--uninstall` added |
 
 ---
 
-## 5. Son doğrulama durumu
+## 5. Final verification status
 
 **VM (`fedora44-ax.qcow2`, Fedora 44 Workstation):**
 ```
 mod=enforcing  kural=3  LSM=5/5
 policy_healthy=True   audit_healthy=True
 lost=None  undersized=None  fail=None
-journald sınır: 3/3 etkin
-disk: %52 dolu, 9.5 GB boş
+journald limit: 3/3 active
+disk: %52 full, 9.5 GB free
 rpm: axlinux-1.2.0-1.fc44.x86_64
 Header OpenPGP V4 RSA/SHA512 signature: OK
 ```
 
-**Testler:**
+**Tests:**
 ```
-deep_verify.sh : 732 geçti / 0 kaldı / 0 atlandı   (Fedora 44, imzalı RPM, temiz kurulummda)
-axdaemon       : 10 paket, 0 hata
-axlog          :  3 paket, 0 hata
+deep_verify.sh : 732 passed / 0 failed / 0 skipped   (Fedora 44, signed RPM, clean installation)
+axdaemon       : 10 packages, 0 errors
+axlog          :  3 packages, 0 errors
 python         : 179 passed + 20 subtests
 ```
 
-**Kaldırma (üç yol, §7):**
+**Removal (three paths, §7):**
 ```
 RPM  dnf install -> dnf remove : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4
-     (ardışık iki döngü, ikisi de temiz tabandan, ikisi de sıfır artık)
+     (two consecutive cycles, both from a clean baseline, both zero residue)
 SH   --unattended -> --uninstall: semodule=0 fcontext=0 tip=0 ikili=0/4
-     axdaemon=inactive axlog=inactive unit=0 journald=0  /etc/axlinux=KALICI
+     axdaemon=inactive axlog=inactive unit=0 journald=0  /etc/axlinux=PERSISTENT
 DEB  dpkg -i      -> dpkg -r     : dpkg=rc ikili=0/4 journald=1 policies=1
-     (conffiles korundu — RPM ile aynı davranış)
+     (conffiles preserved — the same behaviour as RPM)
 ```
 
-**Kilitlenme koruması da doğrulandı:**
+**The lockout protection was verified too:**
 ```
-ok  bash hâlâ çalışıyor (kilitlenme yok)
-ok  sh hâlâ çalışıyor
-ok  acil cikis yolu calisiyor
-ok  enforcement'e donus: bpf 5/5
-ok  toparlanma sonrasi saglikli
+ok  bash still works (no lockout)
+ok  sh still works
+ok  emergency exit path works
+ok  return to enforcement: bpf 5/5
+ok  healthy after recovery
 ```
 
-**Depo:** 61 commit, çalışma ağacı temiz.
+**Repository:** 61 commits, working tree clean.
 
 ---
 
-## 6. Teslim edilen artefaktlar
+## 6. Delivered artefacts
 
-| Artefakt | Konum | Boyut |
+| Artefact | Location | Size |
 |----------|-------|-------|
-| İmzalı RPM | `/mnt/anka/axlinux-rpms-1.2.0/axlinux-1.2.0-1.fc44.x86_64.rpm` | 2.2 MB |
-| Debian paketi | `/mnt/anka/axlinux-rpms-1.2.0/axlinux_1.2.0_amd64.deb` | 5.7 MB |
-| Proje yedeği | `/mnt/anka/axlinux-backup-1.2.0/` | 18 MB / 149 dosya |
+| Signed RPM | `/mnt/anka/axlinux-rpms-1.2.0/axlinux-1.2.0-1.fc44.x86_64.rpm` | 2.2 MB |
+| Debian package | `/mnt/anka/axlinux-rpms-1.2.0/axlinux_1.2.0_amd64.deb` | 5.7 MB |
+| Project backup | `/mnt/anka/axlinux-backup-1.2.0/` | 18 MB / 149 files |
 | GPG public key | `dist/axlinux-signing-key.asc` (`make rpm-export-key`) | — |
 
-**Kurulum (Fedora):**
+**Installation (Fedora):**
 ```bash
 sudo dnf install ./axlinux-1.2.0-1.fc44.x86_64.rpm
-# veya
+# or
 sudo ./install.sh --unattended
 ```
 
-**Kaldırma:**
+**Removal:**
 ```bash
-sudo dnf remove axlinux          # RPM ile kurulduysa
-sudo ./install.sh --uninstall    # install.sh ile kurulduysa
-sudo dpkg -r axlinux             # .deb ile kurulduysa (konfigurasyon korunur)
-sudo dpkg -P axlinux             # .deb + konfigurasyon da silinsin
+sudo dnf remove axlinux          # if installed with RPM
+sudo ./install.sh --uninstall    # if installed with install.sh
+sudo dpkg -r axlinux             # if installed with .deb (config preserved)
+sudo dpkg -P axlinux             # .deb + delete the configuration as well
 ```
 
-**Kurulum (Debian/Ubuntu):**
+**Installation (Debian/Ubuntu):**
 ```bash
 sudo dpkg -i ./axlinux_1.2.0_amd64.deb
 ```
 
-**İlk kullanım:**
+**First use:**
 ```bash
 sudo axctl init
 sudo axctl policy edit
@@ -320,111 +346,123 @@ sudo axctl status
 
 ---
 
-## 7. Kaldırma yolları — üçü de uçtan uca doğrulandı
+## 7. Removal paths — all three verified end to end
 
-Daha önce bu bölümde "RPM kaldırma doğrulanmadı" notu vardı. Doğrulandı —
-ve kaldırma yolunda **gerçek hatalar** bulundu. Üçü de düzeltildi.
+This section previously carried a "RPM removal not verified" note. It is
+verified — and **real bugs** were found on the removal path. All three were
+fixed.
 
-### 7.1 Bulunan ve düzeltilen hatalar
+### 7.1 The bugs that were found and fixed
 
-| # | Hata | Neden önemliydi | Düzeltme |
+| # | Bug | Why it mattered | Fix |
 |---|------|------------------|----------|
-| 1 | `awk '$1 ~ /axlinux/'` | **Eşleştirme yola bakıyordu.** `/usr/bin/axdaemon` yolunda "axlinux" **yoktur** — tip alanında vardır. 8 kayıttan 5'i yakalanıyor, 3'lü `/usr/bin/*` hiç listelenmiyordu | `awk '/axlinux/ { print $1 }'` (tüm satır) |
-| 2 | `parse_args()` **hiç çağrılmıyordu** | `--unattended`, `--url`, `--no-lsm`, `--uninstall` **sessizce yok sayılıyordu**. Kurulum yine çalışıyordu (root + boş stdin) ama istenen mod uygulanmıyordu; `--uninstall` **kurulumu** çalıştırıyordu | `banner`'dan önce `parse_args "$@"` |
-| 3 | `install.sh`'te **kaldırma yolu hiç yoktu** | Betik kuruyordu, kaldırmıyordu. SELinux modülü ve fcontext kayıtları sistemde kalıyordu | `install.sh --uninstall` eklendi |
+| 1 | `awk '$1 ~ /axlinux/'` | **The match looked at the path.** There is **no** "axlinux" in the path `/usr/bin/axdaemon` — it is in the type field. 5 of 8 records were caught, the 3 `/usr/bin/*` ones were never listed | `awk '/axlinux/ { print $1 }'` (the whole line) |
+| 2 | `parse_args()` was **never called** | `--unattended`, `--url`, `--no-lsm`, `--uninstall` were **silently ignored**. The installation still ran (root + empty stdin) but the requested mode was not applied; `--uninstall` **ran the installation** | `parse_args "$@"` before `banner` |
+| 3 | `install.sh` had **no removal path at all** | The script installed but did not remove. The SELinux module and the fcontext records were left on the system | `install.sh --uninstall` added |
 
-Hata 1'in ölçümü — işaretli alan yol, işaretsiz alan tip:
+Measurement of bug 1 — the marked field is the path, the unmarked field is
+the type:
 
 ```
 /usr/bin/axdaemon  all files  system_u:object_r:axlinux_daemon_exec_t:s0
                  ^^^^^^^^                              ^^^^^^
-                 eşleşmez                             eşleşir
+                 no match                             matches
 ```
 
-Hata 2'nin ölçümü: `parse_args` tanımı satır 97'de, **çağrısı hiçbir yerde yoktu**.
+Measurement of bug 2: the `parse_args` definition is on line 97, **there is
+no call to it anywhere**.
 
-### 7.2 RPM yolu — `dnf install` → `dnf remove`
+### 7.2 The RPM path — `dnf install` → `dnf remove`
 
-**Ardışık iki döngü, ikisi de temiz tabandan:**
-
-```
-===== DÖNGÜ 1 =====
-  TABAN    : semodule=0 fcontext=0 yerel=0 tip=0
-  KURULUM  : semodule=1 fcontext=8 yerel=8 tip=10
-  KALDIRMA : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4  ← SIFIR SIZINTI
-===== DÖNGÜ 2 =====   (aynı sonuç)
-  TABAN    : semodule=0 fcontext=0 yerel=0 tip=0
-  KURULUM  : semodule=1 fcontext=8 yerel=8 tip=10
-  KALDIRMA : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4  ← SIFIR SIZINTI
-```
-
-Sıfır olan her şey: modül, fcontext kayıtları, yerel kayıtlar, 10 tip,
-modül dizini, `.pp`, ikililer, unit dosyaları, journald drop-in'i.
-
-### 7.3 `install.sh` yolu — `--unattended` → `--uninstall`
+**Two consecutive cycles, both from a clean baseline:**
 
 ```
-kurulum  : semodule=1 fcontext=8 ikili=4/4 journald=1
-kaldırma : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4
+===== CYCLE 1 =====
+  BASELINE   : semodule=0 fcontext=0 yerel=0 tip=0
+  INSTALL    : semodule=1 fcontext=8 yerel=8 tip=10
+  REMOVE     : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4  ← ZERO RESIDUE
+===== CYCLE 2 =====   (same result)
+  BASELINE   : semodule=0 fcontext=0 yerel=0 tip=0
+  INSTALL    : semodule=1 fcontext=8 yerel=8 tip=10
+  REMOVE     : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4  ← ZERO RESIDUE
+```
+
+Everything that is zero: the module, the fcontext records, the local
+records, the 10 types, the module directory, the `.pp`, the binaries, the
+unit files, the journald drop-in.
+
+### 7.3 The `install.sh` path — `--unattended` → `--uninstall`
+
+```
+install : semodule=1 fcontext=8 ikili=4/4 journald=1
+remove  : semodule=0 fcontext=0 tip=0 moddosya=0 ikili=0/4
             axdaemon=inactive  axlog=inactive
             unit=0  journald=0
-            /etc/axlinux = KALICI   ← doğru (kullanıcı verisi)
+            /etc/axlinux = PERSISTENT   ← correct (user data)
 ```
 
-### 7.4 `.deb` yolu — Debian 12.15, `dpkg -i` → `dpkg -r`
+### 7.4 The `.deb` path — Debian 12.15, `dpkg -i` → `dpkg -r`
 
 ```
-KURULUM  : dpkg=ii  ikili=4/4 journald=1 policies=1
-KALDIRMA : dpkg=rc  ikili=0/4 journald=1 policies=1   ← conffiles KORUNDU
+INSTALL  : dpkg=ii  ikili=4/4 journald=1 policies=1
+REMOVE   : dpkg=rc  ikili=0/4 journald=1 policies=1   ← conffiles PRESERVED
 ```
 
-RPM'de `%config(noreplace)` ile korunan dosyalar, `.deb`'te `conffiles`
-ile korunuyor. **İki paket yolu artık aynı davranıyor.**
+Files that are protected with `%config(noreplace)` in the RPM are protected
+with `conffiles` in the `.deb`. **The two package paths now behave the
+same way.**
 
-`dpkg -P` (purge) conffiles'ı da siler — bu istenen davranış ve ayrıca
-doğrulandı (`ikili=0/4 journald=0 policies=0`).
+`dpkg -P` (purge) also deletes conffiles — this is the desired behaviour
+and it was additionally verified (`ikili=0/4 journald=0 policies=0`).
 
 ---
 
-## 8. Bilinmesi gerekenler
+## 8. Things that should be known
 
-**Politika yüklemesi başarısız olursa sistem kilitlenmez.** Bu bilinçli bir güvenlik
-kararı: yanlışlıkla kilitlenmeyip korumasız kalmak, kullanıcıyı sisteme kilitlemekten
-iyidir. Ama bu durum artık **görünmez değil** — `axctl status` sebebiyle birlikte bildirir.
+**If policy loading fails, the system does not lock you out.** This is a
+deliberate security decision: staying unprotected by mistake is better than
+locking the user out of the system. But this state is **no longer
+invisible** — `axctl status` reports it together with the reason.
 
-**`ax_protected` kurtarma yolunu açık tutar.** `bash`, `sh`, `sudo`, `sshd`, `systemd`
-ve 25 süreç daha hiçbir kurala tabi değildir. Yanlış bir kural oturumu kapatamaz.
+**`ax_protected` keeps the recovery path open.** `bash`, `sh`, `sudo`,
+`sshd`, `systemd` and 25 more processes are not subject to any rule. A
+wrong rule cannot close your session.
 
-**Yorumlayıcılar korunmuyor.** `python3`, `node`, `perl`, `ruby` listede değildir. Bu
-kasıtlıdır: `python3 /etc/shadow okuyamaz` MAC'in en sık kullanılan kural türlerinden
-biridir ve bunu yazamamak ürünü kullanılamaz hale getirirdi.
+**Interpreters are not protected.** `python3`, `node`, `perl`, `ruby` are
+not on the list. This is intentional: `python3 /etc/shadow cannot read` is
+one of the most frequently used rule types in a MAC, and making it
+impossible to write would render the product unusable.
 
-**Performans ölçümü.** Dosya açma gecikmesi enforcement altında 11–18 µs aralığında;
-hedef 5 µs. Bu regresyon değil, kernel LSM zinciri maliyeti ve kullanıcının "gecikme
-hissettiğimi söylemeyin" kriteriyle uyumlu. Ayrıntı: `FEDORA-READINESS.md` §3.
+**Performance measurement.** The file open latency under enforcement is in
+the 11–18 µs range; the target is 5 µs. This is not a regression, it is the
+cost of the kernel LSM chain and it is consistent with the user's criterion
+of "don't tell me I feel latency". Details: `docs/FEDORA-READINESS.md` §3.
 
-**Audit kaybı artık görünür.** Öğrenme modunda yoğun yükte kernel per-CPU tamponu
-doldurup kayıt düşürebilir. Bu artık sessiz değil: `audit_lost_samples` sayacı
-`axctl status`'ta görünür. Sıfır olmayan değer, denetim izinde boşluk demektir ve
-bilinçli olarak olduğu gibi bildirilir.
+**Audit loss is now visible.** Under heavy load in learning mode the kernel
+per-CPU buffer can fill up and records can be dropped. This is no longer
+silent: the `audit_lost_samples` counter is visible in `axctl status`. A
+non-zero value means a gap in the audit trail and is deliberately reported
+as it is.
 
-**Kaldırma sırası önemlidir.** Hem RPM spec'inde hem `install.sh --uninstall`'ta
-sıra şöyledir: servisler → fcontext kayıtları → SELinux modülü. Ters sıra
-çalışmaz: modül tipleri önce tanımsızlaşır, kalan `/usr/bin/*` kaydı
-doğrulamayı başarısız kılar ve modül sistemde kalır.
+**The removal order matters.** Both in the RPM spec and in
+`install.sh --uninstall` the order is: services → fcontext records → SELinux
+module. The reverse order does not work: the module types become undefined
+first, the remaining `/usr/bin/*` record makes verification fail and the
+module is left on the system.
 
-**Kullanıcı verisi kaldırmada korunur** (bilinçli tasarım): `/etc/axlinux`,
-`/var/log/axlinux`, `~/.axlinux`. Tam silmek isteyen operator bunları elle
-kaldırmalı; `install.sh --uninstall` ve RPM `%preun` bunu açıkça yazar.
+**User data is preserved on removal** (deliberate design): `/etc/axlinux`,
+`/var/log/axlinux`, `~/.axlinux`. An operator who wants a full deletion has
+to remove these manually; `install.sh --uninstall` and the RPM `%preun` state
+this explicitly.
 
 ---
 
-## 9. İlgili belgeler
+## 9. Related documents
 
-| Belge | İçerik |
+| Document | Content |
 |-------|--------|
-| `FEDORA-READINESS.md` | Ayrıntılı kanıt raporu, tüm ölçüm tabloları |
-| `DAGITIM.md` | Kanal bazlı dağıtım rehberi |
-| `CHANGELOG.md` | Sürüm değişiklikleri |
-| `README.md` | Kurulum ve kullanım |
-| `docs/` | Politika dili, mimari, API referansı |
+| `docs/FEDORA-READINESS.md` | Detailed evidence report, all measurement tables |
+| `docs/DISTRIBUTION.md` | Distribution guide by channel |
+| `CHANGELOG.md` | Version changes |
+| `README.md` | Installation and use |
+| `docs/` | Policy language, architecture, API reference |

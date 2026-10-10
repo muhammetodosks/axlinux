@@ -1,20 +1,20 @@
-# AXlinux eBPF programları derleme talimatları
+# Build instructions for the AXlinux eBPF programs
 
-## Gereksinimler
+## Requirements
 
 - `clang` 12+
 - `libbpf-dev`
 - Linux kernel 5.15+ (`CONFIG_BPF_LSM=y`)
-- Kernel başlık dizinleri
+- Kernel header directories
 
-## Derleme
+## Building
 
 ```bash
 cd src/bpf
 make
 ```
 
-Bu işlem aşağıdaki çalıştırılabilir nesne dosyalarını üretir:
+This produces the following executable object files:
 
 - `file_open.bpf.o`
 - `inode_permission.bpf.o`
@@ -22,15 +22,16 @@ Bu işlem aşağıdaki çalıştırılabilir nesne dosyalarını üretir:
 - `socket_connect.bpf.o`
 - `socket_bind.bpf.o`
 
-## Temizlik
+## Cleaning
 
 ```bash
 make clean
 ```
 
-## Test
+## Testing
 
-eBPF programları sadece Linux üzerinde ve `CAP_BPF`/`CAP_SYS_ADMIN` yetkisi ile yüklenebilir.
+The eBPF programs can only be loaded on Linux and only with the
+`CAP_BPF`/`CAP_SYS_ADMIN` privileges.
 
 ```bash
 sudo bpftool prog load file_open.bpf.o /sys/fs/bpf/ax_file_open type lsm

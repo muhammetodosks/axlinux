@@ -1,41 +1,42 @@
-# Doğrulama Raporu — AXlinux 1.2.0
+# Verification Report — AXlinux 1.2.0
 
-**Tarih:** 2026-10-10
-**Kapsam:** README.md, SUPPORT.md, DAGITIM.md, DAGITIM-READY.md,
-FEDORA-READINESS.md, CHANGELOG.md ve `docs/` altındaki her sayısal ve
-"destekleniyor" iddiası.
-**Yöntem:** Her iddia gerçekten çalıştırılarak ölçüldü. Hiçbir sayı
-tahmin ya da önceki oturumdan kopyalanma değildir.
+**Date:** 2026-10-10
+**Scope:** README.md, SUPPORT.md, docs/DISTRIBUTION.md, docs/READINESS.md,
+FEDORA-READINESS.md, CHANGELOG.md, and every numeric and "supported" claim
+under `docs/`.
+**Method:** Every claim was measured by actually running it. No figure is an
+estimate or copied from a previous session.
 
-> **Kural:** Kanıt üretilemeyen iddia düzeltildi veya metinden çıkarıldı.
-> "Doğrulanmadı" diyen açık bir kalem bu raporun yazıldığı anda kalmıyor.
+> **Rule:** Any claim that could not produce evidence was corrected or removed
+> from the text.
+> No item described as "unverified" remains in this report at the time of writing.
 
 ---
 
-## 1. Test ortamı
+## 1. Test environment
 
-| Platform | Sürüm | Çekirdek | Yöntem |
+| Platform | Release | Kernel | Method |
 |---|---|---|---|
-| Fedora 44 Cloud | 44 | 6.19.10-300.fc44 | İmzalı RPM kurulumu |
-| Fedora 43 Cloud | 43 | 6.17.1-300.fc43 | İmzasız RPM kurulumu |
-| Ubuntu 24.04.5 LTS | 24.04 | 6.8.0-146-generic | `.deb` kurulumu |
-| Debian 12 (bookworm) | 12 | 6.1.0-53-cloud | `.deb` kurulumu |
-| Pardus 25.2 (yirmibes) | 25.2 | 6.12.107+deb13 | `.deb` kurulumu |
-| Arch Linux | güncel | konteyner | `install.sh` çalıştırma |
-| Alpine | 3.24 | konteyner | `install.sh` çalıştırma |
-| openSUSE Leap | 15.6 | konteyner | `install.sh` çalıştırma |
+| Fedora 44 Cloud | 44 | 6.19.10-300.fc44 | Signed RPM installation |
+| Fedora 43 Cloud | 43 | 6.17.1-300.fc43 | Unsigned RPM installation |
+| Ubuntu 24.04.5 LTS | 24.04 | 6.8.0-146-generic | `.deb` installation |
+| Debian 12 (bookworm) | 12 | 6.1.0-53-cloud | `.deb` installation |
+| Pardus 25.2 (yirmibes) | 25.2 | 6.12.107+deb13 | `.deb` installation |
+| Arch Linux | current | container | running `install.sh` |
+| Alpine | 3.24 | container | running `install.sh` |
+| openSUSE Leap | 15.6 | container | running `install.sh` |
 
-Sistem başına iki çekirdek koşulu ölçüldü:
-- `/sys/kernel/security/lsm` içinde `bpf` zincirde
+Two kernel conditions were measured on every system:
+- `bpf` is present in `/sys/kernel/security/lsm`
 - `CONFIG_BPF_LSM=y`
 
 ---
 
-## 2. Sonuç özeti
+## 2. Result summary
 
-### 2.1 `deep_verify.sh` — son kodla
+### 2.1 `deep_verify.sh` — with the current code
 
-| Platform | geçti | kaldı | atlandı |
+| Platform | passed | failed | skipped |
 |---|---|---|---|
 | **Fedora 44** | **732** | **0** | **0** |
 | **Fedora 43** | 732 | 1 | 1 |
@@ -43,141 +44,141 @@ Sistem başına iki çekirdek koşulu ölçüldü:
 | Debian 12 | 731 | 0 | 1 |
 | Pardus 25.2 | 731 | 0 | 1 |
 
-**Atlanan tek kalemin gerekçesi:** `SELinux yok (Debian/Ubuntu/Pardus)`.
-Debian ailesi SELinux sağlamaz — bu eksik değil, platform farkıdır.
-Fedora 44'te aynı kalem çalışır ve 0 atlanan kalemle geçer.
+**Justification for the only skipped item:** `SELinux yok (Debian/Ubuntu/Pardus)`.
+The Debian family does not ship SELinux — this is not a gap, it is a platform difference.
+On Fedora 44 the same item runs and the suite passes with 0 skipped items.
 
-**Fedora 43'teki tek hata dürüst bir rapordur:**
-`axdaemon unconfined alanda; SELinux korumasi YOK`. Bu imajda SELinux
-kuşaklaması eBPF yüklemesini engellediği için kurulum betiği etiketleri
-geri alır ve enforcement LSM üzerinden çalışmaya devam eder
-(ölçülen: kanca 5/5, eBPF 5/5). Ayrıntı §5.2.
+**The single failure on Fedora 43 is an honest report:**
+`axdaemon unconfined alanda; SELinux korumasi YOK`. In that image the SELinux
+labelling prevented eBPF loading, so the installation script reverts the labels
+and continues to run enforcement through the LSM
+(measured: hooks 5/5, eBPF 5/5). Details in §5.2.
 
-### 2.2 Yerel doğrulama paketi
+### 2.2 Local verification suite
 
-| Paket | Sonuç |
+| Suite | Result |
 |---|---|
-| Python (pytest) | 179 geçti + 20 alt test |
-| Go — axdaemon | 10 paket |
-| Go — axlog | 3 paket |
-| `install.sh` sözdizimi | temiz |
-| `deep_verify.sh` sözdizimi | temiz |
-| `selinux-setup.sh` sözdizimi | temiz |
-| `.github/workflows/ci.yml` | geçerli YAML |
+| Python (pytest) | 179 passed + 20 subtests |
+| Go — axdaemon | 10 packages |
+| Go — axlog | 3 packages |
+| `install.sh` syntax | clean |
+| `deep_verify.sh` syntax | clean |
+| `selinux-setup.sh` syntax | clean |
+| `.github/workflows/ci.yml` | valid YAML |
 
 ---
 
-## 3. Doğrulanan kalemler (madde madde)
+## 3. Verified items (item by item)
 
-### 3.1 Paket yöneticileri — çalıştırılarak
+### 3.1 Package managers — by execution
 
-`SUPPORT.md` bu üçünü "tanınıyor, **doğrulanmadı**" diye listeliyordu.
-Gerçek konteynerlerde `install.sh` çalıştırıldı.
+`SUPPORT.md` listed these three as "detected, **unverified**".
+`install.sh` was run in real containers.
 
-| Yönetici | Ortam | Ölçülen sonuç |
+| Manager | Environment | Measured result |
 |---|---|---|
-| `pacman` | Arch Linux | paket yöneticisi tanındı · paketler kuruldu · Go 1.23.4 · click/rich/yaml |
-| `apk` | Alpine 3.24 | paket yöneticisi tanındı · paketler kuruldu · Go 1.23.4 · click/rich/yaml |
-| `zypper` | openSUSE Leap 15.6 | paket yöneticisi tanındı · paketler kuruldu · Go 1.23.4 · pip yedeğiyle click/rich/yaml |
+| `pacman` | Arch Linux | package manager detected · packages installed · Go 1.23.4 · click/rich/yaml |
+| `apk` | Alpine 3.24 | package manager detected · packages installed · Go 1.23.4 · click/rich/yaml |
+| `zypper` | openSUSE Leap 15.6 | package manager detected · packages installed · Go 1.23.4 · click/rich/yaml via pip fallback |
 
-**Bulunan ve düzeltilen 3 gerçek hata:**
+**3 real bugs found and fixed:**
 
-1. `pkg_available()` her yöneticide farklı anlam taşıyordu.
-   `apk info -e` ve `zypper search -i` **"kurulu mu"** sorar — "depoda
-   var mı" değil. Sonuç: Alpine ve openSUSE'de *mevcut* olan `clang`,
-   `make`, `git` paketleri "paket yok" sanılıp atlanıyordu.
-   Doğrusu: `apk add --no-cache --simulate` ve
+1. `pkg_available()` meant something different on every manager.
+   `apk info -e` and `zypper search -i` ask **"is it installed"** — not "is it in
+   the repository". Result: `clang`, `make` and `git`, which *are present* on
+   Alpine and openSUSE, were assumed to be "package not found" and skipped.
+   Correct commands: `apk add --no-cache --simulate` and
    `zypper --non-interactive install --dry-run`.
-2. Bağımlılık listesinde `zypper` dalı **hiç yoktu**; openSUSE `*)`
-   yedeğine düşüp Fedora paket adlarını deniyordu
-   (`linux-headers` yerine `linux-devel-default`). Python
-   bağımlılıklarında da ne `zypper` ne yedek dalı vardı.
-3. `tar` hiçbir yerde bağımlılık olarak bildirilmemişti, ama
-   `install.sh` Go'yu açarken kullanıyordu.
+2. The `zypper` branch was **entirely absent** from the dependency list; openSUSE
+   fell through to the `*)` fallback and tried Fedora package names
+   (`linux-devel-default` instead of `linux-headers`). Neither `zypper` nor the
+   fallback branch existed for the Python dependencies.
+3. `tar` was declared as a dependency nowhere, yet `install.sh` used it to
+   unpack Go.
 
-### 3.2 CI paketleme matrisi — koşularak
+### 3.2 CI packaging matrix — by execution
 
-| İmaj | Sonuç | 8/8 içerik | conffiles | SELinux modülü |
+| Image | Result | 8/8 content | conffiles | SELinux module |
 |---|---|---|---|---|
-| `fedora:41` | geçti | ✓ | 5 | ✓ |
-| `fedora:42` | geçti | ✓ | 5 | ✓ |
-| `fedora:43` | geçti | ✓ | 5 | ✓ |
-| `fedora:44` | geçti | ✓ | 5 | ✓ |
-| `debian:12` | geçti | ✓ | 5 | ✓ |
+| `fedora:41` | passed | ✓ | 5 | ✓ |
+| `fedora:42` | passed | ✓ | 5 | ✓ |
+| `fedora:43` | passed | ✓ | 5 | ✓ |
+| `fedora:44` | passed | ✓ | 5 | ✓ |
+| `debian:12` | passed | ✓ | 5 | ✓ |
 
-8 içerik kalemi: `axbpf.o`, `axdaemon`, `axlog`, `axctl`, journald
-drop-in, SELinux modülü (`axlinux.pp`), systemd servisi, `kernel-core`.
+8 content items: `axbpf.o`, `axdaemon`, `axlog`, `axctl`, journald
+drop-in, SELinux module (`axlinux.pp`), systemd service, `kernel-core`.
 
-**Bulunan ve düzeltilen 2 kırık nokta:**
+**2 breaking points found and fixed:**
 
-1. **Debian işi her zaman düşüyordu.** `apt`'in `golang` paketi Go 1.19
-   veriyor; proje Go 1.21 istiyor (`go.mod`, `log/slog`). Artık
-   `bookworm-backports`'tan `golang-1.23-go` kuruluyor ve ayrı bir
-   adımda sürüm denetleniyor.
-2. **RPM matrisinin tamamı düşüyordu.** `go build` VCS damgası istiyor,
-   git'e erişilemeyen konteynerde `error obtaining VCS status` veriyor.
-   `Makefile` artık `-buildvcs=false` ile derliyor; derleme `.git`'e
-   bağımlı değil.
+1. **The Debian job was failing every time.** Apt's `golang` package provides
+   Go 1.19; the project requires Go 1.21 (`go.mod`, `log/slog`). `golang-1.23-go`
+   is now installed from `bookworm-backports` and the version is checked in a
+   separate step.
+2. **The entire RPM matrix was failing.** `go build` requests a VCS stamp and
+   reports `error obtaining VCS status` in a container that cannot reach git.
+   The `Makefile` now builds with `-buildvcs=false`; the build no longer depends
+   on `.git`.
 
-### 3.3 Kurulum artefaktları
+### 3.3 Installation artefacts
 
-| Artefakt | Ölçülen |
+| Artefact | Measured |
 |---|---|
-| RPM imzası | `Header OpenPGP V4 RSA/SHA512, key fingerprint: f108e5cc55806bbb4fc42afa6a2e2989448a5310: OK` |
+| RPM signature | `Header OpenPGP V4 RSA/SHA512, key fingerprint: f108e5cc55806bbb4fc42afa6a2e2989448a5310: OK` |
 | Header/Payload digest | SHA256 OK |
 | conffiles | 5 |
-| SELinux modülü | `axlinux.pp` — Fedora 43'te bozuk modül ölçüldü, düzeltildi (§5.4) |
-| `.deb` sürüm alanı | `Version: 1.2.0` |
-| Kaldırma | iki ardışık temiz döngüde `semodule=0`, `fcontext=0`, `yerel fcontext=0`, `modül dosyası=0`, `ikili=0/4` |
+| SELinux module | `axlinux.pp` — a broken module was measured on Fedora 43 and fixed (§5.4) |
+| `.deb` version field | `Version: 1.2.0` |
+| Removal | across two consecutive clean cycles `semodule=0`, `fcontext=0`, `local fcontext=0`, `module file=0`, `binaries=0/4` |
 
-### 3.4 SELinux konfasyonu
+### 3.4 SELinux labelling
 
-| Ortam | Bağlam | eBPF | Sonuç |
+| Environment | Context | eBPF | Result |
 |---|---|---|---|
 | Fedora 44 | `axlinux_daemon_exec_t` | 5/5 | `alan dogrulandi: ...axlinux_daemon_t:s0 (eBPF: 5)` |
-| Fedora 43 | `bin_t` (geri alındı) | 5/5 | uyarı verildi, enforcement çalışıyor |
+| Fedora 43 | `bin_t` (reverted) | 5/5 | warning issued, enforcement running |
 
-### 3.5 Performans — üçer kez tekrar ölçüldü
+### 3.5 Performance — measured three times in a row
 
-`FEDORA-READINESS.md` daha önce şunu diyordu:
-*"kanca takma maliyeti +5.8 µs (%51), politika sorgusu +0.6 µs (%3.5)"*
-ve çıkarımı **ters**ydi.
+`FEDORA-READINESS.md` previously stated:
+*"hook attachment cost +5.8 µs (51%), policy lookup +0.6 µs (3.5%)"*
+and the conclusion was **backwards**.
 
-| Durum | 3 koşu (µs/açma) | Medyan |
+| Condition | 3 runs (µs/open) | Median |
 |---|---|---|
-| LSM kancası yok | 14.3 · 13.2 · 12.1 | 13.2 |
-| Kanca bağlı, `disabled` | 12.7 · 16.3 · 17.8 | 16.3 |
-| Kanca bağlı, `enforcing` | 22.1 · 26.2 · 21.9 | **22.1** |
+| No LSM hook | 14.3 · 13.2 · 12.1 | 13.2 |
+| Hook attached, `disabled` | 12.7 · 16.3 · 17.8 | 16.3 |
+| Hook attached, `enforcing` | 22.1 · 26.2 · 21.9 | **22.1** |
 
-- **Politika sorgusu maliyeti gerçek:** +5.8 µs, aralıklar çakışmıyor
-  ([2] en yüksek 17.8 < [3] en düşük 21.9).
-- **Kanca takma maliyeti ölçülemedi:** aralıklar çakışıyor
-  ([1] 12.1–14.3, [2] 12.7–17.8) — koşu-koşu gürültüsü.
+- **Policy lookup cost is real:** +5.8 µs, the ranges do not overlap
+  ([2] highest 17.8 < [3] lowest 21.9).
+- **Hook attachment cost was not measured:** the ranges overlap
+  ([1] 12.1–14.3, [2] 12.7–17.8) — run-to-run noise.
 
-Throughput (50.000 açma): `disabled` 0.228 s · `enforcing` 0.559 s
-(eski değer 0.44 s idi; enforcement maliyeti **fazla iyimser** gösteriliyordu).
+Throughput (50,000 opens): `disabled` 0.228 s · `enforcing` 0.559 s
+(the old value was 0.44 s; the enforcement cost was shown **too optimistically**).
 
 ---
 
-## 4. Doğrulama sırasında kapatılan `deep_verify` boşlukları
+## 4. `deep_verify` gaps closed during verification
 
-| Önce | Sonra |
+| Before | After |
 |---|---|
-| `nc` kurulu değil → 2 socket testi atlanıyordu | `netcat-openbsd` kuruldu, ikisi de çalışıyor |
-| "erişilemeyen sokette hata vermedi (**root testi**)" — kontrol ROOT olarak çalışıyordu; root `chmod 000` sokete de eriştiği için test **kendini kandırıyordu** | kontrol yetkisiz kullanıcı ile çalışıyor (`rc=4`, "Socket izni yok") |
-| LSM kancası kapısında sabit 5 deneme — yavas VM'de "LSM kancalari: ?/?" | sağlığa göre bekleme (`ax_wait_healthy`) |
-| `axctl reload` "socket bulunamadı" ile başarısız, hata **yutuluyordu** | reload rc'si ve çıktısı kayda geçiyor |
-| politika "yüklenmiş" sanılıyordu, oysa `rules_loaded=0` | deny'nin **fiilen etkili olması** bekleniyor |
+| `nc` not installed → 2 socket tests were skipped | `netcat-openbsd` installed, both run |
+| "did not error on an unreachable socket (**root test**)" — the check ran as ROOT; because root can also access a `chmod 000` socket, the test **was fooling itself** | the check runs as an unprivileged user (`rc=4`, `Socket izni yok`) |
+| fixed 5 attempts at the LSM hook gate — on a slow VM this produced "LSM kancalari: ?/?" | wait based on health (`ax_wait_healthy`) |
+| `axctl reload` failed with "socket bulunamadı" and the error was **swallowed** | the reload rc and its output are recorded |
+| policy was assumed "loaded" although `rules_loaded=0` | the deny is required to **actually take effect** |
 
 ---
 
-## 5. Bulunan kritik ürün hataları
+## 5. Critical product bugs found
 
-### 5.1 İki ayrı politika ayrıştırıcısı — kalıcı konum tamamen kırıktı
+### 5.1 Two separate policy parsers — the persistent path was completely broken
 
-`axctl policy check` tekil `subject: curl` yazan politikayı **geçerli**
-diyordu. Kullanıcı yolunda (`axctl reload`) de öyleydi. Ama
-`/etc/axlinux/policies.d` — **kalıcı konum** — aynı dosyayı reddediyordu:
+`axctl policy check` called a policy written as a scalar `subject: curl`
+**valid**. The user path (`axctl reload`) did the same. But
+`/etc/axlinux/policies.d` — the **persistent path** — rejected the same file:
 
 ```
 sistem politikasi yuklenemedi; sistem KISITLAMASIZ kaliyor
@@ -185,53 +186,52 @@ error="50-....yaml: policy JSON parse hatasi: json: cannot unmarshal
        string into Go struct field Rule.rules.subject of type []string"
 ```
 
-Sonuç: kullanıcı reboot sonrası "kurallarım yüklü" sanıyordu;
-**hiçbir kural yazılmıyordu.** Sistem kısıtlamasızdı.
+Result: after a reboot the user believed "my rules are loaded";
+**not a single rule was written.** The system was unrestricted.
 
-Düzeltme: `SubjectList` + özel `UnmarshalJSON`. Regresyon koruması:
-- `internal/policy/subjectlist_test.go` — scalar/list/bozuk girdi
-- `internal/policy/systemload_subject_test.go` — **sistem yolu**
-- `deep_verify`: "sistem politikasi yuklendi (policies.d)" kapısı
+Fix: `SubjectList` + a custom `UnmarshalJSON`. Regression protection:
+- `internal/policy/subjectlist_test.go` — scalar/list/malformed input
+- `internal/policy/systemload_subject_test.go` — the **system path**
+- `deep_verify`: the "sistem politikasi yuklendi (policies.d)" gate
 
-Reboot kalıcılığı elle doğrulandı: politika `policies.d`'den yüklendi,
-deny derinlikte çalıştı (`Operation not permitted`, 2 DENIED kaydı),
-kural dışı ve benzer adlı komşu serbest kaldı (yanlış pozitif yok).
+Reboot persistence was verified by hand: the policy was loaded from `policies.d`,
+the deny operated at depth (`Operation not permitted`, 2 DENIED records), and a
+non-rule path plus a similarly named neighbour stayed allowed (no false positive).
 
-### 5.2 SELinux kuşaklaması sessizce hiç kurulmuyordu
+### 5.2 SELinux labelling was silently never applied
 
-Dosya bağlamları `semanage fcontext` ile yazılıyor; bu araç
-`policycoreutils-python-utils` ile gelir ve spec bunu **Requires olarak
-bildirmiyordu**.
+File contexts are written with `semanage fcontext`; that tool ships with
+`policycoreutils-python-utils` and the spec did **not declare it as Requires**.
 
-Fedora 43 imajında ölçülen sonuç:
-- `semanage: command not found` → etiketler yazılmıyor
+Measured result on the Fedora 43 image:
+- `semanage: command not found` → labels are not written
 - `/usr/bin/axdaemon` → `bin_t`
-- daemon **unconfined** çalışıyor
+- the daemon runs **unconfined**
 - `deep_verify`: `FAIL axdaemon unconfined alanda; SELinux korumasi YOK`
 
-Fedora 44'te çalışıyordu **tesadüfen** — o imajda paket zaten vardı.
+On Fedora 44 it worked **by accident** — the package was already present in that image.
 
-Düzeltme (iki aşamalı):
+Fix (two stages):
 
-1. `Requires: policycoreutils-python-utils` eklendi.
-2. Kurulum betiğine **fonksiyonel doğrulama**: etiketler uygulandıktan
-   sonra eBPF gerçekten yükleniyor mu bakılır. Yüklenmiyorsa etiketler
-   geri alınır, servis yeniden başlatılır ve operator'a bildirilir.
+1. `Requires: policycoreutils-python-utils` added.
+2. **Functional verification** added to the installation script: after the labels
+   are applied, it checks whether eBPF really loads. If it does not, the labels
+   are reverted, the service is restarted and the operator is notified.
 
-Bu ikinci aşama gerekti çünkü Fedora 43'te etiketli `axdaemon`
-`axlinux_daemon_t` alanına girince SELinux **BPF harita işlemini
-reddediyor**:
+This second stage was necessary because on Fedora 43, when the labelled
+`axdaemon` enters the `axlinux_daemon_t` domain, SELinux **denies the BPF map
+operation**:
 
 ```
-avc: denied { map_read map_write } for comm="axdaemon"
+avc:  denied { map_read map_write } for comm="axdaemon"
      scontext=system_u:system_r:axlinux_daemon_t:s0
 
 etiketli  -> kanca 0/0, bpf 0, "ebpf yuklenemedi"
-etiketsiz -> kanca 5/5, bpf 5, enforcement çalışır
+unlabelled -> hooks 5/5, bpf 5, enforcement works
 ```
 
-Yani kuşaklama, kuşaklamsız sistemden **daha kötü** bir sistem
-bırakıyordu. Ölçülen nihai sonuç:
+In other words, labelling left behind a system that was **worse** than an
+unlabelled one. Measured final result:
 
 ```
 UYARI: konfinasyon eBPF yuklemeyi engelliyor
@@ -239,72 +239,71 @@ etiketler geri alindi; enforcement LSM ile aktif
 yeniden baslatildi; eBPF: 5 program
 ```
 
-### 5.3 Test kapıları ortamda yanlış sonuç veriyordu
+### 5.3 Test gates were producing wrong results in the environment
 
-`deep_verify` birçok yerde sabit kısa bekliyordu ("sleep 1", "sleep 5").
-Yavaş sanal makinelerde politika/kanca hazır olmadan ölçüm yapılıyordu
-ve kapılar ürün hatası sanılan kırmızılar veriyordu — ürün sağlıklıyken.
-Tümü sağlığa göre beklemeye çevrildi.
+`deep_verify` used fixed short waits in many places ("sleep 1", "sleep 5").
+On slow virtual machines it measured before the policy/hook was ready, and the
+gates reported red while the product was healthy.
+All of them were converted to health-based waits.
 
-### 5.4 Bayat SELinux modülü paketleniyordu
+### 5.4 A stale SELinux module was being packaged
 
-`make rpm` yalnızca `all` çağırıyordu ve `2>/dev/null` derleme
-hatalarını **gizliyordu**. Ağaçta daha önce derlenmiş bir `.pp`
-varsa `make` onu "güncel" sayıp derlemeyi atlıyor; RPM'e o bayat
-modül paketleniyordu.
+`make rpm` only called `all`, and `2>/dev/null` **hid** build errors. If a
+previously built `.pp` exists in the tree, `make` treats it as "up to date" and
+skips the build; that stale module was packaged into the RPM.
 
-Fedora 43'te ölçülen bozuk modül: **91.660 bayt, 0 tip, 0 fcontext
-kuralı** — modül "kuruldu" görünüyor ama hiçbir şeyi etiketlemiyordu.
+The broken module measured on Fedora 43: **91,660 bytes, 0 types, 0 fcontext
+rules** — the module appeared to be "installed" but labelled nothing.
 
-Düzeltme: modül her zaman `clean` + `all` ile sıfırdan derlenir; boş
-modül (0 tip) üretilirse derleme **hata verir**. Doğru modül 91.880 bayt.
-`.pp` ve `.rpmbuild/` artık `.gitignore`'da.
+Fix: the module is now always rebuilt from scratch with `clean` + `all`; if an
+empty module (0 types) is produced, the build **fails**. The correct module is
+91,880 bytes. `.pp` and `.rpmbuild/` are now in `.gitignore`.
 
 ---
 
-## 6. İddia düzeltmeleri
+## 6. Claim corrections
 
-| Belge | Eski | Yeni |
+| Document | Old | New |
 |---|---|---|
-| `README.md` | 732/0/1 | platform bazlı (Fedora 44 → 732/0/0; Debian ailesi → 731/0/1) |
-| `SUPPORT.md` | pacman/apk/zypper "doğrulanmadı" | üçü de çalıştırıldı, kanıt tablosu |
-| `SUPPORT.md` | Fedora 41–44 "kesin doğrulanmış" | derleme 4'ünde; çalışma zamanı 43 ve 44'te |
-| `DAGITIM.md` | Ubuntu/Pardus/Debian 732/0/1 | 731/0/1; Fedora 43 ve 44 eklendi |
-| `DAGITIM.md` | "10 bölüm, 100 denetim" | 8 adlandırılmış bölüm (K–R), 732 kontrol |
-| `FEDORA-READINESS.md` | kanca +5.8 µs, politika +0.6 µs | politika +5.8 µs (gerçek), kanca ölçülemedi |
+| `README.md` | 732/0/1 | per-platform (Fedora 44 → 732/0/0; Debian family → 731/0/1) |
+| `SUPPORT.md` | pacman/apk/zypper "unverified" | all three executed, evidence table |
+| `SUPPORT.md` | Fedora 41–44 "definitely verified" | build in all four; runtime on 43 and 44 |
+| `docs/DISTRIBUTION.md` | Ubuntu/Pardus/Debian 732/0/1 | 731/0/1; Fedora 43 and 44 added |
+| `docs/DISTRIBUTION.md` | "10 sections, 100 checks" | 8 named sections (K–R), 732 checks |
+| `FEDORA-READINESS.md` | hook +5.8 µs, policy +0.6 µs | policy +5.8 µs (real), hook not measured |
 | `FEDORA-READINESS.md` | throughput 0.44 s | 0.559 s |
-| `docs/roadmap.md` | "10 bölüm / 100 denetim" | 8 bölüm, ölçülmüş 732 kontrol |
+| `docs/roadmap.md` | "10 sections / 100 checks" | 8 sections, 732 measured checks |
 
 ---
 
-## 7. Kalıcı koruma
+## 7. Permanent protection
 
-Bu oturumda bulunan hataların geri dönmesini engelleyen kalıcı kapılar:
+Permanent gates that prevent the bugs found in this session from returning:
 
-| Kapı | Koruduğu hata |
+| Gate | Bug it prevents |
 |---|---|
-| `internal/policy/subjectlist_test.go` | scalar/list `subject` ayrışımı |
-| `internal/policy/systemload_subject_test.go` | `policies.d` yolunun ayrışması |
-| `tests/deep_verify.sh` → sistem politikası kapısı | kalıcı konumun bozuk kalması |
-| `tests/deep_verify.sh` → soket yetki kapısı | yetkilendirme yolunun test edilmemesi |
-| `tests/deep_verify.sh` → `ax_wait_healthy` | hazır olmadan ölçüm |
-| `tests/test_doc_numbers.py` | bayat doğrulama sayılarının belgeye dönmesi |
-| CI Go sürüm denetimi | Go 1.21 altına düşmesi |
-| `Makefile` boş modül kontrolü | SELinux modülünün bozuk paketlenmesi |
-| `selinux-setup.sh` eBPF doğrulaması | kuşaklamanın eBPF'i kırması |
+| `internal/policy/subjectlist_test.go` | scalar/list `subject` parsing |
+| `internal/policy/systemload_subject_test.go` | divergence in the `policies.d` path |
+| `tests/deep_verify.sh` → system policy gate | the persistent path staying broken |
+| `tests/deep_verify.sh` → socket authorization gate | the authorization path not being tested |
+| `tests/deep_verify.sh` → `ax_wait_healthy` | measuring before ready |
+| `tests/test_doc_numbers.py` | stale verification counts reappearing in the documentation |
+| CI Go version check | falling below Go 1.21 |
+| `Makefile` empty module check | packaging a broken SELinux module |
+| `selinux-setup.sh` eBPF verification | labelling breaking eBPF |
 
 ---
 
-## 8. Kapsam dışı (dürüstçe)
+## 8. Out of scope (stated honestly)
 
-- **Fedora 41 ve 42 çalışma zamanı testi koşturulmadı.** RPM derleme
-  ve içerik doğrulandı (`make rpm` + 8/8 + 5 conffiles + SELinux
-  modülü); gerçek kurulum + `deep_verify` çalıştırılmadı.
-  `SUPPORT.md` buna göre yazıldı.
-- **`inode_permission` yolu kernel ABI'sinde alınamaz.** Bu kanca yalnızca
-  `struct inode *` verir; dentry'ye geri referans yoktur. Çözüm `ino/dev`
-  kimliğini audit kaydına eklemektir; yol gerektiren kayıtlar
-  `file_open`/`bprm` kancalarında kalır. Bu yapısal bir sınırdır,
-  ölçülebilir bir kusur değildir.
-- **Fedora 43'te SELinux kuşaklaması yok** (bkz. §5.2). Ölçülmüş,
-  belgelenmiş ve güvenli geri almeyle karşılanmış bir platform sınırıdır.
+- **Fedora 41 and 42 runtime testing was not run.** The RPM build and content
+  were verified (`make rpm` + 8/8 + 5 conffiles + SELinux module); a real
+  installation + `deep_verify` was not executed.
+  `SUPPORT.md` was written accordingly.
+- **The `inode_permission` path cannot be obtained in the kernel ABI.** This hook
+  only receives `struct inode *`; there is no back-reference to the dentry. The
+  solution is to add `ino`/`dev` identity to the audit record; records that need
+  a path stay in the `file_open`/`bprm` hooks. This is a structural boundary,
+  not a measurable defect.
+- **Fedora 43 has no SELinux labelling** (see §5.2). A platform boundary that
+  was measured, documented and handled with a safe revert.

@@ -1,93 +1,97 @@
-# AXlinux Yol Haritası
+# AXlinux Roadmap
 
-Bu belge **gerçekte neyin yapıldığını** gösterir. Önceden sürüm
-numaralarıyla etiketlenmiş ve uygulanmış özellikleri yapılmamış
-işaretliyordu; sürüm 1.0.0 olduğunda bu yanlış izlenim bırakıyordu.
+This document shows **what has actually been built**. It was previously
+labelled with version numbers and marked implemented features as
+unimplemented; once the version reached 1.0.0 this left the wrong
+impression.
 
-## 1.0.0 — Tamamlanan
+## 1.0.0 — Completed
 
-### Çekirdek
+### Core
 
-- [x] YAML politika dili (etiket, joker subject, öncelik)
+- [x] YAML policy language (labels, wildcard subject, priority)
 - [x] `axctl` CLI: `init`, `status`, `reload`, `mode`, `logs`,
       `label add|ls|rm`, `learn start|stop|report`,
       `template ls|apply`, `policy edit|check|simulate`, `version`
-- [x] `axdaemon` (Go): LSM kancaları, eBPF map yönetimi, JSON-RPC
-- [x] `axlog` (Go): kalıcı JSONL audit, günlük sıkıştırma
-- [x] `axbpf` (C): 5 LSM kancası
+- [x] `axdaemon` (Go): LSM hooks, eBPF map management, JSON-RPC
+- [x] `axlog` (Go): durable JSONL audit, journal compression
+- [x] `axbpf` (C): 5 LSM hooks
 
-### Doğrulama
+### Verification
 
-- [x] Kapsamlı test paketi (`tests/deep_verify.sh`) — 8 adlandırılmış
-      bölüm (K–R) ve **ölçülmüş** 732 kontrol (Fedora 44: 732 geçti /
-      0 kaldı / 0 atlandı; Debian ailesi: 731 / 0 / 1)
-- [x] Fiziksel makine koruması (test VM dışında çalışmayı reddeder)
-- [x] Python ↔ Go ↔ eBPF sözleşme testleri
-- [x] Belge–CLI denetimi (`tests/test_docs.py`)
-- [x] Üç dağıtımda uçtan uca doğrulama: Ubuntu 24.04.5,
+- [x] Comprehensive test suite (`tests/deep_verify.sh`) — 8 named
+      sections (K–R) and **measured** 732 checks (Fedora 44: 732 passed /
+      0 remaining / 0 skipped; Debian family: 731 / 0 / 1)
+- [x] Physical-machine guard in the test suite (`deep_verify.sh` refuses
+      to run enforcement tests on a physical machine; the product itself
+      has no such restriction — `install.sh` and `axctl` contain no
+      virtual-machine check)
+- [x] Python ↔ Go ↔ eBPF contract tests
+- [x] Document–CLI audit (`tests/test_docs.py`)
+- [x] End-to-end validation on three distributions: Ubuntu 24.04.5,
       Debian 12, Pardus 25.2
 
-### Politika dili
+### Policy language
 
-- [x] Kural öncelik sıralaması (`priority`)
-- [x] Çakışma tespiti (aynı hedefe farklı etki)
-- [x] Yinelenen kural tespiti
-- [x] Uygulanabilirlik denetimi (uygulanamayan kural reddedilir)
-- [x] `policy check -f` ile aday politika doğrulama
-- [x] `policy simulate` ile etki analizi
+- [x] Rule priority ordering (`priority`)
+- [x] Conflict detection (same target, different effect)
+- [x] Duplicate rule detection
+- [x] Applicability audit (an unenforceable rule is rejected)
+- [x] Candidate policy validation via `policy check -f`
+- [x] Impact analysis via `policy simulate`
 
-### Öğrenme modu
+### Learning mode
 
-- [x] Olay akışından gözlem toplama (`learn_map`)
-- [x] Pattern aggregation (konu + nesne + eylem)
-- [x] Öneri motoru: yapıştırılabilir YAML üretimi
-- [x] Süreli çalışma (`--days`), otomatik kapanma
+- [x] Observation collection from the event stream (`learn_map`)
+- [x] Pattern aggregation (subject + object + action)
+- [x] Suggestion engine: generation of paste-ready YAML
+- [x] Time-bounded run (`--days`), automatic shutdown
 
-### Güvenlik
+### Security
 
-- [x] 29 korumalı süreç (kilitlenme koruması)
-- [x] Uygulanamayan kural uyarı değil **hata** (sessiz etkisizlik yok)
-- [x] Boş politika geçerli → `reload --force-empty` acil kurtarma yolu
-- [x] Kalıcı audit; yazma hatası sayacı ve `audit_healthy`
-- [x] Dağıtım bağımsız kurulum (apt/dnf/pacman/apk/zypper)
-- [x] Çalışma zamanı bağımlılık sözleşmesi (`requirements.txt`)
+- [x] 29 protected processes (lockout protection)
+- [x] An unenforceable rule is an **error**, not a warning (no silent ineffectiveness)
+- [x] Empty policy is valid → `reload --force-empty` as the emergency recovery path
+- [x] Durable audit; write-error counter and `audit_healthy`
+- [x] Distribution-independent installation (apt/dnf/pacman/apk/zypper)
+- [x] Runtime dependency contract (`requirements.txt`)
 
-## Gelecek
+## Future
 
-Bu listeye giren hiçbir özellik **yoktur**. Sürüm numarası
-verilmedi: tarih vermek, planlanmayan bir şeyi vaat etmek olurdu.
+No feature on this list **exists**. No version number is given: assigning
+a date would amount to promising something that has not been planned.
 
-### Yüksek öncelik
+### High priority
 
-- [ ] `net.accept` desteği — `lsm/socket_accept` kancası bağlıysa
-- [ ] Silme/oluşturma denetimi — `lsm/inode_unlink_at` kancası
-- [ ] Kullanıcı bazlı kurallar — kuralın öznesi kullanıcı olsun
-- [ ] `sudo` bağlamı — `sudo -u` ile çalışan süreçler ayrıştırılsın
+- [ ] `net.accept` support — if the `lsm/socket_accept` hook is attached
+- [ ] Deletion/creation audit — `lsm/inode_unlink_at` hook
+- [ ] User-based rules — let the subject of a rule be a user
+- [ ] `sudo` context — distinguish processes running under `sudo -u`
 
-### Orta öncelik
+### Medium priority
 
-- [ ] Zaman/koşul kuralları — "her gün 09:00-18:00 arası"
-- [ ] Politika imzalama ve doğrulama
-- [ ] Uzak politika kaynakları (`trust`, `policy install`)
-- [ ] Olay tabanlı kurallar — "bu dosya değişirse"
-- [ ] Sıcak yeniden yükleme (daemon yeniden başlatmadan)
+- [ ] Time/condition rules — "between 09:00-18:00 every day"
+- [ ] Policy signing and verification
+- [ ] Remote policy sources (`trust`, `policy install`)
+- [ ] Event-based rules — "if this file changes"
+- [ ] Hot reload (without restarting the daemon)
 
-### Düşük öncelik
+### Low priority
 
-- [ ] Container kapsamı (yalnız bir container'ı denetleme)
-- [ ] Grafik arayüz
-- [ ] Sinyal kancası (`lsm/signal`)
+- [ ] Container scope (auditing a single container)
+- [ ] Graphical interface
+- [ ] Signal hook (`lsm/signal`)
 
-## Bilinçli olarak yapılmayanlar
+## Deliberately Not Done
 
-Bunlar eksiklik değil, **karardır**:
+These are not gaps, they are **decisions**:
 
-- **İmzasız uzak politika çekme.** İmza doğrulama yarım kalmış bir
-  güvenlik özelliği, hiç olmamasından daha kötüdür. Ya imza
-  doğrulama tam olur ya da uzak politika yükleme hiç yapılmaz.
-- **Sessizce etkisiz kurallar.** Bir kuralın çalışmayacağı kanıtlanabiliyorsa
-  (`bash`'a kural, 8'den derin yol, kancasız aksiyon) politika
-  reddedilir. Kullanıcı bir kuralın yüklendiğini sanıp sistemi
-  korumalı sandığında, uyarı yetmez.
-- **Kilitlenmeye izin vermek.** 29 kurtarma yolu süreci hiçbir kurala
-  tabi değildir. Bu bir ödün değil, kullanılabilirliğin şartıdır.
+- **Pulling unsigned remote policies.** Half-finished signature
+  verification is worse than none at all. Either signature verification is
+  complete, or remote policy loading is never implemented.
+- **Silently ineffective rules.** If it can be proven that a rule will not
+  work (a rule on `bash`, a path deeper than 8, an action with no hook),
+  the policy is rejected. When a user believes a rule has loaded and
+  considers the system protected, a warning is not enough.
+- **Allowing lockout.** The 29 recovery-path processes are subject to no
+  rule at all. This is not a compromise; it is a precondition of usability.

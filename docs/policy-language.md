@@ -1,29 +1,30 @@
-# AXlinux YAML Politika Dili
+# AXlinux YAML Policy Language
 
-## Felsefe
+## Philosophy
 
-**Sen YAML yaz, AXlinux uygulasın.**
+**You write YAML, AXlinux enforces it.**
 
-Politika basit, okunabilir, birinci sınıf bir YAML dosyası. AXlinux hiçbir gizli sözdizimi yok, hiçbir ara dil yok. Ne yazarsan o uygulanır.
+A policy is a plain, readable, first-class YAML file. AXlinux has no hidden
+syntax and no intermediate language. Whatever you write is what gets enforced.
 
-## Dosya Konumu
+## File Location
 
 ```
 ~/.axlinux/policy.yaml
 ```
 
-## Sözdizimi
+## Syntax
 
 ```yaml
-# AXlinux politika dosyası
-# Sen yaz, AXlinux uygulasın.
+# AXlinux policy file
+# You write, AXlinux enforces.
 
 version: 1
 
-# Mod: enforcing | permissive | disabled
+# Mode: enforcing | permissive | disabled
 mode: enforcing
 
-# Etiketler: işlem/dosya grupları
+# Labels: process/file groups
 labels:
   web_servers:
     - nginx
@@ -38,105 +39,115 @@ labels:
     - mysql
     - redis-server
 
-# Kurallar
+# Rules
 rules:
-  # Dosya erişimi
-  - name: "nginx web içeriğini okuyabilir"
+  # File access
+  - name: "nginx may read web content"
     subject: web_servers
     object: /var/www
     action: file.read
     effect: allow
 
-  - name: "nginx shadow dosyasını okuyamaz"
+  - name: "nginx may not read the shadow file"
     subject: web_servers
     object: /etc/shadow
     action: file.read
     effect: deny
 
-  - name: "firefox ssh anahtarlarını göremez"
+  - name: "firefox may not see ssh keys"
     subject: browsers
     object: ~/.ssh
     action: file.read
     effect: deny
 
-  # Ağ erişimi
-  - name: "python dışarı çıkamaz"
+  # Network access
+  - name: "python may not connect to port 443"
     subject: python
     action: net.connect
+    port: 443
     effect: deny
 
-  - name: "sshd sadece 22 portunu dinler"
-    subject: sshd
+  - name: "redis-server may only bind to port 6379"
+    subject: redis-server
     action: net.bind
-    port: 22
+    port: 6379
     effect: allow
 
   # Process exec
-  - name: "nginx bash çalıştıramaz"
+  - name: "nginx may not run bash"
     subject: web_servers
     action: process.exec
     object: /bin/bash
     effect: deny
 ```
 
-## Alanlar
+## Fields
 
-| Alan | Zorunlu | Açıklama |
-|------|---------|----------|
-| `version` | Evet | Politika formatı sürümü (şimdilik 1) |
-| `mode` | Hayır | Varsayılan: `enforcing` |
-| `labels` | Hayır | İşlem grupları |
-| `rules` | Evet | Kural listesi |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `version` | Yes | Policy format version (currently 1) |
+| `mode` | No | Default: `enforcing` |
+| `labels` | No | Process groups |
+| `rules` | Yes | List of rules |
 
-### Kural Alanları
+### Rule Fields
 
-| Alan | Zorunlu | Açıklama |
-|------|---------|----------|
-| `name` | Evet | Kural açıklaması (insan okunabilir) |
-| `subject` | Evet | Kim? (label veya tek işlem adı) |
-| `object` | Hayır | Ne? (dosya, dizin, işlem) |
-| `action` | Evet | Ne yapıyor? |
-| `effect` | Evet | `allow` veya `deny` |
-| `port` | Hayır | Port numarası (net.bind için) |
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Rule description (human readable) |
+| `subject` | Yes | Who? (label or single process name) |
+| `object` | No | What? (file, directory, process) |
+| `action` | Yes | What is it doing? |
+| `effect` | Yes | `allow` or `deny` |
+| `port` | No | Port number (required for `net.connect` / `net.bind`) |
 
-## Eylemler
+## Actions
 
-Aşağıdaki tablo **gerçekte uygulanan** eylemleri listeler. Her
-birinin arkasında en az bir LSM kancası vardır; o kanca anahtarı
-üretir ve kararı verir.
+The following table lists the actions that are **actually enforced**. Each
+one has at least one LSM hook behind it; that hook produces the key and
+returns the decision.
 
-| Eylem | Açıklama | LSM Kancası | Yol bazlı? |
-|-------|----------|-------------|-------------|
-| `file.read` | Dosya okuma | `file_open` | Evet |
-| `file.write` | Dosya yazma | `file_open` | Evet |
-| `file.execute` | Dosya çalıştırma | `bprm_check_security` | Evet |
-| `net.connect` | Dışa bağlanma | `socket_connect` | Hayır (port) |
-| `net.bind` | Port dinleme | `socket_bind` | Hayır (port) |
-| `process.exec` | Process çalıştırma | `bprm_check_security` | Hayır (süreç) |
+| Action | Description | LSM Hook | Path-based? |
+|--------|-------------|----------|-------------|
+| `file.read` | File read | `file_open` | Yes |
+| `file.write` | File write | `file_open` | Yes |
+| `file.execute` | File execute | `bprm_check_security` | Yes |
+| `net.connect` | Outbound connection | `socket_connect` | No (port) |
+| `net.bind` | Port listening | `socket_bind` | No (port) |
+| `process.exec` | Process execute | `bprm_check_security` | No (process) |
 
-`inode_permission` kancası ayrıca **süreç bazlı** `file.read` /
-`file.write` / `file.execute` kurallarını (yol boş) uygular.
+The `inode_permission` hook additionally enforces **process-based**
+`file.read` / `file.write` / `file.execute` rules (object left empty).
 
-### Henüz desteklenmeyen eylemler
+### Actions that are not yet supported
 
-Bu eylemler politikada yazılırsa `axctl` **açık hata** verir.
-Kabul edilip sessizce etkisiz kalmaları, MAC'te en tehlikeli
-durumdur: kural "yüklendi" der ama hiçbir şey olmaz.
+If these actions are written into a policy, `axctl` raises an **explicit
+error**. Accepting them and letting them sit there inertly is the most
+dangerous condition in a MAC system: the rule says "loaded" and nothing
+ever happens.
 
-| Eylem | Durum | Yerine ne kullanılmalı |
-|-------|-------|------------------------|
-| `file.delete` | Kanca yok | Dosya sistemi izinleri (`chmod`, ACL) |
-| `file.create` | Kanca yok | Dizin izinleri (`chmod`) |
-| `net.accept` | Kanca yok | Dinleyici tarafında denetim |
-| `process.signal` | Planlandı | — |
+| Action | Status | What to use instead |
+|--------|--------|---------------------|
+| `file.delete` | No hook | File system permissions (`chmod`, ACL) |
+| `file.create` | No hook | Directory permissions (`chmod`) |
+| `net.accept` | No hook | Audit on the listener side |
+| `process.signal` | Not a valid action | — |
 
-Silme denetimi için `lsm/inode_unlink_at` kancasının eklenmesi
-gerekir. Bu, AXlinux'un bilinen ve belgelenmiş bir
-eksikliğidir; sürpriz bir hata değil, açık bir kapsam sınırıdır.
+Deletion auditing requires the `lsm/inode_unlink_at` hook. This is a known
+and documented shortcoming of AXlinux; it is not a surprising error but an
+explicit scope boundary.
 
-## Etiketler
+### Protected processes
 
-Etiketler, işlem gruplarını tanımlar. Tek bir kural, birçok işlemi kapsayabilir.
+AXlinux enforces **no** rule that targets a recovery-path process: `sshd`,
+`login`, `sudo`, `bash`, `systemd` and similar. Such a rule would let the
+policy lock the operator out of the machine, so the compiler rejects it at
+compile time with an explicit error. Write rules against the applications
+you want to control (`nginx`, `firefox`, `redis-server`, `curl`) instead.
+
+## Labels
+
+Labels define process groups. A single rule can cover many processes.
 
 ```yaml
 labels:
@@ -146,85 +157,101 @@ labels:
     - caddy
 ```
 
-Kullanım:
+Usage:
 
 ```yaml
 rules:
-  - name: "web sunucuları /etc/shadow okuyamaz"
+  - name: "web servers may not read /etc/shadow"
     subject: web_servers
     object: /etc/shadow
     action: file.read
     effect: deny
 ```
 
-## Öncelik Kuralları
+## Priority Rules
 
-1. **Deny her zaman allow'dan önce gelir.** Kullanıcı yanlış yazsa bile, deny kazanır.
-2. **Spesifik kural, genel kuraldan önce gelir.** `/etc/shadow` kuralı, `/etc` kuralından önce değerlendirilir.
-3. **Aynı öncelikte son yazılan kazanır.**
+1. **Deny always comes before allow.** Even if the user writes it the other
+   way around, deny wins.
+2. **A specific rule comes before a general rule.** A rule for `/etc/shadow`
+   is evaluated before a rule for `/etc`.
+3. **At the same priority, the rule written last wins.**
 
-## Simülasyon
+## Simulation
 
-`axctl policy simulate` komutu, politikanın neyi etkilediğini gösterir:
+`axctl policy simulate` shows what the policy affects:
 
 ```
 $ axctl policy simulate
 
-Politika Simülasyonu
-=====================
+Policy Simulation
+=================
 
-Mod: enforcing
-Toplam kural: 5
-Etiket: 3
+Mode: enforcing
+Total rules: 6
+Labels: 3
 
-Kural 1: nginx web içeriğini okuyabilir
-  → nginx, /var/www/* okuyabilir
-  → Etkilenen işlemler: nginx, apache2, caddy
+[1] nginx may not read the shadow file
+    subject: nginx, apache2, caddy
+    object: /etc/shadow
+    action: file.read
+    effect: DENY
 
-Kural 2: nginx shadow dosyasını okuyamaz
-  → nginx, /etc/shadow okuyamaz
-  → Etkilenen işlemler: nginx, apache2, caddy
-  → DİKKAT: Bu kural, Kural 1'den sonra gelir ve spesifik
+[2] nginx may not run bash
+    subject: nginx, apache2, caddy
+    object: /bin/bash
+    action: process.exec
+    effect: DENY
 
-Kural 3: firefox ssh anahtarlarını göremez
-  → firefox, ~/.ssh/* okuyamaz
-  → Etkilenen işlemler: firefox, chromium, google-chrome
+[3] firefox may not see ssh keys
+    subject: firefox, chromium, google-chrome
+    object: ~/.ssh
+    action: file.read
+    effect: DENY
 
-Kural 4: python dışarı çıkamaz
-  → python, dışa bağlanamaz
-  → Etkilenen işlemler: python
+[4] python may not connect to port 443
+    subject: python
+    action: net.connect
+    port: 443
+    effect: DENY
 
-Kural 5: sshd sadece 22 portunu dinler
-  → sshd, sadece port 22'ye bind olabilir
-  → Etkilenen işlemler: sshd
+[5] nginx may read web content
+    subject: nginx, apache2, caddy
+    object: /var/www
+    action: file.read
+    effect: ALLOW
 
-Çakışma: Yok
-Güvenlik: Temiz
+[6] redis-server may only bind to port 6379
+    subject: redis-server
+    action: net.bind
+    port: 6379
+    effect: ALLOW
+
+Conflicts: None
 ```
 
-## Örnek Politikalar
+## Example Policies
 
-### Minimal Güvenlik
+### Minimal Security
 
 ```yaml
 version: 1
 mode: enforcing
 
 rules:
-  - name: "tarayıcılar ssh anahtarlarını okuyamaz"
+  - name: "browsers may not read ssh keys"
     subject: firefox
     object: ~/.ssh
     action: file.read
     effect: deny
 
-  - name: "tarayıcılar /etc/shadow okuyamaz"
+  - name: "browsers may not read /etc/shadow"
     subject: firefox
     object: /etc/shadow
     action: file.read
     effect: deny
 ```
 
-### Web Sunucusu
+### Web Server
 
 ```yaml
 version: 1
@@ -236,38 +263,38 @@ labels:
     - apache2
 
 rules:
-  - name: "web sunucuları web içeriğini okur"
+  - name: "web servers read web content"
     subject: web
     object: /var/www
     action: file.read
     effect: allow
 
-  - name: "web sunucuları /etc/shadow okuyamaz"
+  - name: "web servers may not read /etc/shadow"
     subject: web
     object: /etc/shadow
     action: file.read
     effect: deny
 
-  - name: "web sunucuları bash çalıştıramaz"
+  - name: "web servers may not run bash"
     subject: web
     action: process.exec
     object: /bin/bash
     effect: deny
 
-  - name: "web sunucuları sadece 80 ve 443 dinler"
+  - name: "web servers bind port 80"
     subject: web
     action: net.bind
     port: 80
     effect: allow
 
-  - name: "web sunucuları sadece 80 ve 443 dinler"
+  - name: "web servers bind port 443"
     subject: web
     action: net.bind
     port: 443
     effect: allow
 ```
 
-### Gelişmiş
+### Advanced
 
 ```yaml
 version: 1
@@ -284,121 +311,125 @@ labels:
     - redis-server
 
 rules:
-  - name: "web sunucuları web içeriğini okur"
+  - name: "web servers read web content"
     subject: web
     object: /var/www
     action: file.read
     effect: allow
 
-  - name: "web sunucuları veritabanına bağlanır"
+  - name: "web servers may connect to postgres"
     subject: web
-    object: db
     action: net.connect
+    port: 5432
     effect: allow
 
-  - name: "veritabanları dışarı çıkamaz"
+  - name: "databases may not connect to port 5432"
     subject: db
     action: net.connect
+    port: 5432
     effect: deny
 
-  - name: "redis sadece localhost'ta dinler"
+  - name: "redis listens only on localhost"
     subject: cache
     action: net.bind
     port: 6379
     effect: allow
 
-  - name: "hiçkimse /etc/shadow okuyamaz"
+  - name: "nobody may read /etc/shadow"
     subject: "*"
     object: /etc/shadow
     action: file.read
     effect: deny
 ```
 
-## Sınırlamalar
+## Limitations
 
-1. **Wildcard sadece `subject: "*"` için.** Object wildcard yok.
-2. **Regex yok.** Sadece tam yol.
-3. **Zaman kuralları yok.** (v2.0'da eklenebilir)
-4. **Kullanıcı bazlı kural yok.** (v1.0'da eklenebilir)
-5. **Dinamik politika yok.** Her değişiklik için `axctl reload` gerekir.
+1. **Wildcard only for `subject: "*"`.** There is no object wildcard.
+2. **No regex.** Full paths only.
+3. **No time-based rules.** (May be added in v2.0)
+4. **No user-based rules.** (May be added in v1.0)
+5. **No dynamic policy.** Every change requires `axctl reload`.
+6. **`port` and `object` are mutually exclusive.** A network rule uses
+   `port`, a file rule uses `object`.
 
-## Yol kurallari: tam yol ve mount noktalari
+## Path rules: full path and mount points
 
-> **DIZIN KURALLARI CALISMAZ — `object:` TAM YOL OLARAK ELE ALINIR.**
+> **DIRECTORY RULES DO NOT WORK — `object:` IS TREATED AS A FULL PATH.**
 >
-> Politika dili eski metinlerde "prefix" diyordu. Bu bir sozlesme
-> ihlali ve duzeltilmedi:
+> The policy language called it "prefix" in older texts. That is a
+> contract violation and it was not fixed:
 >
 >   object: /home/u/.gnupg, action: file.read, effect: deny
->   cat /home/u/.gnupg/secret.gpg   ->  SERBEST   (sizinti)
+>   cat /home/u/.gnupg/secret.gpg   ->  ALLOWED   (leak)
 >
-> **Neden:** anahtar kodu yolun SONUNA hizalidir. `/a/b` kurali
-> `[6]/a [5]/b` olarak yazilir; calisma anindaki `/x/y/a/b` yolu ise
-> `[7]/x [6]/y [5]/a [4]/b` olur. Kisa yolun ayni blogu
-> kullanabilmesi icin BPF tarafinda bloklarin KAYDIRILMASI
-> gerekir. Sifirdan yazma, yigin tamponu (512 bayt siniri) ve
-> harita degeri olmak uzere uc bicim de denendi; verifier
-> sinirlariyla uyumlu, calisan bir yol bulunamadi.
+> **Why:** the key code is aligned to the END of the path. A rule for
+> `/a/b` is written as `[6]/a [5]/b`, whereas the runtime path `/x/y/a/b`
+> becomes `[7]/x [6]/y [5]/a [4]/b`. For a shorter path to be able to use
+> the same blocks, the blocks must be SHIFTED on the BPF side. Writing
+> from scratch, a stack buffer (512-byte limit) and a map value were all
+> three tried; no working path compatible with verifier limits was found.
 >
-> **Gecici olarak neden genisletme yapilmiyor:** kural basina 6-8
-> anahtar yazilsaydi 10240 girişli haritada ~1450 kuralda reload
-> basarisiz olurdu — sessiz bir bozulmadan kotu.
+> **Why expansion is not done for now:** if 6-8 keys were written per
+> rule, a reload would fail at roughly 1450 rules in a 10240-entry map —
+> which is worse than a silent breakage.
 >
-> **Kullanilacak yol:** korunacak dosyalari tam yol olarak yazin.
-> Gerekirse birden fazla kural yazin. Ileride cozum, iki tarafi
-> da degistiren "mutlak derinlik" kodlamaya gecmektir
-> (`setKeyPath` + `ax_fill_path` birlikte).
+> **Path to use:** write the files you want to protect as full paths.
+> Write several rules if necessary. The eventual solution is to switch to
+> an "absolute depth" encoding that changes both sides
+> (`setKeyPath` + `ax_fill_path` together).
 
-Iki ayri mount durumu vardir ve **ikisi de cozulmustur**.
+There are two separate mount conditions and **both have been solved**.
 
-bpftrace ile olculen ham davranis:
+Raw behaviour measured with bpftrace:
 
-| Konum | Dosya sistemi | Görünen dentry zinciri |
+| Location | File system | Visible dentry chain |
 |---|---|---|
-| `/etc/ax-dosya` | btrfs (kök) | `ax-dosya → etc → root(subvolume) → /` |
-| `/tmp/ax-dosya` | tmpfs | `ax-dosya → /` — **`tmp` görünmez** |
+| `/etc/ax-dosya` | btrfs (root) | `ax-dosya → etc → root(subvolume) → /` |
+| `/tmp/ax-dosya` | tmpfs | `ax-dosya → /` — **`tmp` is invisible** |
 
-### 1. btrfs alt birim kökü (gorunmez bilesen)
+### 1. btrfs subvolume root (invisible component)
 
-Fedora 33'den beri kok bir alt birim olarak baglanir ve dentry
-zincirine `root` adli gorunmez bir bilesen girer. Politika
-`/etc/ax-dosya` yazar, kernel `/root/etc/ax-dosya` gorur.
+It has been mounted as a root subvolume since Fedora 33 and an invisible
+component named `root` enters the dentry chain. The policy writes
+`/etc/ax-dosya`, the kernel sees `/root/etc/ax-dosya`.
 
-Cozum: `mount_artifact_map`. Daemon mountinfo'da `root=/root`
-gordugu icin bu adi haritaya yazar; BPF mount kokune denk gelen
-bileseni atar. `/etc`, `/var`, `/home`, `/root` kurallari calisir.
+Solution: `mount_artifact_map`. Because the daemon sees `root=/root` in
+mountinfo it writes that name into the map; BPF drops the component that
+corresponds to the mount root. Rules for `/etc`, `/var`, `/home` and
+`/root` work.
 
-### 2. Ayrı mount (gorunmez ONEK)
+### 2. Separate mount (invisible PREFIX)
 
-`/tmp` bir tmpfs mount oldugu icin mount noktasinin adi (`tmp`) bir
-dizin girdisi DEGILDIR; bir mount baglantisidir. Bu yuzden dentry
-zincirinde hic bulunmaz ve onek kaybolur.
+Because `/tmp` is a tmpfs mount, the name of the mount point (`tmp`) is
+NOT a directory entry; it is a mount link. That is why it never appears in
+the dentry chain and the prefix is lost.
 
-Cozum: `mount_point_map`. Daemon mountinfo'nun 3. alanindaki
-(`MAJ:MIN`) superblock cihazini okuyup haritaya yazar; BPF mount
-kokune ulastiginda bu haritayi arar ve oneki yolun **altina** ekler.
+Solution: `mount_point_map`. The daemon reads the superblock device from
+field 3 (`MAJ:MIN`) of mountinfo and writes it into the map; when BPF
+reaches the mount root it looks up this map and appends the prefix
+**below** the path.
 
-Anahtar neden yalniz superblock cihazidir:
+The key reason it keys on the superblock device alone:
 
-- Inode mountinfo'da bulunmaz.
-- `stat()` SELinux tarafindan reddedilir; 12 mount noktasi EACCES
-  aliyordu (`/run/user/1000`, `/sys/fs/cgroup`, `/dev/pts`, ...).
-  Bu yuzden `stat()`a bagimli bir cozum 12 mount'i sessizce
-  birakirdi.
-- Tum tmpfs kokleri inode 1'dir; ayirt edici yalniz `s_dev`'dir.
+- The inode is not present in mountinfo.
+- `stat()` is rejected by SELinux; 12 mount points were returning EACCES
+  (`/run/user/1000`, `/sys/fs/cgroup`, `/dev/pts`, ...). A `stat()`-based
+  solution would therefore have silently dropped 12 mounts.
+- All tmpfs roots are inode 1; the only distinguishing value is `s_dev`.
 
-Dogrulama (Fedora 44, SELinux enforcing, RPM kurulumu):
+Verification (Fedora 44, SELinux enforcing, RPM installation):
 
 ```
 cat /tmp/ax-dosya       -> Operation not permitted
 cat /dev/shm/ax-dosya   -> Operation not permitted
 cat /run/ax-dosya       -> Operation not permitted
 cat /run/user/1000/x    -> Operation not permitted
-cat /etc/hostname       -> serbest   (kural disi)
+cat /etc/hostname       -> allowed   (outside the rule)
 ```
 
-Kalan sinir: harita superblock cihazina anahtarlanir, bu yuzden ayni
-superblocku iki ayri yola baglamak (orn. ayni tmpfs'i `/tmp` ve
-`/var/tmp`'ye baglamak) tek kaydi paylasir. Pratikte bu olusmaz.
-`axctl policy check` bu ayrımı doğrulamaz — kural geçerli sayılır,
-çünkü sözdizimi doğrudur. Uygulama ölçülerek anlaşılır.
+Remaining boundary: the map is keyed on the superblock device, so binding
+the same superblock to two different paths (for example mounting the same
+tmpfs at both `/tmp` and `/var/tmp`) shares one record. In practice this
+does not occur. `axctl policy check` does not verify this distinction — the
+rule counts as valid because the syntax is correct. The behaviour is
+understood by measurement.

@@ -14,7 +14,7 @@ R = Path(__file__).resolve().parent.parent
 
 # CHANGELOG'in eski surum bolumleri TARIHSEL kayittir; o
 # satirlar o an dogruydu, duzeltilmemeli.
-CURRENT_DOCS = ["README.md", "DAGITIM.md"] + [
+CURRENT_DOCS = ["README.md", "docs/DISTRIBUTION.md"] + [
     str(p.relative_to(R)) for p in sorted((R / "docs").glob("*.md"))]
 
 
@@ -100,7 +100,7 @@ class TestDocNumbers(unittest.TestCase):
                            "AST tabanli sayim testleri gormuyor")
 
     def test_distribution_doc_claims_match_measured_result(self):
-        """DAGITIM.md her dagitim icin OLCULMUS sonucu gostermeli.
+        """docs/DISTRIBUTION.md her dagitim icin OLCULMUS sonucu gostermeli.
 
         Bu sayilar dort sanal makinede GERCEKTEN olustu:
           Fedora 44      -> 732 gecti / 0 kaldi / 0 atlandi
@@ -112,21 +112,21 @@ class TestDocNumbers(unittest.TestCase):
         Test, iddianin metinde OLDUGUNU ve daha once kullanilan
         BAYAT sayinin (732/0/1) geri gelmedigini dogrular.
         """
-        doc = self.read("DAGITIM.md")
+        doc = self.read("docs/DISTRIBUTION.md")
         for distro in ("Fedora 44", "Ubuntu 24.04", "Debian 12",
                        "Pardus 25.2"):
-            self.assertIn(distro, doc, f"{distro} DAGITIM.md'de yok")
+            self.assertIn(distro, doc, f"{distro} docs/DISTRIBUTION.md'de yok")
         self.assertIn("732/0/0", doc,
-                      "DAGITIM.md Fedora 44 sonucunu gostermeli")
+                      "docs/DISTRIBUTION.md Fedora 44 sonucunu gostermeli")
         for distro in ("Ubuntu", "Debian", "Pardus"):
             self.assertIn("731/0/1", doc,
                           f"{distro} icin olculmus 731/0/1 olmali")
         self.assertNotIn("100/0/0", doc,
-                         "DAGITIM.md'de bayat dogrulama sayisi kaldi")
+                         "docs/DISTRIBUTION.md'de bayat dogrulama sayisi kaldi")
         # 732/0/1 daha once her dagitim icin yaziliydi ve YANLISTI:
         # Debian ailesinde SELinux olmadigi icin gercek sonuc 731/0/1.
         self.assertNotIn("732/0/1", doc,
-                         "DAGITIM.md'de bayat 732/0/1 sayisi kaldi")
+                         "docs/DISTRIBUTION.md'de bayat 732/0/1 sayisi kaldi")
 
     def test_readme_states_current_state(self):
         """README gercek dogrulama sonucunu gostermeli.

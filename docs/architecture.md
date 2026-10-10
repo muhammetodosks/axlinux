@@ -1,200 +1,206 @@
-# AXlinux Mimari Dokümanı
+# AXlinux Architecture Document
 
-## Felsefe
+## Philosophy
 
-**Sen YAML yaz, AXlinux uygulasın.**
+**You write YAML, AXlinux enforces it.**
 
-SELinux'te politika sana verilir, sen uyarsın. AXlinux'ta politika sana aittir, sen yazarsın. Güvenlik, kullanıcının elinde olmalı.
+In SELinux the policy is handed to you and you adapt to it. In AXlinux the
+policy belongs to you and you write it. Security should be in the user's
+hands.
 
-## Katmanlar
+## Layers
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    KULLANICI                            │
-│  ~/.axlinux/policy.yaml                                 │
-└──────────────────────┬──────────────────────────────────┘
-                       │ YAML
-┌──────────────────────▼──────────────────────────────────┐
-│  axctl (Python CLI)                                     │
-│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌─────────────┐  │
-│  │  init   │ │  check  │ │ simulate │ │   reload    │  │
-│  └─────────┘ └─────────┘ └──────────┘ └─────────────┘  │
-│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌─────────────┐  │
-│  │ status  │ │  logs   │ │  learn   │ │   label     │  │
-│  └─────────┘ └─────────┘ └──────────┘ └─────────────┘  │
-└──────────────────────┬──────────────────────────────────┘
-                       │ compile
-┌──────────────────────▼──────────────────────────────────┐
-│  axc (Python Derleyici)                                 │
-│  YAML → Doğrulama → İç Politika Formatı (JSON)         │
-└──────────────────────┬──────────────────────────────────┘
-                       │ gRPC / Unix socket
-┌──────────────────────▼──────────────────────────────────┐
-│  axdaemon (Go)                                          │
+│ USER                                                    │
+│ ~/.axlinux/policy.yaml                                  │
+└────────────────────────────┬────────────────────────────┘
+                              YAML
+└────────────────────────────▼────────────────────────────┘
+│ axctl (Python CLI)                                      │
+│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌─────────────┐   │
+│  │init     │ │check    │ │simulate  │ │reload       │   │
+│  └─────────┘ └─────────┘ └──────────┘ └─────────────┘   │
+│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌─────────────┐   │
+│  │status   │ │logs     │ │learn     │ │label        │   │
+│  └─────────┘ └─────────┘ └──────────┘ └─────────────┘   │
+└────────────────────────────┬────────────────────────────┘
+                              compile
+└────────────────────────────▼────────────────────────────┘
+│ axc (Python Compiler)                                   │
+│ YAML -> Validation -> Internal Policy Format (JSON)     │
+└────────────────────────────┬────────────────────────────┘
+                              JSON-RPC / Unix socket
+└────────────────────────────▼────────────────────────────┘
+│ axdaemon (Go)                                           │
 │  ┌─────────────────────────────────────────────────┐    │
-│  │  eBPF Map Yöneticisi                            │    │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────────┐    │    │
-│  │  │ allow_map│ │ deny_map │ │  audit_map   │    │    │
-│  │  └──────────┘ └──────────┘ └──────────────┘    │    │
+│  │ eBPF Map Manager                                │    │
+│  │   ┌──────────┐ ┌──────────┐ ┌──────────────┐    │    │
+│  │   │ allow_map│ │ deny_map │ │ audit_map    │    │    │
+│  │   └──────────┘ └──────────┘ └──────────────┘    │    │
 │  └─────────────────────────────────────────────────┘    │
 │  ┌─────────────────────────────────────────────────┐    │
-│  │  Audit Servisi (axlog)                          │    │
+│  │ Audit Service (axlog)                           │    │
 │  └─────────────────────────────────────────────────┘    │
-└──────────────────────┬──────────────────────────────────┘
-                       │ BPF syscall
-┌──────────────────────▼──────────────────────────────────┐
-│  axbpf (C) — eBPF LSM Programları                       │
-│  ┌──────────────┐ ┌──────────────┐ ┌────────────────┐  │
-│  │  file_open   │ │inode_perm    │ │bprm_check_sec  │  │
-│  └──────────────┘ └──────────────┘ └────────────────┘  │
-│  ┌──────────────┐ ┌──────────────┐                     │
-│  │socket_connect│ │ socket_bind  │                     │
-│  └──────────────┘ └──────────────┘                     │
+└────────────────────────────┬────────────────────────────┘
+                              BPF syscall
+└────────────────────────────▼────────────────────────────┘
+│ axbpf (C) - eBPF LSM programs                           │
+│  ┌──────────────┐ ┌──────────────┐ ┌────────────────┐   │
+│  │file_open     │ │inode_perm    │ │bprm_check_sec  │   │
+│  └──────────────┘ └──────────────┘ └────────────────┘   │
+│  ┌───────────────┐ ┌───────────────┐                    │
+│  │socket_connect │ │socket_bind    │                    │
+│  └───────────────┘ └───────────────┘                    │
 └─────────────────────────────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────┐
-│  Linux Çekirdek (5.15+, CONFIG_BPF_LSM=y)               │
+                            │
+└────────────────────────────▼────────────────────────────┘
+│ Linux kernel (5.15+, CONFIG_BPF_LSM=y)                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Veri Akışı
+## Data Flow
 
-### 1. Politika Yazma ve Uygulama
+### 1. Authoring and Applying a Policy
 
 ```
-Kullanıcı → ~/.axlinux/policy.yaml
+User → ~/.axlinux/policy.yaml
     ↓
 axctl policy check
     ↓
 axc compile
     ↓
-Doğrulama (schema, çakışma, güvenlik kontrolü)
+Validation (schema, conflicts, security check)
     ↓
-İç politika formatı (JSON)
+Internal policy format (JSON)
     ↓
-axdaemon (gRPC/Unix socket)
+axdaemon (JSON-RPC / Unix socket)
     ↓
-eBPF map'lerine yazma
+Writes to the eBPF maps
     ↓
-eBPF LSM programları artık karar veriyor
+The eBPF LSM programs now make the decisions
 ```
 
-### 2. Runtime Karar Akışı
+### 2. Runtime Decision Flow
 
 ```
-Sistem çağrısı (open, connect, bind, ...)
+System call (open, connect, bind, ...)
     ↓
-eBPF LSM kancası tetiklenir
+An eBPF LSM hook fires
     ↓
-eBPF map'lerinde arama yapılır
+Lookup in the eBPF maps
     ↓
-allow_map'te var → ALLOW
-deny_map'te var → DENY + audit log
-ikisinde de yok → DEFAULT (genelde ALLOW)
+Present in allow_map → ALLOW
+Present in deny_map  → DENY + audit log
+Present in neither   → DEFAULT (generally ALLOW)
     ↓
-Karar çekirdeğe döner
+The decision returns to the kernel
 ```
 
-### 3. Audit Log Akışı
+### 3. Audit Log Flow
 
 ```
-eBPF programı → perf buffer
+eBPF program → perf buffer
     ↓
-axlog (Go) → JSON formatında log
+axlog (Go) → log in JSON format
     ↓
 /var/log/axlinux/audit.json
     ↓
-axctl logs → kullanıcıya okunabilir format
+axctl logs → human-readable format for the user
 ```
 
-## Bileşen Detayları
+## Component Details
 
 ### axctl (Python CLI)
 
-Kullanıcının tek temas noktası. Tüm komutlar:
+The user's single point of contact. All commands:
 
-| Komut | Açıklama |
-|-------|----------|
-| `axctl init` | `~/.axlinux/` dizinini ve boş policy.yaml oluşturur |
-| `axctl policy edit` | Varsayılan editörde policy.yaml açar |
-| `axctl policy check` | YAML syntax ve schema doğrulaması |
-| `axctl policy simulate` | "Bu YAML neyi etkiler?" simülasyonu |
-| `axctl reload` | Politikayı derler ve axdaemon'a iletir |
-| `axctl status` | Sistem durumu, aktif politika, eBPF durumu |
-| `axctl logs` | JSON audit log okur ve filtreler |
-| `axctl learn start` | Öğrenme modunu başlatır |
-| `axctl learn report` | 3 günlük öğrenme raporunu gösterir |
-| `axctl label` | Dosya/işlem etiketleme yardımcısı |
+| Command | Description |
+|---------|-------------|
+| `axctl init` | Creates the `~/.axlinux/` directory and an empty policy.yaml |
+| `axctl policy edit` | Opens policy.yaml in the default editor |
+| `axctl policy check` | YAML syntax and schema validation |
+| `axctl policy simulate` | "What does this YAML affect?" simulation |
+| `axctl reload` | Compiles the policy and forwards it to axdaemon |
+| `axctl status` | System status, active policy, eBPF state |
+| `axctl logs` | Reads and filters the JSON audit log |
+| `axctl learn start` | Starts learning mode |
+| `axctl learn report` | Shows the 3-day learning report |
+| `axctl label` | File/process labelling helper |
 
-### axc (Python Derleyici)
+### axc (Python Compiler)
 
-YAML'ı iç politika formatına çevirir:
+Converts YAML into the internal policy format:
 
 1. **Parse**: YAML → Python dict
-2. **Validate**: Schema doğrulaması, çakışma tespiti
-3. **Compile**: Python dict → JSON (iç politika formatı)
-4. **Sign**: İsteğe bağlı olarak politika imzalar (gelecek)
+2. **Validate**: Schema validation, conflict detection
+3. **Compile**: Python dict → JSON (internal policy format)
+4. **Sign**: Optionally signs the policy (future)
 
 ### axdaemon (Go)
 
-Sürekli çalışan sistem daemon'ı:
+The always-running system daemon:
 
-1. **Policy Loader**: axc'den gelen JSON'ı parse eder
-2. **Map Manager**: eBPF map'lerine yazar/günceller
-3. **LSM Hook Manager**: eBPF programlarını yükler ve bağlar
-4. **Audit Service**: axlog ile audit log üretir
-5. **gRPC Server**: axctl ile iletişim kurar
+1. **Policy Loader**: Parses the JSON coming from axc
+2. **Map Manager**: Writes to / updates the eBPF maps
+3. **LSM Hook Manager**: Loads and attaches the eBPF programs
+4. **Audit Service**: Produces the audit log via axlog
+5. **JSON-RPC server**: Communicates with axctl
 
 ### axbpf (C)
 
-eBPF LSM programları — minimum C:
+The eBPF LSM programs — minimal C:
 
-- `file_open`: Dosya açma kontrolü
-- `inode_permission`: inode erişim kontrolü
-- `bprm_check_security`: execve kontrolü
-- `socket_connect`: Bağlantı kontrolü
-- `socket_bind`: Bind kontrolü
+- `file_open`: File open check
+- `inode_permission`: inode access check
+- `bprm_check_security`: execve check
+- `socket_connect`: Connection check
+- `socket_bind`: Bind check
 
-Her program aynı pattern'i izler:
-1. PID veya comm (process adı) al
-2. eBPF map'lerinde ara
-3. Karar ver (ALLOW/DENY)
-4. Audit log yaz
+Every program follows the same pattern:
+1. Get the PID or comm (process name)
+2. Look it up in the eBPF maps
+3. Decide (ALLOW/DENY)
+4. Write an audit log entry
 
 ### axlog (Go)
 
-JSON audit log servisi:
+The JSON audit log service:
 
-- eBPF perf buffer'dan okur
-- JSON formatında log yazar
-- Filtreleme ve arama API'si
+- Reads from the eBPF perf buffer
+- Writes logs in JSON format
+- Filtering and query API
 - Log rotation
 
-## Modlar
+## Modes
 
-| Mod | Açıklama |
-|-----|----------|
-| `enforcing` | Politikalar uygulanır, ihlal = engelle + log |
-| `permissive` | Politikalar uygulanır, ihlal = sadece log |
-| `disabled` | Hiçbir politika uygulanmaz |
+| Mode | Description |
+|------|-------------|
+| `enforcing` | Policies are enforced, violation = block + log |
+| `permissive` | Policies are enforced, violation = log only |
+| `disabled` | No policy is enforced |
 
-Anında geçiş: `axctl reload --mode=enforcing`
+Instant switching: `axctl reload --mode=enforcing`
 
-## Güvenlik İlkeleri
+## Security Principles
 
-1. **Default deny yok**: Kullanıcı yazmadığı şey serbest. AXlinux'u kilitleme.
-2. **Simulate her zaman ücretsiz**: `axctl policy check` ve `simulate` her zaman çalışır, politika yüklenmeden önce.
-3. **Audit her zaman açık**: En azından permissive modda bile log tutulur.
-4. **Kullanıcı her zaman çıkabilir**: `axctl reload --mode=disabled` her zaman çalışır.
-5. **Politika imzalama (gelecek)**: Topluluk politikaları imzalanarak güvenilirlik sağlanacak.
+1. **No default deny**: Anything the user does not write is allowed. Do not
+   lock the user out of their own AXlinux installation.
+2. **Simulation is always free**: `axctl policy check` and `simulate` always
+   work, before the policy is loaded.
+3. **Auditing is always on**: Logs are kept at least in permissive mode.
+4. **The user can always get out**: `axctl reload --mode=disabled` always
+   works.
+5. **Policy signing (future)**: Community policies will be signed to
+   establish trust.
 
 ## SELinux vs AXlinux
 
-| Özellik | SELinux | AXlinux |
-|---------|---------|---------|
-| Politika kaynağı | Hazır, milyonlarca satır | Kullanıcı YAML'ı |
-| Öğrenme | `audit2allow` | `axctl learn` → 3 gün → öneri |
-| Uygulama | `setenforce` + reboot riski | `axctl reload` → anında |
-| Log formatı | `audit.log` (metin) | JSON, yapılandırılmış |
-| Öğrenme eğrisi | Duvar | Merdiven |
-| Felsefe | Sen uyarsın | Sen yazarsın |
+| Aspect | SELinux | AXlinux |
+|--------|---------|---------|
+| Policy source | Ready-made, millions of lines | User YAML |
+| Learning | `audit2allow` | `axctl learn` → 3 days → suggestion |
+| Application | `setenforce` + reboot risk | `axctl reload` → instant |
+| Log format | `audit.log` (text) | JSON, structured |
+| Learning curve | Wall | Stairs |
+| Philosophy | You adapt | You write |

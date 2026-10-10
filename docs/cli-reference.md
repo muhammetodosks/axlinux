@@ -1,83 +1,86 @@
-# AXlinux CLI Referansı
+# AXlinux CLI Reference
 
-## Genel Kullanım
+## General Usage
 
 ```
-axctl <komut> [seçenekler]
+axctl <command> [options]
 ```
 
-## Komutlar
+## Commands
 
 ### init
 
-AXlinux'u başlatır. `~/.axlinux/` dizinini ve boş politika dosyasını oluşturur.
+Initialises AXlinux. Creates the `~/.axlinux/` directory and an empty policy
+file.
 
 ```bash
 axctl init [--force]
 ```
 
-| Seçenek | Açıklama |
-|---------|----------|
-| `--force` | Mevcut dizini sıfırlar |
+| Option | Description |
+|--------|-------------|
+| `--force` | Resets the existing directory |
 
 ### policy edit
 
-Politika dosyasını varsayılan editörde açar.
+Opens the policy file in the default editor.
 
 ```bash
 axctl policy edit [--editor EDITOR]
 ```
 
-| Seçenek | Açıklama |
-|---------|----------|
-| `--editor` | Editör seçimi (nano, vim, code) |
+| Option | Description |
+|--------|-------------|
+| `--editor` | Editor to use (nano, vim, code) |
 
 ### policy check
 
-Politikanın geçerliliğini doğrular.
+Validates the policy.
 
 ```bash
-axctl policy check [--verbose]
+axctl policy check [--file FILE]
 ```
 
-| Seçenek | Açıklama |
-|---------|----------|
-| `--verbose` | Detaylı çıktı |
+| Option | Description |
+|--------|-------------|
+| `--file` | Validate this file instead of the active policy |
 
-**Çıktı**:
-- ✓ YAML syntax geçerli
-- ✓ Schema doğrulaması başarılı
-- ✓ N kural, M etiket bulundu
-- ✓ Çakışma yok
+**Output**:
+- ✓ YAML syntax is valid
+- ✓ Schema validation succeeded
+- ✓ N rules, M labels found
+- ✓ Applicability check: N rules
+- ✓ No conflicts
 
 ### policy simulate
 
-Politikanın neyi etkilediğini simüle eder.
+Simulates what the policy affects.
 
 ```bash
-axctl policy simulate [--format text|json]
+axctl policy simulate [--format text|json] [--file FILE]
 ```
 
-| Seçenek | Açıklama |
-|---------|----------|
-| `--format` | Çıktı formatı |
+| Option | Description |
+|--------|-------------|
+| `--format` | Output format |
+| `--file` | Simulate this file instead of the active policy |
 
 ### reload
 
-Politikanı derler ve uygular.
+Compiles and applies the policy.
 
 ```bash
 axctl reload [--mode MODE] [--force-empty]
 ```
 
-| Seçenek | Açıklama |
-|---------|----------|
+| Option | Description |
+|--------|-------------|
 | `--mode` | enforcing, permissive, disabled |
-| `--force-empty` | Boş politika yükle (acil durum) |
+| `--force-empty` | Load an empty policy (emergency escape hatch) |
 
 ### status
 
-Sistem durumunu gösterir.
+Shows the system status.
 
 ```bash
 axctl status [--json]
@@ -85,34 +88,38 @@ axctl status [--json]
 
 ### logs
 
-Audit log'u okur.
+Reads the audit log.
 
 ```bash
 axctl logs [--follow] [--filter FIELD=VALUE] [--since TIME] [--limit N]
 ```
 
-| Seçenek | Açıklama |
-|---------|----------|
-| `--follow` | Canlı izleme (tail -f) |
-| `--filter` | Filtre (action=file.read, effect=deny) |
-| `--since` | Zamandan beri (1h, 1d, 1w) |
-| `--limit` | Maksimum kayıt sayısı |
+| Option | Description |
+|--------|-------------|
+| `--follow` | Live tail (like `tail -f`) |
+| `--filter` | Filter (action=file.read, effect=deny) |
+| `--since` | Since a point in time (1h, 1d, 1w) |
+| `--limit` | Maximum number of records (default: 100) |
+| `--json` | Raw JSON output |
+| `--subject` | Filter by process name (e.g. curl) |
+| `--action` | Filter by action (e.g. file.read) |
+| `--effect` | Filter by effect (allow/deny) |
 
 ### learn start
 
-Öğrenme modunu başlatır.
+Starts learning mode.
 
 ```bash
 axctl learn start [--days N]
 ```
 
-| Seçenek | Açıklama |
-|---------|----------|
-| `--days` | Öğrenme süresi (varsayılan: 3) |
+| Option | Description |
+|--------|-------------|
+| `--days` | Learning duration in days (default: 3) |
 
 ### learn stop
 
-Öğrenme modunu durdurur.
+Stops learning mode.
 
 ```bash
 axctl learn stop
@@ -120,7 +127,7 @@ axctl learn stop
 
 ### learn report
 
-Öğrenme raporunu gösterir.
+Shows the learning report.
 
 ```bash
 axctl learn report [--format text|json]
@@ -128,7 +135,7 @@ axctl learn report [--format text|json]
 
 ### label ls
 
-Etiketleri listeler.
+Lists the labels.
 
 ```bash
 axctl label ls
@@ -136,7 +143,7 @@ axctl label ls
 
 ### label add
 
-Etiket ekler.
+Adds a label.
 
 ```bash
 axctl label add LABEL PROCESS
@@ -144,18 +151,19 @@ axctl label add LABEL PROCESS
 
 ### label rm
 
-Etiketi siler. Politika dosyasını elle düzenlemeden bir etiketi
-kaldırmanın yolu.
+Removes a label. This is the way to remove a label without editing the
+policy file by hand.
 
 ```bash
-axctl label rm AD
+axctl label rm NAME
 ```
 
-Var olmayan etikette hata verir; "silindi" deyip sessizce geçmez.
+It returns an error on a non-existent label; it does not say "deleted" and
+silently continue.
 
 ### mode
 
-Modu değiştirir.
+Changes the mode.
 
 ```bash
 axctl mode enforcing|permissive|disabled
@@ -163,7 +171,7 @@ axctl mode enforcing|permissive|disabled
 
 ### template ls
 
-Şablonları listeler.
+Lists the templates.
 
 ```bash
 axctl template ls
@@ -171,7 +179,7 @@ axctl template ls
 
 ### template apply
 
-Şablon uygular.
+Applies a template.
 
 ```bash
 axctl template apply NAME
@@ -179,38 +187,41 @@ axctl template apply NAME
 
 ### version
 
-Sürüm bilgisini gösterir.
+Shows version information.
 
 ```bash
 axctl version
 ```
 
-## Çıkış Kodları
+## Exit Codes
 
-| Kod | Anlam |
-|-----|-------|
-| 0 | Başarılı |
-| 1 | Genel hata |
-| 2 | Politika hatası |
-| 3 | eBPF hatası |
-| 4 | İletişim hatası |
-| 5 | Yetki hatası |
+Scripts rely on these codes.
 
-## Ortam Değişkenleri
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Usage error, or a request the daemon rejected at application level (e.g. "learning mode is already active") |
+| 2 | Policy error — missing file, malformed YAML, schema violation |
+| 3 | Not used |
+| 4 | Infrastructure error — no socket, cannot connect, axdaemon is down |
+| 5 | Configuration or template error |
 
-| Değişken | Açıklama |
-|----------|----------|
-| `AXLINUX_HOME` | AXlinux dizini (varsayılan: ~/.axlinux) |
-| `AXLINUX_SOCKET` | axdaemon socket yolu |
-| `AXLINUX_LOG_LEVEL` | Log seviyesi (debug, info, warn, error) |
-| `AXLINUX_EDITOR` | Varsayılan editör |
+The distinction between 1 and 4 is operationally important: 4 means "check
+the machine", 1 means "fix the command".
 
-## Yapılandırma
+## Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `AXLINUX_HOME` | AXlinux directory (default: ~/.axlinux) |
+| `AXLINUX_SOCKET` | Path to the axdaemon socket (default: /run/axlinux/axdaemon.sock) |
+
+## Configuration
 
 `~/.axlinux/config.yaml`:
 
 ```yaml
-# AXlinux yapılandırması
+# AXlinux configuration
 editor: vim
 log_level: info
 mode: enforcing
@@ -220,25 +231,25 @@ backup_count: 10
 
 ---
 
-## Henüz uygulanmamış komutlar
+## Commands not yet implemented
 
-Aşağıdakiler **çalıştırılabilir değildir**. Bu belge önceden bunları
-normal komutlar gibi listeliyordu; kullanıcı komutu yazıp
-"No such command" alıyordu. Artık burada durumu açık.
+The following are **not runnable**. This document used to list them as
+ordinary commands; the user typed the command and got "No such command".
+Their status is now stated explicitly.
 
-| Komut | Durum | Not |
-|-------|-------|------|
-| `axctl trust add URL` | Yok | Uzak politika kaynağı güvenilirliği (imza anahtarı yönetimi). `docs/roadmap.md` |
-| `axctl policy install NAME` | Yok | Topluluktan politika indirme |
-| `axctl policy verify NAME` | Yok | Politika imza doğrulaması |
-| `axctl policy use NAME` | Yok | İndirilen politikayı etkinleştirme |
+| Command | Status | Note |
+|---------|--------|------|
+| `axctl trust add URL` | Absent | Trust for remote policy sources (signature key management). `docs/roadmap.md` |
+| `axctl policy install NAME` | Absent | Download a policy from the community |
+| `axctl policy verify NAME` | Absent | Policy signature verification |
+| `axctl policy use NAME` | Absent | Activate a downloaded policy |
 
-Bu dört komut uzak kod çalıştırma ve imza doğrulama işlevi
-gerektirir. Yarım uygulanmış bir güvenlik özelliği (imzasız politika
-çekme) **mevcut olan sürümden daha kötüdür**, bu yüzden bilerek
-uygulanmadı. Şu an tek politika kaynağı vardır: kendi
-`~/.axlinux/policy.yaml` dosyan.
+These four commands require remote code execution and signature
+verification. A half-implemented security feature (fetching unsigned
+policies) is **worse than having no such feature at all**, so they were
+deliberately not implemented. There is currently a single policy source:
+your own `~/.axlinux/policy.yaml` file.
 
-CLI referansındaki her komutun gerçekten var olduğu otomatik olarak
-denetlenir (`tests/test_docs.py`). Bir komut buraya eklendiğinde
-CLI'de de olmak zorundadır.
+Every command in this CLI reference is automatically audited against the
+CLI itself (`tests/test_docs.py`). When a command is added here, it must
+also exist in the CLI.

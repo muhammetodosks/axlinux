@@ -1,46 +1,47 @@
 ---
-name: Hata bildirimi
-about: Bir şey beklendiği gibi çalışmıyor
+name: Bug report
+about: Something does not behave as expected
 labels: bug
 ---
 
-## Ne oldu
+## What Happened
 
-<!-- Kısa açıklama -->
+<!-- Short description -->
 
-## Ne bekliyordunuz
+## What You Expected
 
-<!-- Beklenen davranış -->
+<!-- Expected behaviour -->
 
-## Nasıl yeniden ürettiniz
+## How to Reproduce
 
 ```bash
-# Tam olarak çalıştırdığınız komutlar
+# The exact commands you ran
 ```
 
-## Ortam
+## Environment
 
-| Bileşen | Değer |
+| Component | Value |
 |---|---|
-| İşletim sistemi | |
-| Çekirdek | `uname -r` |
-| LSM zinciri | `cat /sys/kernel/security/lsm` |
-| AXlinux sürümü | `axctl version` |
-| Kurulum yolu | RPM / .deb / install.sh |
+| Operating system | |
+| Kernel | `uname -r` |
+| LSM chain | `cat /sys/kernel/security/lsm` |
+| AXlinux version | `axctl version` |
+| Installation path | RPM / .deb / install.sh |
 
-## `axctl status` çıktısı
+## `axctl status` Output
 
 ```
 ```
 
-## Denetim kaydı
+## Audit Record
 
-<!-- Varsa /var/log/axlinux/ altındaki JSONL kayıtları -->
+<!-- If available, the JSONL records under /var/log/axlinux/ -->
 
 ```bash
 sudo axctl logs --limit 20
 ```
 
-> **Güvenlik açığı değilse** bu formu kullanın. Erişim denetimi
-> atlatma gibi güvenlik açıklarını herkese açıkça yazmayın —
-> [SECURITY.md](../../SECURITY.md) yöntemini izleyin.
+> **If this is not a security vulnerability**, use this form. Do not
+> disclose security vulnerabilities such as access control bypasses
+> publicly — follow the procedure in
+> [SECURITY.md](../../SECURITY.md).

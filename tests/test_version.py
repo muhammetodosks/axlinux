@@ -104,19 +104,20 @@ class TestVersionConsistency(unittest.TestCase):
 
     def test_distribution_doc_matches(self):
         declared = self._declared()
-        doc = read("DAGITIM.md")
+        doc = read("docs/DISTRIBUTION.md")
         # Markdown kalin isaretleri ("**1.0.0**") sart degil
-        m = re.search(r"\|\s*Sürüm\s*\|\s*\**([\d.]+)", doc)
-        self.assertIsNotNone(m, "DAGITIM.md surum satiri bulunamadi")
+        # Belge Ingilizce; "Version" satirini ara.
+        m = re.search(r"\|\s*Version\s*\|\s*\**([\d.]+)", doc, re.I)
+        self.assertIsNotNone(m, "docs/DISTRIBUTION.md surum satiri bulunamadi")
         self.assertEqual(m.group(1), declared,
-                         "DAGITIM.md eski surumu gosteriyor")
+                         "docs/DISTRIBUTION.md eski surumu gosteriyor")
 
     def test_no_experimental_framing(self):
         """'Deneysel' etiketi kurulmus bir surum icin yanilticidir."""
-        doc = read("DAGITIM.md").lower()
+        doc = read("docs/DISTRIBUTION.md").lower()
         for word in ("deneysel", "experimental"):
             self.assertNotIn(word, doc,
-                             f"DAGITIM.md '{word}' diyor; 1.0.0 kurulmus "
+                             f"docs/DISTRIBUTION.md '{word}' diyor; 1.0.0 kurulmus "
                              f"bir surum icin yaniltici")
 
     def test_changelog_has_current_version(self):
@@ -149,10 +150,10 @@ class TestVersionConsistency(unittest.TestCase):
 
     def test_no_experimental_framing(self):
         """'Deneysel' etiketi kurulmus bir surum icin yanilticidir."""
-        doc = read("DAGITIM.md").lower()
+        doc = read("docs/DISTRIBUTION.md").lower()
         for word in ("deneysel", "experimental"):
             self.assertNotIn(word, doc,
-                             f"DAGITIM.md '{word}' diyor; 1.0.0 kurulmus "
+                             f"docs/DISTRIBUTION.md '{word}' diyor; 1.0.0 kurulmus "
                              f"bir surum icin yaniltici")
 
     def test_changelog_has_current_version(self):
