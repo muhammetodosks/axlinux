@@ -292,6 +292,28 @@ cleanup_all() {
 }
 trap cleanup_all EXIT
 
+# Baslamadan once servislerin ayakta oldugundan EMIN OL.
+#
+# SORUN: betik dogrudan "LSM kancalari" kapisiyla basliyordu. Servis
+# yeni baslatildiginda veya yeniden baslamaktayken (Fedora 43'te
+# SELinux geri alma sonrasi yeniden baslatma birkac saniye sürüyor)
+# daemon henuz soket'i acmamis oluyor; kapı "?/?" okuyup kirmiziya
+# donuyordu, oysa birkac saniye sonra 5/5 idi.
+#
+# Yani bu satirlar ayri bir testin degil, ZAMANLAMA hatasiydi.
+if ! ax_wait_healthy 120; then
+    printf '%sHATA: axdaemon 120 saniyede hazir olmadi%s\n' "$RED" "$RST" >&2
+    exit 1
+fi
+# Kanca sayisi da ancak yuklenmis oldugunda anlamlidir.
+for _w in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    _h=$(axctl status --json 2>/dev/null \
+         | sed -n 's/.*"lsm_hooks_total"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' \
+         | head -1)
+    [ -n "${_h:-}" ] && [ "${_h:-0}" -gt 0 ] && break
+    _w=$((_w + 1)); sleep 1
+done
+
 printf '%sAXlinux kapsamli dogrulama - %s%s\n' "$CYN" "$(date -Is)" "$RST"
 info "LSM: $(cat /sys/kernel/security/lsm 2>/dev/null)"
 info "kernel: $(uname -r)   dagitim: $(. /etc/os-release 2>/dev/null && echo "$PRETTY_NAME")"
