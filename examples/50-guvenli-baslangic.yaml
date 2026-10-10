@@ -1,0 +1,134 @@
+# 50-guvenli-baslangic.yaml
+#
+# Yeni kullanicilar icin guvenli bir baslangic politikasi.
+#
+# KURULUM
+#   sudo cp 50-guvenli-baslangic.yaml /etc/axlinux/policies.d/
+#   axctl policy check -f /etc/axlinux/policies.d/50-guvenli-baslangic.yaml
+#   sudo axctl reload
+#   sudo axctl status
+#
+# ONCE OKUYUN
+#   Bu politika once "permissive" moddadir: kurallar LOGLANIR ama
+#   ENGELLEMEZ. Sisteminize uygunlugunu olcmek icin birkac gun
+#   calistirin, loglari inceleyin, sonra "enforcing" yapin.
+#
+#   mode: enforcing   # yalnizca emin olduktan sonra
+#
+# Bu dosya policies.d altindadir; AXLINUX_HOME/policy.yaml
+# (kullanicinin kendi politikasi) ayrica yuklenir ve birlestirilir.
+# Buradaki kurallar KISITLAYICIDIR: iki katman birlestirilir.
+
+version: 1
+mode: permissive
+
+# Etiketler: kural yazarken surec adini tek tek yazmak yerine
+# bir grup tanimlayabilirsiniz.
+labels:
+  # Her etiket BAGIMSIZ bir surec listesi olmalidir; listeler
+  # ust uste binmemelidir.
+  #
+  # Tarayicilar
+  browser:
+    - firefox
+    - chromium
+    - google-chrome
+  # Kabuklar
+  shell:
+    - bash
+    - zsh
+    - fish
+  # Dosya yoneticileri
+  desktop:
+    - nautilus
+    - dolphin
+    - thunar
+  # Paket yoneticileri
+  pkgmgr:
+    - dnf
+    - apt
+
+rules:
+
+  # --- 1. Tarayicilar anahtarlari okuyamaz -------------------------
+  #
+  # Tarayiciya giris yapmis bir sayfa tarayici dosya sistemi
+  # uzerinden erisemez. Kullanicinin SSH anahtarlari guvende kalir.
+  - id: tarayici-ssh
+    name: "Tarayicilar SSH anahtarlarini okuyamaz"
+    subject: browser
+    object: ~/.ssh
+    action: file.read
+    effect: deny
+
+  - id: tarayici-gpg
+    name: "Tarayicilar GPG anahtarlarini okuyamaz"
+    subject: browser
+    object: ~/.gnupg
+    action: file.read
+    effect: deny
+
+  # --- 2. Sifre dosyalari -------------------------------------------
+  #
+  # /etc/shadow sistemdeki kullanici parola ozetlerini tutar.
+  # Normal kullaniciya ait degildir; hicbir uygulamanin okumamasi
+  # gerekir. root haric herkes icin engellenir.
+  # DIKKAT: subject ALANI ZORUNLUDUR. Ayrica etiket listeleri
+  # ust uste binmemelidir - bir etiket digerinin altinda kalirsa
+  # kural beklenmedik surecleri de kapsar. Dogrulayici bu
+  # durumu UYARI olarak bildirir.
+  - id: shadow-okuma
+    name: "Sifre dosyasi yalnizca root tarafindan okunabilir"
+    subject: browser
+    object: /etc/shadow
+    action: file.read
+    effect: deny
+
+  # --- 3. Gunluk dosyalari ------------------------------------------
+  #
+  # Klasor kurali ICERIGINI de korur: /var/log altindaki her sey
+  # reddedilir, alt dizinler dahil. Daha ince ayar gerekiyorsa
+  # tek tek yazabilirsiniz.
+  #
+  # Yalnizca tarayici icin: sistem gunlugu yazan diger
+  # surecler ETKILENMEZ.
+  - id: gunluk-yazma
+    name: "Uygulamalar sistem gunluklerine yazamaz"
+    subject: browser
+    object: /var/log
+    action: file.write
+    effect: deny
+
+  # --- 4. Paket yoneticisi disi her sey --------------------------------
+  #
+  # DIKKAT: bu kural SADECE calistirilabilir dosya yollarini
+  # etkiler ve sistemi kullanilamaz hale getirebilir. Once
+  # "permissive" modda calistirip loglari inceleyin.
+  #
+  # Asagida yorum disi bir ornek. DIKKAT: "subject" ZORUNLUDUR -
+  # belirtilmezse dogrulayici reddeder. Tum surecleri yazmak
+  # yerine "not-pkgmgr" gibi bir etiket kullanilir:
+  #
+  # labels:
+  #   not-pkgmgr:
+  #     - bash
+  #     - firefox
+  #
+  # - id: paket-disi-calistirma
+  #   name: "Sadece paket yoneticileri uygulama calistirabilir"
+  #   subject: not-pkgmgr
+  #   object: /usr/bin
+  #   action: file.execute
+  #   effect: deny
+
+# ---------------------------------------------------------------------------
+# BU POLITIKA NE YAPMIYOR (bilerek)
+#
+#   - root'a kisitlama koymaz
+#   - ag baglantilarina karis-maz
+#   - process.exec'i her seye uygulamaz
+#   - sistemin calismasi icin gereken dosyalara dokunmaz
+#
+# Tam kisitlama istiyorsaniz: docs/policy-language.md ve
+# examples/desktop.yaml dosyalarina bakin.
+# ---------------------------------------------------------------------------
