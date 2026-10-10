@@ -65,3 +65,12 @@ venv/
 # ile sifirdan derlenir; burasi sadece cikti dizinidir.
 packaging/fedora/*.pp
 packaging/fedora/tmp/
+
+# Derlenmis paketler repoya GIRMEZ. CI her commit'te yeniden uretir
+# ve icerigini dogrular; hazir paket commit'lemek (a) boyutu
+# gereksiz buyutur, (b) kaynakla eskimesi riskini tasir.
+*.rpm
+*.deb
+
+# Yerel dagitim klasoru (paket + belge kopyalari)
+downloads/

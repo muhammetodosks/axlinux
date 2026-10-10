@@ -1,58 +1,145 @@
-# AXlinux — Sen YAML yaz, AXlinux uygulasın.
+# AXlinux
 
-> **Dağıtım hazır mı? → [`DAGITIM-READY.md`](DAGITIM-READY.md)**
-> 1.2.0 için dokuz maddenin tamamı gerçek düzeltme + ölçülmüş kanıtla
-> kapatıldı: `deep_verify` **Fedora 44'te 732 geçti / 0 kaldı / 0 atlandı**,
-> Ubuntu 24.04.5 ve Pardus 25.2'de **731 geçti / 0 kaldı / 1 atlandı**, imzalı
-> RPM, journald sınırları, %52 disk.
->
-> Ayrıntılı ölçüm tabloları: [`FEDORA-READINESS.md`](FEDORA-READINESS.md)
->
-> Tüm belge iddialarının nasıl doğrulandığı, hangi ölçümün neyi
-> kanıtladığı ve doğrulama sırasında bulunan gerçek ürün hataları:
-> [`DOGRULAMA-RAPORU.md`](DOGRULAMA-RAPORU.md)
->
-> **Hangi sistemler destekleniyor?** [`SUPPORT.md`](SUPPORT.md)
+**YAML yaz, AXlinux uygulasın.**
 
-Kullanıcı odaklı, YAML tabanlı Mandatory Access Control sistemi.
-Milyonlarca satır hazır politika yok: **politika senin, tek
-gerçek kaynak `~/.axlinux/policy.yaml`.**
+Kullanıcı odaklı, Mandatory Access Control (MAC) sistemi. Milyonlarca
+satır hazır politika yok — **politika senin**, tek gerçek kaynağın
+`~/.axlinux/policy.yaml`.
 
-## Fedora 44 uyumlulugu
+```yaml
+# ~/.axlinux/policy.yaml
+version: 1
+mode: enforcing
+rules:
+  - id: gizli-anahtarlar
+    name: "SSH ve GPG anahtarları okunamaz"
+    subject: [cat, less, vim]
+    object: /home/kullanici/.ssh
+    action: file.read
+    effect: deny
+```
 
-Fedora 44 (en gecerli kararli surum) SELinux **Enforcing** altinda
-tam dogrulanmistir: 5/5 eBPF kanitasi, 5/5 LSM kanitasi,
-enforcement aktif, 716 dogrulama kontrolu geciyor.
+Tek komutla çalışır, `cat ~/.ssh/id_rsa` çıktısı `Operation not permitted` olur.
 
-Fedora'ya ozgu iki davranis bilinmelidir:
+> ⚠️ **Bu yazılım yalnızca sanal makinede çalıştırılır.**
+> Erişim denetimi uygular; ana makinede çalıştırılırsa sistemi kilitleyebilir.
+> `axctl` bunu ayrıca denetler ve reddeder. Ayrıntı: [Güvenlik](#güvenlik).
 
-- Kok dosya sistemi btrfs alt birimidir; `/etc`, `/var`, `/home`,
-  `/root` yol kurallari calisir. `/tmp`, `/dev/shm`, `/run`,
-  `/run/user/N` gibi **ayri mount** noktalari da calisir: daemon
-  mountinfo'dan superblock cihazini okuyup `mount_point_map`'e
-  yazar, BPF mount kokune ulastiginda oneki yolun altina ekler
-  (`docs/policy-language.md`).
-- `process.exec` / `file.execute` kurallari **sembolik baglarin
-  hedefine** uygulanir: `/usr/bin/python3` bir bag ise kural
-  `python3.14` icin yazilir. Bu guvenlik icin zorunludur.
+---
 
-Ayrinti: `DAGITIM.md` ve `CHANGELOG.md`.
+## İçindekiler
+
+- [Neden AXlinux?](#neden-axlinux)
+- [Özellikler](#özellikler)
+- [Gereksinimler](#gereksinimler)
+- [Kurulum](#kurulum)
+- [Hızlı başlangıç](#hızlı-başlangıç)
+- [Nasıl çalışır](#nasıl-çalışır)
+- [Fedora'ya özgü davranışlar](#fedoraya-özgü-davranışlar)
+- [Doğrulanmış durum](#doğrulanmış-durum)
+- [Testler](#testler)
+- [Güvenlik](#güvenlik)
+- [Katkı](#katkı)
+- [Lisans](#lisans)
+
+---
+
+## Neden AXlinux?
+
+| | SELinux | AXlinux |
+|---|---|---|
+| Politika kaynağı | Hazır, milyonlarca satır | **Senin YAML'ın** |
+| Kim yazar? | Fedora ekibi | Sen |
+| Öğrenme | `audit2allow` | `axctl learn` → gözlem → öneri |
+| Uygulama | `setenforce` + reboot riski | `axctl reload` → **anında** |
+| Log | `audit.log` (metin) | JSONL (yapılandırılmış, sorgulanabilir) |
+| Etki alanı | Sistem geneli | Süreç, yol, eylem — sen seçersin |
+
+SELinux kaldırılmak için değil, **tamamlanmak** için vardır. İkisi
+birlikte çalışır: SELinux alan sınırını verir (`axdaemon` kendi
+alanında çalışır), AXlinux içerik kurallarını yazar.
+
+## Özellikler
+
+- **YAML politika dili** — derlenmiş bir dil değil, okunabilir metin.
+- **Dizin kuralları içeriği korur** — `object: /tmp/gizli` ise içindeki
+  tüm dosyalar da korunur (derinlik 1/2/3 doğrulanmıştır).
+- **Altı aksiyon türü** — `file.read`, `file.write`, `file.execute`,
+  `inode_permission`, `socket_connect`, `socket_bind`.
+- **Beş LSM kancası** — `file_open`, `inode_permission`,
+  `bprm_check_security`, `socket_connect`, `socket_bind`.
+- **Üç mod** — `enforcing` (engelle), `permissive` (yalnız logla),
+  `disabled` (kısıt yok).
+- **Kalıcı politikalar** — `policies.d/` altındaki dosyalar açılışta
+  otomatik yüklenir.
+- **Önden görme** — `axctl policy simulate` kuralların etkisini
+  uygulamadan önce gösterir.
+- **Öğrenme modu** — `axctl learn` gözlem toplar, politika önerir.
+- **Etiketler** — süreçlere etiket atayıp kuralları etiket üzerinden yaz.
+- **Yapılandırılmış denetim** — JSONL log, `--subject` / `--effect` /
+  `--action` ile sorgulanır.
+- **Anında uygulama** — `axctl reload`; yeniden başlatma gerekmez.
+
+## Gereksinimler
+
+| Bileşen | Sürüm | Not |
+|---|---|---|
+| İşletim sistemi | Fedora 41–44 | RHEL türevleri de çalışır |
+| Çekirdek | **5.15+** | `CONFIG_BPF_LSM=y` **ve** `lsm=bpf` zincirde olmalı |
+| clang | 12+ | `-target bpf` desteklemeli |
+| Go | 1.21+ | yalnızca **derleme** için |
+| Python | 3.9+ | `click`, `rich`, `PyYAML` |
+| Kök yetkisi | — | kurulum ve `axctl` için |
 
 ## Kurulum
 
+### RPM (Fedora)
+
 ```bash
+sudo dnf install ./axlinux-1.2.0-1.x86_64.rpm
+```
+
+Paket imzalıdır:
+
+```bash
+rpm -Kv axlinux-1.2.0-1.x86_64.rpm
+# Header OpenPGP V4 RSA/SHA512 signature,
+#   key fingerprint: f108e5cc55806bbb4fc42afa6a2e2989448a5310: OK
+```
+
+### .deb (Debian / Ubuntu / Pardus)
+
+```bash
+sudo apt install ./axlinux_1.2.0_amd64.deb
+```
+
+### Kaynaktan
+
+```bash
+git clone https://github.com/muhammetodosks/axlinux.git
+cd axlinux
 sudo ./scripts/install.sh
 ```
 
-> **Zorunlu adım:** AXlinux, kernel'in aktif LSM zincirinde `bpf`
-> bulunmadan **politika uygulayamaz**. Kurulum betiği bunu kontrol
-> eder ve gerekirse açıkça uyarır.
-> ```
-> # /etc/default/grub  ->  GRUB_CMDLINE_LINUX_DEFAULT
-> lsm=apparmor,bpf
-> # sudo update-grub && sudo reboot
-> ```
-> Ayrıntı: [docs/INSTALL.md](docs/INSTALL.md)
+### Zorunlu ön koşul: `bpf` LSM
+
+AXlinux, kernel'in aktif LSM zincirinde `bpf` bulunmadan politika
+**uygulayamaz**. `install.sh` bunu denetler ve gerekirse uyarır.
+
+```bash
+# /etc/default/grub  ->  GRUB_CMDLINE_LINUX_DEFAULT
+lsm=apparmor,bpf
+sudo update-grub && sudo reboot
+```
+
+Denetlemek için:
+
+```bash
+cat /sys/kernel/security/lsm
+# lockdown,capability,yama,selinux,bpf,...   <- "bpf" olmalı
+```
+
+Ayrıntı: [docs/INSTALL.md](docs/INSTALL.md)
 
 ## Hızlı başlangıç
 
@@ -60,212 +147,188 @@ sudo ./scripts/install.sh
 axctl init                  # ~/.axlinux/ oluştur
 axctl policy edit           # YAML politikanı yaz
 axctl policy check          # doğrula
-axctl policy simulate       # neyi etkileyeceğini gör
-sudo axctl reload           # uygula
-sudo axctl status           # gerçek durumu kontrol et
+axctl policy simulate       # neyi etkileyeceğini ÖNCE gör
+axctl mode permissive       # loglar, engellemez
+axctl reload                # uygula
+axctl status                # gerçek durumu kontrol et
 ```
 
-> **Neden `sudo`?** Daemon socket'i `0600` iznine sahip. Üzerinden
-> `reload_policy` gönderilebildiği için herkese açık olsaydı
-> (`0666`) herhangi bir yerel kullanıcı sistem genelinde politika
-> değiştirebilirdi. Politika *yazma* komutları kullanıcı dizininde
-> çalışır, daemon'a konuşan komutlar `sudo` ister.
+**Önerilen sıra bu.** `simulate` en önemli komuttur — kuralların neyi
+etkileyeceğini uygulamadan önce gösterir.
 
-Örnek politika:
+### Örnek politikalar
 
-```yaml
-version: 1
-mode: enforcing
+Depodaki `examples/` klasöründe dört hazır örnek var; hepsi
+`axctl policy check` ile doğrulanmıştır:
 
-labels:
-  web:
-    - nginx
-    - apache2
-  browsers:
-    - firefox
-    - chromium
+| Dosya | Amaç |
+|---|---|
+| `examples/minimal.yaml` | En küçük başlangıç örneği |
+| `examples/desktop.yaml` | Masaüstü kullanımı (SSH/GPG anahtarları, tarayıcı profilleri) |
+| `examples/web-server.yaml` | Web sunucusu (yapılandırma ve günlük koruması) |
+| `packaging/fedora/axlinux-sample-workstation.yaml` | Kurulumla gelen örnek (kasıtlı olarak boş) |
 
-rules:
-  - name: "web sunucuları web içeriğini okur"
-    subject: web
-    object: /var/www
-    action: file.read
-    effect: allow
-
-  - name: "web sunucuları shadow okuyamaz"
-    subject: web
-    object: /etc/shadow
-    action: file.read
-    effect: deny
-
-  - name: "python dışarı çıkamaz"
-    subject: python
-    action: net.connect
-    effect: deny
-```
-
-## Doğrulama
-
-`5/5 kanca bağlı` **engellemenin çalıştığı anlamına gelmez.** Gerçek
-test:
+Kopyalamak için:
 
 ```bash
-sudo bash tests/verify_all.sh
+sudo cp examples/desktop.yaml /etc/axlinux/policies.d/50-desktop.yaml
+sudo axctl reload
 ```
 
-Bu betik her kancayı gerçek bir engelleme ile dener, audit kaydını
-kontrol eder, mod geçişlerini doğrular ve **sistemi kilitlemez**
-(kritik süreçlere kural uygulanmaz, her adımdan sonra mod kapatılır).
+Politika dili: [docs/policy-language.md](docs/policy-language.md)
 
-## Güvenlik notu: sistem kilitlenmesi
-
-Bir kural `bash`, `sudo`, `systemd` veya `sshd` gibi **kurtarma
-yolundaki** bir sürece uygulanırsa sistem kendini kilitler — oturum
-kapanır ve kullanıcı sisteme erişemez. AXlinux bunu tasarım gereği
-engeller:
-
-> `bash`, `sh`, `dash`, `zsh`, `fish`, `sudo`, `su`, `doas`, `systemd`,
-> `sshd`, `login`, `agetty`, `dbus-daemon`, `polkitd`,
-> `NetworkManager` gibi **kurtarma yolu** süreçlerine hiçbir kural
-> uygulanmaz.
-
-Politikada bu süreçlerden birini hedeflerseniz derleme hata verir
-(goşte seçilen kural hiç yazılmaz).
-
-**Yorumlayıcılar korunmaz.** `python3`, `node`, `perl`, `ruby` gibi
-süreçler listede *değildir* — çoğu gerçek uygulama bir yorumlayıcıdan
-çalışır ve "python3 /etc/shadow okuyamaz" MAC'in en sık kullanılan
-kuralıdır. Bunları korumak ürünü kullanılamaz hâle getirirdi ve
-kilitlenmeyi önlemezdi: kullanıcı zaten korumalı bir kabuğa sahiptir.
-
-Kuralları hedef uygulamaya uygulayın (`firefox`, `nginx`, `python3`,
-`node`).
-Ayrıntı: [docs/challenges-risks.md](docs/challenges-risks.md)
-
-## Mimarî
+## Nasıl çalışır?
 
 ```
-~/.axlinux/policy.yaml
-        │  (YAML)
-        ▼
-   axctl ──── axc derleyici        Python 3.10+
-   (CLI)     doğrula + önceliklendir
-        │  JSON-RPC / Unix socket
-        ▼
-   axdaemon                        Go 1.21+
-        │  eBPF map'lerine yaz
-        ▼
-   axbpf (C) — 5 LSM kancası
-        │
-        ▼
-   Linux çekirdek (5.15+, lsm=bpf)
-        │
-        ▼
-   axlog (Go) — JSON audit log
+  axctl (Python)                     axdaemon (Go)                çekirdek
+       │                                   │                          │
+  YAML ──┤ policy check / simulate         │                          │
+       │                                   │                          │
+  policy.yaml ─────────────────────────────►│                          │
+       │                            eBPF programlarını yükle         │
+       │                                   ├─────────────────────────►│
+       │                                   │      LSM kancaları bağla  │
+       │                                   ├─────────────────────────►│
+       │                                   │      deny_map / allow_map │
+       │                                   ├─────────────────────────►│
+       │◄────── status (kanca, kural) ──────┤                          │
+       │                                   │                          │
+       │◄────── logs (JSONL) ──────────────┴──── audit perf buffer ───┤
 ```
 
-| Bileşen | Dil | Rol |
-|---------|-----|-----|
-| `axctl` | Python | Kullanıcının tek arayüzü |
-| `axc` | Python | YAML → doğrula → önceliklendir → JSON |
-| `axdaemon` | Go | Politika yönetimi, map yazımı, RPC sunucusu |
-| `axbpf` | C | 5 LSM kancası, minimum C |
-| `axlog` | Go | JSON audit log servisi |
+`axdaemon` politikayı eBPF haritalarına yazar ve LSM kancalarını bağlar.
+Çekirdek, kararı kanca anında verir — kullanıcı alanına girmez, süreç
+beklemez. İhlaller JSONL olarak `/var/log/axlinux/` altına düşer.
 
-### LSM kancaları
+SELinux modülü (`axlinux.pp`) `bpf()` yetkisini **yalnızca** `axdaemon`
+alanına verir; sistem geneline açmaz.
 
-`file_open` · `inode_permission` · `bprm_check_security` ·
-`socket_connect` · `socket_bind`
+## Fedora'ya özgü davranışlar
 
-## Modlar
+İki davranış bilinmelidir:
 
-| Mod | Davranış |
-|-----|----------|
-| `enforcing` | İhlal engellenir + loglanır |
-| `permissive` | İhlal yalnızca loglanır |
-| `disabled` | Hiçbir kısıt uygulanmaz |
+**1. Kök dosya sistemi btrfs alt birimidir.** `/etc`, `/var`, `/home`,
+`/root` yol kuralları çalışır. `/tmp`, `/dev/shm`, `/run`,
+`/run/user/N` gibi ayrı bağlama noktaları da çalışır: daemon
+`mountinfo`'dan süperblok aygıtını okuyup `mount_point_map`'e yazar ve
+BPF bağlama köküne ulaştığında öneki yolun altına ekler.
 
-## SELinux'a karşı
+**2. `file.execute` kuralları sembolik bağların hedefine uygulanır.**
+`/usr/bin/python3` bir bağ ise kural `python3.14` için yazılır.
+Bu güvenlik için zorunludur — aksi hâlde bağ üzerinden kural atlanır.
 
-| | SELinux | AXlinux |
-|---|---|---|
-| Politika kaynağı | Hazır, milyonlarca satır | Kullanıcının YAML'ı |
-| Öğrenme | `audit2allow` | `axctl learn` → 3 gün → öneri |
-| Uygulama | `setenforce` + reboot riski | `axctl reload` → anında |
-| Log | `audit.log` (metin) | JSON (yapılandırılmış) |
-| Felsefe | Sen uyarsın | Sen yazarsın |
+## Doğrulanmış durum
 
-## Durum
+Tüm sayılar **ölçülmüştür**. Kaynak: [`DOGRULAMA-RAPORU.md`](DOGRULAMA-RAPORU.md).
 
-Sürüm **1.2.0**. Üç dağıtım yolunda (RPM, `install.sh`, `.deb`) gerçek
-enforcement ile uçtan uca doğrulandı. `deep_verify`: **Fedora 44 → 732 geçti /
-0 kaldı / 0 atlandı**, **Ubuntu 24.04.5 → 731 / 0 / 1**, **Pardus 25.2 →
-731 / 0 / 1** (tek skip: Debian ailesinde SELinux yok). Go 13 paket,
-Python 179 + 20 alt test. Özet:
-[`DAGITIM-READY.md`](DAGITIM-READY.md).
+### `deep_verify.sh` — 732 kontrol
 
-| Bileşen | Durum | Kanıt |
-|---------|-------|-------|
-| eBPF LSM (5 kanca) | Çalışıyor | `bpf_programs_loaded 5/5`, `status.hooks` beşi de `true` |
-| axdaemon | Çalışıyor | `tests/deep_verify.sh` D bölümü (5 kanca, gerçek engelleme) |
-| axlog | Çalışıyor | `audit_healthy: true`, kalıcı JSONL (VM'lerde 6.000+ kayıt) |
-| axctl | Çalışıyor | 142 birim testi + B bölümü (tüm komutlar) |
-| Öğrenme modu | Çalışıyor | gözlem toplama 0 → 192, öneri YAML olarak geçerli |
-| Politika dili | Çalışıyor | I ve J bölümleri: hata yolları + kenar durumlar |
-| Dağıtım | Çalışıyor | tek komut kurulum, 5 paket yöneticisi, idempotent |
+| Platform | geçti | kaldı | atlandı |
+|---|---|---|---|
+| **Fedora 44** | **732** | **0** | **0** |
+| Fedora 43 | 732 | 1 | 1 |
+| Ubuntu 24.04.5 | 731 | 0 | 1 |
+| Debian 12 | 731 | 0 | 1 |
+| Pardus 25.2 | 731 | 0 | 1 |
 
-**Doğrulanan dağıtımlar:** Ubuntu 24.04.5 LTS · Debian 12
-(bookworm) · Pardus 25.2 (yirmibes, resmî arşivden).
+Debian ailesindeki tek atlanan kalem `SELinux yok`'tur — Debian ailesi
+SELinux sağlamaz; bu eksik değil, platform farkıdır. Fedora 44'te
+**hiçbir kalem atlanmaz**.
 
-Kapsam dışı olanlar (bilinçli kararlar ve eklikler):
-container kapsamı, GUI, imzalı politika dağıtımı, silme/oluşturma
-denetimi, kullanıcı bazlı kurallar. Tam liste ve gerekçeleri
-[docs/challenges-risks.md](docs/challenges-risks.md) ve
-[docs/roadmap.md](docs/roadmap.md).
+Fedora 43'teki tek kalem, o imajda SELinux kuşaklamasının eBPF yüklemeyi
+engellediğini dürüstçe bildiren rapordur; enforcement çalışmaktadır
+(kanca 5/5, eBPF 5/5).
 
-Kullanıcı belgeleri: [DAGITIM.md](DAGITIM.md).
+### Ölçülen performans
+
+| Ölçüm | Değer |
+|---|---|
+| `axdaemon` RSS | 108.236 kB (~106 MB) |
+| Açık dosya tanıtıcı | 33 |
+| 50.000 dosya açma (`enforcing`) | 0.559 s (~89.600 açma/sn) |
+| 50.000 dosya açma (`disabled`) | 0.228 s (~220.000 açma/sn) |
+| Politika sorgusu maliyeti | +5.8 µs (aralıklar çakışmıyor — ölçülebilir) |
+
+Fark 0.33 saniye: tarayıcı açılışı gibi gerçek bir iş yükünde
+algılanmayacak büyüklükte.
+
+> Mutlak mikrosaniye değerleri tek başına ölçüt değildir — aynı ölçüm
+> Ubuntu'da Fedora'ya göre ~20 kat yavaş çıkar, çünkü sanal makine ortamı
+> belirleyicidir. Bu yüzden test paketi **göreli oran** uygular.
+
+### Paketleme matrisi
+
+Beş imajın beşinde de paketleme koşuldu: `fedora:41/42/43/44` ve
+`debian:12` — her biri 8/8 içerik + 5 conffiles + SELinux modülü.
 
 ## Testler
 
 ```bash
-make test           # Go + Python
-make test-contract  # Go↔C sabit senkronizasyonu
-make verify         # ELF bölüm doğrulaması
-sudo python3 tests/integration.py --daemon /usr/bin/axdaemon
+# Yerel paket — hızlı
+python3 -m pytest tests/ -q          # 179 test + 20 alt test
+cd src/go/axdaemon && go test ./...  # 10 paket
+cd src/go/axlog    && go test ./...  # 3 paket
+
+# Tam doğrulama — sanal makine gerektirir
+sudo bash tests/deep_verify.sh
 ```
 
-**`test-contract` neden önemli:** Go ile C arasındaki sabitler
-(aksiyon/effekt numaraları, yapı düzenleri) uyuşmazsa sistem sessizce
-hiçbir şeyi engellemez. `EFFECT_DENY`in ters yazılması tüm deny
-kurallarını sessizce etkisizleştirir. Testler bu yüzden `axbpf.h`'yi
-ayrıştırıp Go sabitleriyle karşılaştırır.
+`deep_verify.sh` 732 kontrolü çalıştırır ve tek rapor üretir. Fiziksel
+makinede çalışmayı **reddeder** — bu bilinçli bir güvenlik sınırıdır.
 
-## Güvenlik notu
+Ayrıntı: [DOGRULAMA-RAPORU.md](DOGRULAMA-RAPORU.md)
 
-Bu bir erişim kontrol aracıdır. Yanlış politika sizi kendi
-sisteminizden kapatabilir. Sırayla ilerleyin:
+## Güvenlik
 
-```
-axctl policy check → simulate → mode permissive → mode enforcing
+### Acil çıkış
+
+```bash
+sudo axctl mode disabled
 ```
 
-Acil çıkış her zaman çalışır: `sudo axctl mode disabled`.
-Bu komut modu `mode_map`'e yazar; yalnızca Go belleğini güncelleyen
-sürümlerde acil çıkış sessizce hiçbir şey yapmıyordu.
+Her zaman çalışır ve tüm kısıtları kaldırır.
 
-`root` AXlinux'u baypas eder; bu kabul edilmiş bir sınırdır.
+### Güvenli uygulama sırası
 
-## Dokümantasyon
+```
+1. axctl policy check      → sözdizimi ve anlam doğrulaması
+2. axctl policy simulate  → etkiyi önceden gör
+3. axctl mode permissive   → loglar, engellemez
+4. axctl reload            → uygula
+5. axctl status            → gerçek durumu doğrula
+```
 
-- [Kurulum](docs/INSTALL.md) — `lsm=bpf` adımı dahil
-- [Mimari](docs/architecture.md)
-- [Politika Dili](docs/policy-language.md)
-- [Bileşen Tasarımı](docs/component-design.md)
-- [CLI Referansı](docs/cli-reference.md)
-- [Kullanıcı Senaryoları](docs/user-scenarios.md)
-- [Zorluklar ve Riskler](docs/challenges-risks.md)
-- [Yol Haritası](docs/roadmap.md)
+### Bilinen sınır
+
+`inode_permission` kancası kernel ABI'si gereği **yol alamaz** —
+yalnızca `struct inode *` verilir, dentry'ye geri referans yoktur.
+Çözüm olarak `ino` + `dev` kimliği audit kaydına eklenir; yol gerektiren
+kayıtlar `file_open` ve `bprm_check_security` kancalarında kalır.
+
+### Güvenlik açığı bildirimi
+
+Güvenlik açığı bulursanız lütfen [SECURITY.md](SECURITY.md) içindeki
+yöntemi izleyin — herkese açık issue yerine özel bildirim.
+
+## Katkı
+
+Katkılar memnuniyetle karşılanır:
+[CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Lisans
 
 MIT — bkz. [LICENSE](LICENSE)
+
+## Belgeler
+
+| Belge | İçerik |
+|---|---|
+| [DOGRULAMA-RAPORU.md](DOGRULAMA-RAPORU.md) | Her iddianın nasıl kanıtlandığı, bulunan gerçek hatalar |
+| [DAGITIM.md](DAGITIM.md) | Kurulum yolları ve platform sonuçları |
+| [SUPPORT.md](SUPPORT.md) | Desteklenen sistemler ve sınırlar |
+| [FEDORA-READINESS.md](FEDORA-READINESS.md) | Fedora ölçüm tabloları |
+| [CHANGELOG.md](CHANGELOG.md) | Sürüm geçmişi |
+| [docs/INSTALL.md](docs/INSTALL.md) | Ayrıntılı kurulum |
+| [docs/policy-language.md](docs/policy-language.md) | Politika dili |
+| [docs/cli-reference.md](docs/cli-reference.md) | Tüm komutlar |
+| [docs/architecture.md](docs/architecture.md) | İç mimari |
