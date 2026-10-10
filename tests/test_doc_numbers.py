@@ -100,25 +100,43 @@ class TestDocNumbers(unittest.TestCase):
                            "AST tabanli sayim testleri gormuyor")
 
     def test_distribution_doc_claims_match_measured_result(self):
-        """DAGITIM.md her dagitim icin 100/0/0 iddia ediyor.
+        """DAGITIM.md her dagitim icin OLCULMUS sonucu gostermeli.
 
-        Bu sonuc uc sanal makinede GERCEKTEN olustu; test,
-        iddianin metinde var oldugunu ve 0 basarisiz bulundugunu
-        dogrular.
+        Bu sayilar dort sanal makinede GERCEKTEN olustu:
+          Fedora 44      -> 732 gecti / 0 kaldi / 0 atlandi
+          Ubuntu 24.04.5 -> 731 / 0 / 1
+          Debian 12      -> 731 / 0 / 1
+          Pardus 25.2    -> 731 / 0 / 1
+        (Debian ailesinde SELinux yok; tek atlanan kalem bu.)
+
+        Test, iddianin metinde OLDUGUNU ve daha once kullanilan
+        BAYAT sayinin (732/0/1) geri gelmedigini dogrular.
         """
         doc = self.read("DAGITIM.md")
-        for distro in ("Ubuntu 24.04", "Debian 12", "Pardus 25.2"):
+        for distro in ("Fedora 44", "Ubuntu 24.04", "Debian 12",
+                       "Pardus 25.2"):
             self.assertIn(distro, doc, f"{distro} DAGITIM.md'de yok")
-        self.assertIn("732/0/1", doc,
-                      "DAGITIM.md olculmus sonucu gostermeli")
+        self.assertIn("732/0/0", doc,
+                      "DAGITIM.md Fedora 44 sonucunu gostermeli")
+        for distro in ("Ubuntu", "Debian", "Pardus"):
+            self.assertIn("731/0/1", doc,
+                          f"{distro} icin olculmus 731/0/1 olmali")
         self.assertNotIn("100/0/0", doc,
                          "DAGITIM.md'de bayat dogrulama sayisi kaldi")
+        # 732/0/1 daha once her dagitim icin yaziliydi ve YANLISTI:
+        # Debian ailesinde SELinux olmadigi icin gercek sonuc 731/0/1.
+        self.assertNotIn("732/0/1", doc,
+                         "DAGITIM.md'de bayat 732/0/1 sayisi kaldi")
 
     def test_readme_states_current_state(self):
         """README gercek dogrulama sonucunu gostermeli."""
         text = self.read("README.md")
         self.assertIn("732 geçti", text,
                       "README.md guncel dogrulama sonucunu gostermeli")
+        # README tek sayi gostermeye devam ederse hangi platformun
+        # sonucu oldugu belirsiz kalir; ikisini de yazmali.
+        self.assertIn("731", text,
+                      "README.md Debian ailesi sonucunu da gostermeli")
         self.assertNotIn("100 denetim", text,
                          "README.md'de bayat denetim sayisi kaldi")
 

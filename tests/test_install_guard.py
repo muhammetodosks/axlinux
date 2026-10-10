@@ -802,8 +802,13 @@ class TestBuildNeverPollutesUserTree(unittest.TestCase):
     def test_install_target_fixes_build_dir(self):
         """install.sh tek yol degil; Makefile de yapmali."""
         mk = read(self.ROOT / "Makefile")
-        install_idx = mk.index("\ninstall: all")
-        block = mk[install_idx:install_idx + 2000]
+        # Bagimlilik listesi degisebilir ("all" -> "bpf go
+        # python-compile"). Test AMACI degil, metni aramaliydi:
+        # install hedefinin .build sahibini duzelttigini
+        # kanitlamali. Satir basindaki "install:" her zaman dogru.
+        idx = next(i for i, line in enumerate(mk.splitlines())
+                   if line.startswith("install:"))
+        block = "\n".join(mk.splitlines()[idx:idx + 60])
         self.assertIn("chown", block,
                       "Makefile 'install' hedefi .build sahibini "
                       "duzeltmiyor")
